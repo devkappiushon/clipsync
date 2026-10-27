@@ -54,7 +54,11 @@ fn module_set() {
 fn mono_us_is_monotonic() {
     let a = mono_us();
     let b = mono_us();
-    assert!(a > 0 && b >= a);
+    assert!(a > 0 && b >= a, "a={a} b={b}");
+    // Ties are allowed (§4 asks for a monotonic clock, not a strictly increasing one), but it must move.
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    let c = mono_us();
+    assert!(c > b, "b={b} c={c}");
 }
 
 #[test]
