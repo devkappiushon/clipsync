@@ -1,8 +1,28 @@
 # Segurança · auditoria da fatia S1 (Sentinel, 2026-10-27)
 
-**Veredito: BLOQUEADO. 1 BLOCKER.** O BLOCKER (S1-01) derrota o código de pareamento, que é a única defesa contra um atacante no meio do caminho. Nenhum release antes da correção.
+**Veredito atual (reverificação, 2026-10-27): LIBERADO PARA S1, sem BLOCKER aberto.** Os quatro achados que o time corrigiu (S1-01, S1-02, S1-08, S1-09) foram reverificados no checkout e passam; o ataque do S1-01 foi repetido com o Hello malicioso cru contra o `clipsync pair host` real e é recusado. Ficam abertos, por decisão registrada no contrato v1.10, cinco achados de severidade baixa (S1-03, S1-04, S1-05, S1-06, S1-07), que continuam reproduzíveis e não bloqueiam.
 
-Contagem: **1 BLOCKER · 0 alta · 1 média · 7 baixas · 5 informativos.**
+Veredito da primeira rodada (histórico): BLOQUEADO por S1-01.
+
+Contagem da primeira rodada: 1 BLOCKER · 0 alta · 1 média · 7 baixas · 5 informativos.
+Estado agora: **0 BLOCKER · 0 alta · 0 média · 5 baixas abertas · 6 informativos** (4 achados corrigidos e verificados).
+
+## Reverificação (commit c1ed65d)
+
+- **S1-01 · CORRIGIDO, verificado.** `clipsync_proto::validate_device_name` (`proto/src/wire.rs:201`) é a regra única: vazio, > 64 bytes, `is_control` (C0, DEL, C1 incluindo U+0085 e U+009B) e caracteres de formatação (U+061C, U+200B-200F, U+2028/2029, U+202A-202E, U+2060-2064, U+2066-2069, U+FEFF). Usada em `Hello::validate` e em `profile::valid_name`; teste `validate_device_name_rejects_control_and_bidi` passa. CLI: `text::clean` em `pair.rs:35/82/96`, `cmds.rs` (status, peers, inbox) e `text::delivery`; `Código:` é a última linha antes de `[s/N]`.
+  - **Repetição da reprodução:** Hello com os 26 bytes do ataque, montado em bytes brutos (nome trocado direto no corpo postcard, sem passar pelo `validate()` do encoder), contra o `clipsync pair host` real. Resultado: o host recusa o frame, stdout só tem `Aguardando em ...`, sem ESC, sem `123 456`, sem prompt; stderr `erro: pareamento falhou: bad frame`; saída 3; `peers.toml` vazio.
+  - **Pareamento legítimo continua funcionando.** Tela: `Par: notebook-legit (id ...)` / `Código: 240 594` / `O código acima é o mesmo no outro computador? [s/N]`; o código é a penúltima linha, a pergunta a última; par gravado.
+  - **Teste de matriz:** aceitos ainda (invisíveis, não movem cursor nem reordenam texto): U+00AD, U+180E, U+206A-206F, U+FFF9-FFFB, U+FE0F, caracteres de tag U+E00xx. Ver I-6.
+- **S1-02 · CORRIGIDO, verificado.** `pairing::save` chama `validate_device_name` antes de gravar (`pairing.rs:248-250`). `load_peers` põe a entrada de nome inválido em quarentena (ignora e loga só o id curto) e carrega o resto; reproduzido com um `peers.toml` com uma entrada boa e uma com `ESC[2J` no nome: carrega 1 par, e o pino ruim não entra em `pins()`. Observação: a entrada em quarentena some do arquivo no próximo `save_peers` (o arquivo é reescrito só com as boas). Aceitável; o log avisa.
+- **S1-08 · CORRIGIDO, verificado.** `agent.rs:208-219` aplica `mesh.set_paused` primeiro e depois persiste; falha ao gravar devolve erro mas continua pausado. Teste `pause_fails_closed_when_state_cannot_be_saved` passa.
+- **S1-09 · CORRIGIDO, verificado por leitura e teste, com uma ressalva.** `control.rs`: `bind_private` binda em nome temporário, `chmod 0600`, `hard_link` para `agent.sock` e apaga o temporário; `AlreadyExists` vira `AgentAlreadyRunning`. Socket velho só é removido em `NotFound`/`ConnectionRefused`; qualquer outro erro de `connect` aborta sem apagar. Testes `control_` (2) passam, incluindo modo 0600. **Ressalva:** a terceira recomendação, `agent::run`/`load_identity` recusarem diretório de perfil com modo diferente de 0700, não foi feita (só `init` aplica 0700). Com o bind atômico o risco caiu para quase nada; fica como melhoria.
+- **S1-03, S1-04, S1-05, S1-06, S1-07 · ABERTOS por decisão (contrato v1.10, pós-MVP).** Reproduzidos de novo hoje contra o código novo: S1-03 (nome repetido apaga o par: sobrou 1 em 2), S1-04 (sonda com ALPN errado encerra o host na hora), S1-05 (`Debug` de `PairMsg` ainda imprime o nonce; `Key{code:u32::MAX}` e `Motion{f32::MAX}` ainda aceitos), S1-06 (Blocked continua depois de 8 s e de `reload`). S1-07 não reproduzido (só leitura), código inalterado. Nenhum depende dos outros para bloquear o release. O S1-04 tem agora o texto de contrato no v1.10 §5 regra 3; falta implementar.
+
+Testes da reverificação (alvo próprio, checkout atual): `cargo test --locked --offline -p clipsync-proto -p clipsync-core -p clipsync-cli` verde: proto 41, core 36 (unit 14, control 2, diag 1, mesh 7, profile 12), cli 12 (unit 3, roteiro 8, smoke 1); 0 falhas. Provas adversariais: `r_s1_01_raw_malicious_hello_is_refused_by_the_real_host`, `r_s1_01_legit_pairing_shows_code_last_before_prompt`, `r_s1_02_poisoned_entry_is_quarantined_and_agent_starts` passam.
+
+---
+
+## Primeira rodada (texto original; os itens S1-01, S1-02, S1-08 e S1-09 estão corrigidos, ver acima)
 
 Escopo lido por inteiro: `core/src/{tls,pairing,transport,agent}.rs`, `proto/src/{wire,limits,module,control}.rs`. Lidos também, porque o foco pedia: `core/src/{control,profile,lib,msg}.rs`, `proto/src/{clip,input,ids,redact}.rs`, `cli/src/{pair,prompt,msg,text}.rs` e o tratamento de `Ack`/`Stats`/`Leave` nos módulos.
 
@@ -81,6 +101,7 @@ Método: leitura linha a linha contra o contrato (§4, §5 regras 1 a 10, §9 S1
 - **I-2** `read_frame` aloca o tamanho declarado (até 1,1 MiB, zerado) antes de o corpo chegar, e as tasks por fluxo uni (`transport.rs:712-727`) não têm timeout. Um par já autenticado e pinado pode manter ~100 fluxos × 1,1 MiB virtuais por conexão. Atende à regra 10 (checa antes de alocar), só não é mínimo. Aceitável hoje.
 - **I-3** Pareamento assimétrico possível: `finish` grava quando os dois `Confirm` são `accept`, mas cada lado grava por conta própria. Se a conexão cair depois de A gravar e antes de B receber o `Confirm` de A, A confia em B e B não confia em A. Falha fechada para B. Só registrar.
 - **I-4** Chave privada em arquivo 0600 sem rotação nem revogação (já em §10 Aberto 2). Remover um par é editar `peers.toml` + `ReloadPeers`.
+- **I-6** (reverificação) A lista de caracteres de formatação do `validate_device_name` não cobre U+00AD, U+180E, U+206A-206F, U+FFF9-FFFB, U+FE0F e tags U+E00xx. Nenhum move o cursor nem reordena texto, então não permitem forjar a linha do código; só tornam possível um nome visualmente igual a outro (confundível). Considerar recusar a categoria Unicode Cf inteira e normalizar espaços.
 - **I-5** **Não verificado:** auditoria de dependências. `cargo audit` e `cargo deny` não estão instalados nesta máquina (`error: no such command`). O que deu para checar: 209 crates do registry, 0 de git, versões fixadas com `=` no workspace, `ring` como único provedor TLS. Instalar `cargo-audit` (ou rodar no CI) antes do release. A allow-list de reasons do teste `tls_` também não inclui `peer doesn't support any known protocol` (ALPN errado; texto constante do rustls, sem dado interno), observado no S1-04.
 
 ## Verificado, sem achado (com a evidência)
