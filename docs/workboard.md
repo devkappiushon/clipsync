@@ -1,6 +1,6 @@
 # workboard · ClipSync MVP de hoje
 
-Contrato: `docs/contrato.md` (v1.4). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Ninguém roda git. Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
+Contrato: `docs/contrato.md` (v1.6). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Ninguém roda git. Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
 
 ## Ordem
 1. S0 Bolt fecha primeiro (esqueleto compila). Só então S1, S2, S3 começam a editar seus crates.
@@ -16,16 +16,17 @@ Depois de S0: plantão para adicionar dep aprovada pelo Keel.
 Estado: entregue (commit 79be293) · veredito do Argus pendente
 
 ## S1 · Rivet · base
-Posse: `crates/clipsync-proto/**`, `crates/clipsync-core/**`, `crates/clipsync-cli/**`.
+Posse (v1.6): `crates/clipsync-proto/**`; no core: `Cargo.toml`, `src/{lib,tls,pairing,transport,agent,msg}.rs`, `tests/{smoke,tls,pairing,mesh}.rs`.
+PRIMEIRO (até 15 min, destrava o Flux): lib.rs com todos os `pub mod` e o `CoreError` da §5; `tls::pin_of`; deps serde_json, async-trait e quinn-proto no Cargo.toml do core.
 Ordem interna: (1) proto + MemHub + authorize_* + CloseCode + PairMsg; avisar "proto pronto" aqui. (2) perfil, config, identidade, peers. (3) PinVerifier, retomada TLS desligada, pareamento com compromisso nB/nA. (4) malha QUIC, Hello nos dois sentidos, agente, socket de controle, CLI. (5) diag de sistema.
-Pronto: §9 S1 itens 1 a 10.
-Estado: em andamento (core) · proto: ENTREGUE (39 testes, commitado; extra `CloseCode::ALL`) · pendente no proto: `DeliveryState::Unreachable` (v1.3)
+Pronto: §9 S1 itens 1 a 7 (renumerados na v1.6).
+Estado: em andamento (core) · proto: ENTREGUE (40 testes; extra `CloseCode::ALL`; `DeliveryState::Unreachable` no commit 1c6ba06)
 
 ## S2 · Flux · clipboard
 Posse: `crates/clipsync-clipboard/**`.
 Faz: trait ClipboardAdapter (§7), FakeClipboard (eco, owner_takeover, clear), X11Clipboard (x11rb XFixes + arboard), módulo (livro de escritas, conteúdo inalterado, Lamport, caixa, acks, pausa), probe --watch/--write, diagnose (DISPLAY).
 Pronto: §9 S2 itens 1 a 5.
-Estado: 9 testes de módulo verdes (relato do Flux) · ajuste v1.3 pendente: todo alvo no ClipSent com Unreachable, expiração da caixa
+Estado: 9 testes de módulo verdes (relato do Flux) · Unreachable em uso (commit 18a461c) · conferir no veredito: expiração da caixa (§7 regra 6)
 
 ## S3 · Vector · input
 Posse: `crates/clipsync-input/**`.
@@ -33,9 +34,15 @@ Faz: traits CaptureAdapter/EmulateAdapter (§8), FakeCapture, FakeEmulate, Porta
 Pronto: §9 S3 itens 1 a 7.
 Estado: em andamento · spike input 2 incorporado (v1.4)
 
-## I · Rivet · integração
+## S4 · Flux · perfil, controle, diag e cli (nova em v1.6)
+Posse: no core, `src/{profile,control,diag}.rs` e `tests/{profile,control}.rs`; o crate `crates/clipsync-cli/**` inteiro.
+Depende do Rivet: lib.rs com `pub mod` + `CoreError` + `tls::pin_of` (primeira entrega dele). Os testes pair_/mesh_ do cli dependem de pairing e agent.
+Pronto: §9 S4 itens 1 a 8.
+Estado: a fazer
+
+## I · Flux · integração (desde v1.6)
 Pronto: §9 I itens 1 a 4.
-Estado: bloqueado por S2 e S3
+Estado: bloqueado por S1, S3 e S4
 
 ## Decisões
 - 2026-10-27 · Keel · Contrato v1 publicado.
@@ -49,6 +56,10 @@ Estado: bloqueado por S2 e S3
 - 2026-10-27 · Keel · Contrato v1.3, decisões do Flux (S2): (1) VETADA: par alvo não pode sumir do ClipSent; motivo: falha precisa ser identificável e não pode parecer sucesso (anexo §8), e o roteiro imprime estado por par. Troca: `DeliveryState::Unreachable` (proto, Rivet), ClipSent lista todo alvo (Flux), `send` sai 3 se algum alvo não ficou Applied/InInbox (cli, Rivet). (2) ACEITA com precisão: ttl conta do recebimento local em relógio monotônico; ttl_ms == 0 expira ao chegar; item da caixa com idade > ttl expira e perde o texto. (3) ACEITA: ClipSend avança Lamport sem contar como cópia local.
 - 2026-10-27 · Keel · Consequência da decisão 4 para S3 (Vector): Leave, ReleaseAll, StatsRequest e Stats só têm efeito se a session pertence ao mesmo remetente; senão são ignorados e contados (contrato §8 regra 2).
 - 2026-10-27 · Keel · Contrato v1.4: `CloseCode::ALL` registrado no §4 (extra do Rivet, aceito). Spike input 2 do Vector no §8 regras 7 a 11: barreira na borda direita em x = zone.x + width (x=1919 recusado pelo portal, `cap_1919_539.log`); Enter por movimento relativo a partir de canto saturado (EIS sem absoluto); RemoteDesktop com persist_mode ExplicitlyRevoked + restore_token em `DIR/portal-tokens.toml` 0600 (dono: clipsync-input), DoNot proibido; InputCapture v1 = 1 diálogo por sessão do agente; proibido `supported_capabilities()`; P4c automatizado com até 3 tentativas. Matriz: captura passa a validada para ponteiro.
+- 2026-10-27 · Keel · Contrato v1.5: dep `futures-util =0.3.34` aceita (pedido do Vector, StreamExt para streams do ashpd/reis), default-features=false, mesma versão já presente no Cargo.lock via ashpd/zbus. Bolt adiciona.
+- 2026-10-27 · Keel · Corrigido: licença e regra da recópia seguem PENDENTES. O "MIT, aceito a recópia" que vi na tela do Maestro era a pergunta dele ao usuário, não resposta.
+- 2026-10-27 · Maestro + Keel · Contrato v1.6, mudança de posse para fechar o MVP hoje (motivo do Maestro: 40 min depois do S0, core e cli tinham 25 linhas, e o Rivet está no caminho crítico da cripto). Flux recebe core/{profile,control,diag}.rs e o crate cli inteiro (nova fatia S4, mais a integração I). Rivet fica com core/{lib,tls,pairing,transport,agent,msg}.rs. Tipos: Identity, Config, InitOptions, Peers, PeerEntry, State e Profile em profile.rs (Flux); PairOutcome, PairPrompt e PairDecision em pairing.rs (Rivet); CoreError único em lib.rs (Rivet). Dep quinn-proto =0.11.19 aprovada (Rivet troca o reason do CONNECTION_CLOSE). `pairing::host` ganha `on_listen`.
+- 2026-10-27 · Keel · Furos da divisão, fechados na §5: (a) `tls::pin_of` é a fonte única do pino, e `Identity::id()` chama essa função; (b) `CoreError::AgentAlreadyRunning`, que faltava para o control::serve; (c) `ControlHandler` + `control::serve` em control.rs (Flux), e o agente só implementa o handler; (d) core não imprime nada, confirm roda em spawn_blocking; (e) o cert usa a chamada do spike (SAN "clipsync") e não leva o nome do dispositivo; (f) S1 ganha teste de malha no core (mesh_) para não depender do cli.
 - PENDENTE · usuário · **Licença** a decidir antes do primeiro commit público. Sugestão do Keel: MIT (ou MIT/Apache-2.0 dual, padrão do ecossistema Rust). GPL-3 só se copiarmos código do Lan Mouse, o que o contrato evita.
 - PROVISÓRIO · Keel · Chave privada em `identity.key.pem` com modo 0600 no perfil, até existir o cofre da plataforma (Secret Service, CNG, Keychain).
 - PENDENTE · usuário · "Conteúdo inalterado não é cópia nova" (contrato §7 regra 3): copiar o mesmo texto duas vezes seguidas não reenvia. Protege contra a tomada de posse do Mutter, que reenviaria conteúdo velho por cima de cópia nova do par. Reenvio forçado: `clipsync send`. Aguarda confirmação do usuário.

@@ -1,9 +1,11 @@
-# Contrato · ClipSync MVP de hoje (v1.4, Keel, 2026-10-27)
+# Contrato · ClipSync MVP de hoje (v1.6, Keel, 2026-10-27)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
 v1.3: `DeliveryState::Unreachable` novo (§4, Rivet); ClipSent lista TODO par alvo (§7 regra 9, Flux); código de saída do `send` (§6, Rivet); ttl conta do recebimento local e vale para a caixa (§7 regra 6); ClipSend avança Lamport sem contar como cópia local (§7 regra 12).
 v1.4: `CloseCode::ALL` (§4, já entregue pelo Rivet); spike input 2 do Vector no §8 (regras 7 a 11): barreira em x = largura da zona, Enter por movimento relativo, restore_token do RemoteDesktop em `DIR/portal-tokens.toml`, proibido `supported_capabilities()`, P4c automatizado com retry; §3 ganha `portal-tokens.toml`; §9 S3 ganha itens 6 e 7.
+v1.5: dep `futures-util =0.3.34` (§1, pedido do Vector).
+v1.6: posse dividida (Maestro): core/{profile,control,diag}.rs e o crate cli inteiro passam ao Flux; o Rivet fica com core/{lib,tls,pairing,transport,agent,msg}.rs. Tipos: Identity/Config/InitOptions/Peers/PeerEntry/State/Profile em profile.rs (Flux); PairOutcome/PairPrompt/PairDecision em pairing.rs (Rivet); CoreError único em lib.rs (Rivet). Keel acrescentou: `tls::pin_of` como fonte única do pino, `CoreError::AgentAlreadyRunning`, `ControlHandler`/`control::serve`. `pairing::host` ganha `on_listen`. Dep `quinn-proto =0.11.19` (Rivet troca o reason do CONNECTION_CLOSE). §9: S1 dividido; nova S4 (Flux); I passa ao Flux.
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -24,8 +26,10 @@ clipsync/
   .github/workflows/ci.yml                                                           [Bolt]
   crates/
     clipsync-proto/      tipos compartilhados, limites, codec, traits de módulo, MemHub  [Rivet]
-    clipsync-core/       identidade, perfil, config, pares, pareamento, QUIC, agente, IPC, diag sistema  [Rivet]
-    clipsync-cli/        binário `clipsync` (clap), monta agente, testes e2e do roteiro  [Rivet]
+    clipsync-core/       DIVIDIDO por arquivo (v1.6, §5):
+                           tls, pairing, transport, agent, lib, msg, Cargo.toml   [Rivet]
+                           profile, control, diag                                 [Flux]
+    clipsync-cli/        binário `clipsync` (clap), monta agente, testes e2e do roteiro  [Flux desde v1.6]
     clipsync-clipboard/  adaptador clipboard (trait, fake, arboard), módulo, probe, diag  [Flux]
     clipsync-input/      adaptadores captura/emulação (trait, fake, portal), módulo, probe, diag  [Vector]
 ```
@@ -35,6 +39,8 @@ S0 cria o esqueleto de todos os crates (Cargo.toml + lib.rs/main.rs + teste smok
 ### Dependências do workspace (versões resolvidas no spike do Bolt, fixadas com `=` no `[workspace.dependencies]`)
 tokio =1.54.1 (rt-multi-thread, macros, sync, time, net, io-util, signal) · quinn =0.11.12 (default-features=false, features runtime-tokio + rustls-ring) · rustls =0.23.46 (default-features=false, features ring, std, logging) · rcgen =0.14.10 · arboard =3.7.0 (SEM wayland-data-control; cai para X11 sob XWayland sozinho) · x11rb =0.13.2 (feature xfixes; a MESMA que o arboard puxa, uma versão só no workspace) · ashpd =0.13.13 (tokio + input_capture + remote_desktop + **screencast**: remote_desktop não compila sem screencast) · reis =0.7.1 (feature tokio) · clap =4.6.7 (derive) · serde =1.0.229 (derive) · toml =1.1.8 · tracing =0.1.44.
 Sem versão fixada pelo spike (Bolt resolve a última estável e fixa com `=`): postcard 1 (alloc) · serde_json 1 · async-trait 0.1 · thiserror 2 · anyhow 1 (só cli e probe) · tracing-subscriber 0.3 (env-filter) · sha2 · hex 0.4 · rand · rustix 1 (time) · humantime 2 · time 0.3 (formatting) · tempfile 3 (dev).
+Adicionada em v1.6 (pedido do Rivet, aprovada pelo Maestro): quinn-proto =0.11.19 (default-features=false; mesma versão que o quinn 0.11.12 puxa; só no core, para embrulhar quinn::crypto e controlar o reason do CONNECTION_CLOSE).
+Adicionada em v1.5 (pedido do Vector): futures-util =0.3.34 (default-features=false; a MESMA versão que ashpd/zbus já puxam no Cargo.lock; só `StreamExt` em clipsync-input; se precisar de método que exige `alloc`/`std`, ligar só essa feature).
 Provedor TLS: **ring em todo lugar**. aws-lc-sys exige cmake e nasm, ausentes aqui: rustls e quinn com default-features=false. Nenhuma lib de sistema é necessária (nem pkg-config).
 Build: frio ~6 min, incremental ~30 s. Os quatro builders trabalham no MESMO checkout e compartilham o `target/` da raiz (padrão do cargo; não setar target-dir em arquivo versionado). Se o Maestro separar builders em andares, todos exportam `CARGO_TARGET_DIR=/home/kappxs/.cache/clipsync-target`. Compilar com `-p <crate>` para reduzir espera de lock.
 
@@ -54,7 +60,7 @@ Build: frio ~6 min, incremental ~30 s. Os quatro builders trabalham no MESMO che
 DIR/
   config.toml         configuração versionada (usuário edita)
   identity.key.pem    chave privada ECDSA P-256 PKCS#8, modo 0600 (ADR 0003)
-  identity.cert.pem   certificado autoassinado (rcgen), CN = device_name
+  identity.cert.pem   certificado autoassinado (rcgen, chamada do spike: SAN "clipsync"; nome do dispositivo NÃO vai no cert)
   peers.toml          pares confiáveis + permissões (escrito por pair; usuário pode editar)
   state.toml          estado persistido pelo agente: paused
   agent.sock          socket de controle (Unix, 0600) enquanto `run` está de pé
@@ -186,7 +192,7 @@ pub enum PairMsg { Commit { h_nb: [u8; 32] }, Nonce { na: [u8; 32] }, Reveal { n
 pub enum CloseCode { Normal = 0, Version = 1, UnknownPeer = 2, Duplicate = 3, Protocol = 4,
                      Shutdown = 5, PairFailed = 6, KeyChanged = 7 }
 impl CloseCode {
-    pub const ALL: [CloseCode; 8]; // os 8 códigos em ordem; usado nos testes de TLS (§9 S1 item 6c)
+    pub const ALL: [CloseCode; 8]; // os 8 códigos em ordem; usado nos testes de TLS (§9 S1 item 3c)
     pub fn code(self) -> u32;
     pub fn reason(self) -> &'static [u8]; // b"normal", b"version", b"unknown-peer", b"duplicate", b"protocol", b"shutdown", b"pair-failed", b"key-changed"
     pub fn from_code(c: u64) -> Option<Self>;
@@ -384,29 +390,120 @@ impl MemHub {
 }
 ```
 
-## 5. clipsync-core (Rivet)
-API pública que o cli usa:
+## 5. clipsync-core (dividido em v1.6: Rivet = cripto e rede; Flux = perfil, controle, diag)
+Posse por arquivo (decisão do Maestro):
+- **Rivet:** `Cargo.toml` do core, `src/lib.rs` (inclui `CoreError`), `src/tls.rs`, `src/pairing.rs`, `src/transport.rs`, `src/agent.rs`, `src/msg.rs` (textos pt que o agente põe em status), `tests/{smoke,tls,pairing,mesh}.rs`.
+- **Flux:** `src/profile.rs` (Identity, Config, InitOptions, Peers, PeerEntry, State, Profile), `src/control.rs`, `src/diag.rs`, `tests/{profile,control}.rs`.
+- Teste unitário dentro de um arquivo é do dono do arquivo.
+
+**Primeira entrega do Rivet, antes de seguir na cripto (até 15 min):**
+1. `lib.rs` declara `pub mod {tls, pairing, transport, agent, msg, profile, control, diag};` e o `CoreError` completo abaixo.
+2. `tls::pin_of`.
+3. `Cargo.toml` do core ganha `serde_json`, `async-trait` e `quinn-proto` (todos `workspace = true`).
+
+Sem isso o Flux não compila os arquivos dele.
+
+Regras de fronteira:
+1. **Um erro só: `CoreError` em lib.rs (Rivet)**, com variantes para as duas metades. O Flux usa as variantes existentes. Variante nova = pedir ao Rivet.
+2. **Pino com uma fonte só:** `tls::pin_of` (Rivet) é a ÚNICA função que transforma certificado em PeerId. `Identity::id()` (Flux) e o PinVerifier (Rivet) chamam essa função. Se os dois lados extraíssem o SPKI de jeitos diferentes, o próprio id não bateria com o pino que o par calcula.
+3. **Identidade em profile.rs (Flux):** gera com `rcgen::generate_simple_self_signed(vec!["clipsync".into()])`, a chamada exata do spike (ECDSA P-256 com ring; o verificador ignora o nome). Grava a chave com 0600 e expõe DER para o tls.rs montar as configs do rustls.
+4. **Socket de controle:** cliente e servidor ficam em `control.rs` (Flux). O agente (Rivet) só implementa `ControlHandler` e chama `control::serve`.
+5. **Core não imprime nada.** O pareamento avisa a porta por `on_listen`, e o texto em pt é do cli (Flux). O `confirm` lê stdin, então o pairing o roda em `spawn_blocking`.
+
 ```rust
-pub mod profile { pub struct Profile { pub dir: PathBuf } impl Profile {
-    pub fn resolve(arg: Option<PathBuf>) -> Result<Self, CoreError>;
-    pub fn init(&self, opts: InitOptions) -> Result<Identity, CoreError>; // cria DIR 0700, chave 0600, config
+// ===== lib.rs (Rivet) =====
+#[derive(thiserror::Error, Debug)]
+pub enum CoreError {
+    #[error("io: {0}")] Io(#[from] std::io::Error),
+    #[error("config: {0}")] Config(String),      // config.toml inválido, dois módulos false, version != 1
+    #[error("identity: {0}")] Identity(String),  // chave ausente, PEM ruim, modo != 0600
+    #[error("profile: {0}")] Profile(String),    // perfil não inicializado, já inicializado, peers/state ruins
+    #[error("pairing: {0}")] Pairing(String),
+    #[error("transport: {0}")] Transport(String),
+    #[error("agent not running")] AgentNotRunning,
+    #[error("agent already running")] AgentAlreadyRunning, // furo apontado pelo Keel: control::serve com outro agente vivo
+    #[error("closed: {0:?}")] Closed(CloseCode),
+}
+
+// ===== tls.rs (Rivet) =====
+/// SHA-256 do SPKI via rustls::server::ParsedCertificate::subject_public_key_info() (como no spike).
+pub fn pin_of(cert: &CertificateDer<'_>) -> Result<PeerId, CoreError>;
+
+// ===== profile.rs (Flux) =====
+pub struct Identity { /* cert DER + chave PKCS#8 */ }
+impl Identity {
+    pub fn generate() -> Result<Self, CoreError>;                          // chamada exata do spike (regra 3)
+    pub fn from_pem(cert_pem: &str, key_pem: &str) -> Result<Self, CoreError>;
+    pub fn cert_pem(&self) -> String;
+    pub fn key_pem(&self) -> String;                                       // quem grava aplica 0600
+    pub fn cert_der(&self) -> CertificateDer<'static>;                     // usado pelo tls.rs
+    pub fn key_der(&self) -> PrivateKeyDer<'static>;                       // usado pelo tls.rs
+    pub fn id(&self) -> PeerId;                                            // = tls::pin_of(&cert_der)
+}
+impl fmt::Debug for Identity {}                                            // só o id curto; nunca a chave
+pub struct Profile { pub dir: PathBuf }
+impl Profile {
+    pub fn resolve(arg: Option<PathBuf>) -> Result<Self, CoreError>;      // --profile > CLIPSYNC_PROFILE > XDG
+    pub fn init(&self, opts: InitOptions) -> Result<Identity, CoreError>; // DIR 0700, key 0600, config, peers vazio, state
     pub fn load_config(&self) -> Result<Config, CoreError>;
-    pub fn load_identity(&self) -> Result<Identity, CoreError>;
-    pub fn load_peers(&self) -> Result<Peers, CoreError>; pub fn save_peers(&self, p: &Peers) -> Result<(), CoreError>;
-    pub fn socket_path(&self) -> PathBuf; } }
+    pub fn load_identity(&self) -> Result<Identity, CoreError>;           // recusa key com modo != 0600
+    pub fn load_peers(&self) -> Result<Peers, CoreError>;
+    pub fn save_peers(&self, p: &Peers) -> Result<(), CoreError>;         // escrita atômica (tmp + rename)
+    pub fn load_state(&self) -> Result<State, CoreError>;                 // ausente = State::default()
+    pub fn save_state(&self, s: &State) -> Result<(), CoreError>;
+    pub fn socket_path(&self) -> PathBuf;                                 // DIR/agent.sock
+}
 pub struct InitOptions { pub device_name: String, pub modules: ModuleSet, pub listen: SocketAddr, pub fake_adapters: bool }
 pub struct Config { pub version: u32, pub device_name: String, pub modules: ModuleSet, pub listen: SocketAddr,
                     pub clipboard: Option<toml::Table>, pub input: Option<toml::Table> }
-pub mod pairing {
-    pub struct PairPrompt { pub code: String /* "123 456" */, pub peer_name: String, pub peer_id: PeerId, pub peer_modules: ModuleSet }
-    pub async fn host(p: &Profile, port: u16, window: Duration, confirm: impl FnOnce(&PairPrompt) -> PairDecision + Send) -> Result<PairOutcome, CoreError>;
-    pub async fn join(p: &Profile, addr: SocketAddr, confirm: impl FnOnce(&PairPrompt) -> PairDecision + Send) -> Result<PairOutcome, CoreError>;
-    pub struct PairDecision { pub accept: bool, pub grants: PeerPerms }
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Peers { pub version: u32, #[serde(default)] pub peer: Vec<PeerEntry> }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PeerEntry {
+    #[serde(with = "peer_id_hex")] pub id: PeerId,   // 64 hex no TOML (o serde do proto é binário)
+    pub name: String,
+    pub addr: Option<SocketAddr>,
+    pub paired_at: String,                           // RFC 3339, só exibição
+    #[serde(flatten)] pub perms: PeerPerms,          // clipboard_in, clipboard_out, input_in
 }
-pub mod agent { pub async fn run(p: &Profile, modules: Vec<Box<dyn Module>>, shutdown: impl Future<Output = ()> + Send) -> Result<(), CoreError>; }
-pub mod control { pub async fn request(p: &Profile, req: ControlRequest) -> Result<ControlResponse, CoreError>; } // CoreError::AgentNotRunning se não houver socket
-pub mod diag { pub async fn system() -> Vec<DiagItem>; } // SO, XDG_SESSION_TYPE, DISPLAY/XWayland, Input Leap e Barrier (processos em /proc, inclusive flatpak), só detecta e orienta
+impl Peers {
+    pub fn get(&self, id: &PeerId) -> Option<&PeerEntry>;
+    pub fn upsert(&mut self, e: PeerEntry);                   // mesmo id substitui
+    pub fn find(&self, name_or_short_id: &str) -> Option<&PeerEntry>;
+    pub fn pins(&self) -> Vec<PeerId>;
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct State { pub version: u32, pub paused: bool }
+
+// ===== control.rs (Flux) =====
+#[async_trait::async_trait]
+pub trait ControlHandler: Send + Sync + 'static { async fn handle(&self, req: ControlRequest) -> ControlResponse; }
+/// Cria o socket com 0600. Socket velho: se connect falha, apaga e segue; se connect funciona, AgentAlreadyRunning.
+/// Uma conexão = uma requisição + uma resposta (quadro u32 BE + JSON, máx MAX_FRAME_BYTES). Apaga o socket ao sair.
+pub async fn serve(socket: &Path, handler: Arc<dyn ControlHandler>, shutdown: impl Future<Output = ()> + Send) -> Result<(), CoreError>;
+pub async fn request(p: &Profile, req: ControlRequest) -> Result<ControlResponse, CoreError>; // AgentNotRunning sem socket vivo
+
+// ===== diag.rs (Flux) =====
+pub async fn system() -> Vec<DiagItem>; // SO, XDG_SESSION_TYPE, DISPLAY/XWayland, Input Leap e Barrier (/proc, inclusive flatpak); só detecta e orienta
+
+// ===== pairing.rs (Rivet) =====
+pub struct PairPrompt { pub code: String /* "123 456" */, pub peer_name: String, pub peer_id: PeerId, pub peer_modules: ModuleSet }
+pub struct PairDecision { pub accept: bool, pub grants: PeerPerms }
+pub enum PairOutcome { Paired(PeerEntry), Declined { by_peer: bool } }
+/// on_listen recebe o endereço real (porta efêmera resolvida): o cli imprime "Aguardando em <addr>" e o teste pair_ lê a porta.
+/// confirm roda em spawn_blocking (pode ler stdin). Grava peers.toml via Profile::save_peers só se os dois aceitarem.
+pub async fn host(p: &Profile, port: u16, window: Duration,
+                  on_listen: impl FnOnce(SocketAddr) + Send,
+                  confirm: impl FnOnce(&PairPrompt) -> PairDecision + Send + 'static) -> Result<PairOutcome, CoreError>;
+pub async fn join(p: &Profile, addr: SocketAddr,
+                  confirm: impl FnOnce(&PairPrompt) -> PairDecision + Send + 'static) -> Result<PairOutcome, CoreError>;
+
+// ===== agent.rs (Rivet) =====
+/// Lê config, identidade, peers e state via Profile; serve o controle via control::serve com um ControlHandler próprio.
+pub async fn run(p: &Profile, modules: Vec<Box<dyn Module>>, shutdown: impl Future<Output = ()> + Send) -> Result<(), CoreError>;
 ```
+6. **quinn-proto (v1.6):** o quinn manda o `e.to_string()` do rustls no CONNECTION_CLOSE quando o handshake falha. Por isso o Rivet embrulha `quinn::crypto::{ServerConfig, ClientConfig, Session}` para trocar esse reason por `CloseCode::reason()` (regras 1, 6 e 9 abaixo). O teste tls_ (c) prova isso.
+
 Regras de transporte (implementação livre dentro delas):
 1. Identidade: ECDSA P-256 (rcgen; ADR 0003), PeerId = SHA-256(SPKI DER). **Um verificador único** (`core::tls::PinVerifier`) implementa `ClientCertVerifier` e `ServerCertVerifier`: valida o X.509 com o próprio cert como âncora (autoassinado), verifica a assinatura TLS 1.3 real com o provider ring, e o pino é SHA-256 do SPKI. Modo malha: pino precisa estar em peers.toml. Modo pareamento (ALPN_PAIR): aceita qualquer pino, mas exige posse da chave. Cert de cliente obrigatório nos dois modos (TLS mútuo).
 2. **Retomada TLS 1.3 desligada (obrigatório)**, senão o verificador não roda na reconexão. Servidor: `session_storage = NoServerSessionStorage`, `send_tls13_tickets = 0`. Cliente: `resumption = Resumption::disabled()`. Vale para malha e pareamento.
@@ -419,7 +516,7 @@ Regras de transporte (implementação livre dentro delas):
 9. **CONNECTION_CLOSE e Bye levam só `CloseCode::code()` + `reason()`** (token curto fixo). Nunca texto Debug/Display de rustls, quinn ou io vai ao par. Erro detalhado só em log local.
 10. Frame acima do limite do fluxo: o leitor para antes de alocar e reseta o fluxo (`stop`/RESET com CloseCode::Protocol). Fluxo de controle: MAX_CONTROL_FRAME_BYTES (64 KiB); fluxo de módulo: MAX_FRAME_BYTES.
 
-## 6. clipsync-cli (Rivet): comandos
+## 6. clipsync-cli (Flux desde v1.6): comandos
 `clipsync [--profile DIR] <cmd>` (`--profile` global). Saída em português de `src/msg.rs`. Códigos de saída: 0 ok, 1 erro, 2 uso (clap), 3 recusado/não confirmado, 4 agente não está rodando.
 ```
 init [--name N] [--modules input,clipboard] [--port P] [--fake-adapters]   pergunta o que faltar; pergunta de clipboard com padrão NÃO
@@ -562,17 +659,24 @@ Todos os comandos rodam de `/home/kappxs/Documentos/ANTIGOS/clipsync` com `sourc
 6. `.github/workflows/ci.yml` roda em ubuntu-latest: fmt --check, clippy -D warnings, test --workspace; `python3 -c "import yaml,sys;yaml.safe_load(open('.github/workflows/ci.yml'))"` sai 0.
 7. `[workspace.dependencies]` com todas as deps da §1 fixadas com `=`; `cargo tree -i ring` mostra ring; `cargo tree -i aws-lc-sys` e `cargo tree -i aws-lc-rs` falham (não existem); `cargo tree -d -i x11rb` não mostra duas versões.
 
-### S1 · Rivet (base)
+### S1 · Rivet (base: cripto e rede; dividido em v1.6)
 1. Proto: `cargo test -p clipsync-proto` verde com: frame acima do máx recusado ANTES de alocar; datagrama > 1200 bytes recusado; validate recusa float NaN, pos 1.5, 33 eventos, nome de 65 bytes; Debug redigido de ClipOffer, InputEvent::Key, ControlRequest; tabela de authorize_* (módulo desligado -> ModuleDisabled, sem perm -> NotAuthorized, pausado -> Paused, Ack passa pausado); MemHub entrega e recusa com as mesmas regras.
-2. Roteiro 1: `printf 'notebook-a\nn\n' | cargo run -q -p clipsync-cli -- init --profile /tmp/cs-a` (e variante com flags) cria config.toml, identity.key.pem modo 600 (`stat -c %a`), peers.toml vazio; `init` sem resposta de clipboard grava `clipboard = false`; config com os dois módulos false é recusada com motivo.
-3. Roteiro 2: `cargo test -p clipsync-cli --test roteiro pair_` verde: host e join em 127.0.0.1, stdout dos dois contém o mesmo `Código: NNN NNN`; aceitar dos dois lados grava peers.toml nos dois com as permissões de `--allow`; recusar em um lado não grava em nenhum.
-4. Pareamento seguro: `cargo test -p clipsync-core pairing_` verde com: (a) Reveal com nB que não bate com o Commit -> PairFailed, nada gravado, host encerra; (b) segunda conexão durante a tentativa recusada; (c) após uma falha, a mesma janela não aceita nova tentativa; (d) o código depende de nA e nB (mesma sessão TLS, nonces diferentes = código diferente).
-5. Roteiro 3: `cargo test -p clipsync-cli --test roteiro mesh_` verde: dois `clipsync run` filhos, `status` dos dois mostra o par Connected, módulos e permissões; terceira identidade desconhecida recusada (status do servidor ou log com "par desconhecido"); matar e subir B de novo reconecta; trocar identity de B (novo init no mesmo dir/addr) gera PeerState::Blocked com "chave do par mudou".
-6. TLS: `cargo test -p clipsync-core tls_` verde com: (a) **contador do PinVerifier sobe nas DUAS conexões** ao conectar, desconectar e reconectar (prova de retomada desligada); (b) cliente com cert desconhecido: servidor nunca marca Connected nem entrega PeerUp, mesmo com `connect()` do cliente tendo retornado Ok; (c) reason de todo CONNECTION_CLOSE recebido pertence ao conjunto de `CloseCode::reason()` (nenhum texto de rustls).
-7. P2 canal: teste `stream_and_datagram` verde: no mesmo Connection, um frame em fluxo uni e um datagrama chegam ao outro lado; frame de controle de 64 KiB + 1 recusado com RESET antes de alocar. Medição registrada no workboard (spike: datagrama 64 B p95 < 100 µs; fluxo 1 KiB p95 < 80 µs); passa se p95 < 1 ms nos dois. Se `tshark` ou `tcpdump` existir sem sudo, captura em lo sem o texto sintético em claro; senão registrar "não verificado".
-8. Roteiro 6: `pause` grava paused=true, `status` mostra pausado, `resume` volta; teste `pause_` verde.
-9. `clipsync diagnose` (M ou teste) lista sessão, DISPLAY e Input Leap/Barrier detectados (o Input Leap 3.0.3 Flatpak está rodando neste notebook: deve aparecer).
-10. `cargo clippy --workspace --all-targets -- -D warnings` e `cargo fmt --all --check` verdes.
+2. Pareamento seguro: `cargo test -p clipsync-core pairing_` verde com: (a) Reveal com nB que não bate com o Commit -> PairFailed, nada gravado, host encerra; (b) segunda conexão durante a tentativa recusada; (c) após uma falha, a mesma janela não aceita nova tentativa; (d) o código depende de nA e nB (mesma sessão TLS, nonces diferentes = código diferente).
+3. TLS: `cargo test -p clipsync-core tls_` verde com: (a) **contador do PinVerifier sobe nas DUAS conexões** ao conectar, desconectar e reconectar (prova de retomada desligada); (b) cliente com cert desconhecido: servidor nunca marca Connected nem entrega PeerUp, mesmo com `connect()` do cliente tendo retornado Ok; (c) reason de todo CONNECTION_CLOSE recebido pertence ao conjunto de `CloseCode::reason()` (nenhum texto de rustls).
+4. P2 canal: teste `stream_and_datagram` verde: no mesmo Connection, um frame em fluxo uni e um datagrama chegam ao outro lado; frame de controle de 64 KiB + 1 recusado com RESET antes de alocar. Medição registrada no workboard (spike: datagrama 64 B p95 < 100 µs; fluxo 1 KiB p95 < 80 µs); passa se p95 < 1 ms nos dois. Se `tshark` ou `tcpdump` existir sem sudo, captura em lo sem o texto sintético em claro; senão registrar "não verificado".
+5. Malha no core, sem cli: `cargo test -p clipsync-core mesh_` verde com dois `agent::run` no mesmo processo, perfis em tempdir, sem MemHub (QUIC real em 127.0.0.1). Os casos: (a) Connected e PeerUp só depois do Hello nos dois sentidos; (b) uma terceira identidade desconhecida é recusada e nunca chega a Connected; (c) derrubar e subir B reconecta, com o PinVerifier rodando de novo; (d) B com identidade nova no mesmo addr vira PeerState::Blocked e o reason recebido é `key-changed`.
+6. Comportamento que os testes do cli (S4 itens 3 e 4) exercitam: se falharem na camada de pairing ou agent, o conserto é do Rivet.
+7. `cargo clippy --workspace --all-targets -- -D warnings` e `cargo fmt --all --check` verdes.
+
+### S4 · Flux (perfil, controle, diag e cli; nova em v1.6)
+1. Perfil: `cargo test -p clipsync-core profile_` verde com: (a) `init` cria DIR 0700, key 0600 e `peers.toml` vazio; (b) `load_identity` recusa a key com modo 0644; (c) `Identity::id() == tls::pin_of(&cert_der())`; (d) round-trip do peers.toml com id em 64 hex; (e) config com os dois módulos false é recusada com `CoreError::Config`.
+2. Controle: `cargo test -p clipsync-core control_` verde com: (a) o socket nasce com 0600; (b) socket velho (sem dono) é apagado e o serve sobe; (c) um segundo serve com o primeiro vivo dá `AgentAlreadyRunning`; (d) request sem agente dá `AgentNotRunning`; (e) quadro acima de MAX_FRAME_BYTES recusado antes de alocar.
+3. Roteiro 2: `cargo test -p clipsync-cli --test roteiro pair_` verde: host e join em 127.0.0.1, stdout dos dois contém o mesmo `Código: NNN NNN`; aceitar dos dois lados grava peers.toml nos dois com as permissões de `--allow`; recusar em um lado não grava em nenhum. (pairing do Rivet; `on_listen` dá a porta ao teste)
+4. Roteiro 3: `cargo test -p clipsync-cli --test roteiro mesh_` verde: dois `clipsync run` filhos, `status` dos dois mostra o par Connected, módulos e permissões; terceira identidade desconhecida recusada (status do servidor ou log com "par desconhecido"); matar e subir B de novo reconecta; trocar identity de B (novo init no mesmo dir/addr) gera PeerState::Blocked com "chave do par mudou".
+5. Roteiro 1: `printf 'notebook-a\nn\n' | cargo run -q -p clipsync-cli -- init --profile /tmp/cs-a` (e variante com flags) cria config.toml, identity.key.pem modo 600 (`stat -c %a`), peers.toml vazio; `init` sem resposta de clipboard grava `clipboard = false`; config com os dois módulos false é recusada com motivo.
+6. Roteiro 6: `pause` grava paused=true, `status` mostra pausado, `resume` volta; teste `pause_` verde.
+7. `clipsync diagnose` (M ou teste) lista sessão, DISPLAY e Input Leap/Barrier detectados (o Input Leap 3.0.3 Flatpak está rodando neste notebook: deve aparecer).
+8. clippy e fmt verdes em clipsync-cli e nos arquivos do Flux no core.
 
 ### S2 · Flux (clipboard)
 1. `cargo test -p clipsync-clipboard` verde com testes de módulo sobre `MemHub` + `FakeClipboard`: (a) A->B->C->A malha completa, 1 cópia em A: B e C recebem 1 write cada, total 2 ofertas, nenhuma reoferta após 1 s; (b) entrega duplicada do mesmo EventId: 1 aplicação, Ack Duplicate; (c) oferta com lamport antigo chega depois de uma nova: não sobrescreve (Stale, vai p/ caixa); (d) cópias locais X, Y, X geram 3 ofertas; X, X seguidas geram 1; (e) eco do próprio write_text (inclusive re-escrita idêntica) não gera oferta; (e2) `owner_takeover()` do fake (tomada do Mutter) não gera oferta; (e3) `clear()` e texto vazio não geram oferta; (f) B com clipboard desligado: A recebe Rejected(ModuleDisabled); (g) pausado: não envia nem aplica, resume não reenvia; (h) mode manual: InInbox, clipboard intacto; (i) Debug de ClipSnapshot e InboxItem sem conteúdo.
@@ -590,7 +694,7 @@ Todos os comandos rodam de `/home/kappxs/Documentos/ANTIGOS/clipsync` com `sourc
 6. P4c sem mão humana (sessão gráfica): `cargo test -p clipsync-input -- --ignored portal_loopback` verde, com até 3 tentativas (regra 11), imprimindo eventos recebidos > 0, p50, p95 e o número de tentativas.
 7. Token (M): rodar `probe input --emulate --yes` duas vezes seguidas; a segunda não abre diálogo do RemoteDesktop. Teclado na captura e posição do cursor após Release: registrar resultado na matriz (não verificados no spike).
 
-### I · Integração (Rivet, depois de S2 e S3 entregarem)
+### I · Integração (Flux desde v1.6, depois de S1, S2, S3 e S4)
 1. Roteiro 4 automático: `cargo test -p clipsync-cli --test roteiro clip_` verde: perfis com `--fake-adapters`, A e B com clipboard, B concede clipboard_in; `printf 'olá ção' | clipsync send --stdin --profile A` sai 0 com `notebook-b: aplicado`; `clipsync inbox --profile B` lista o item com `bytes=10` e preview `olá ção`; com `clipboard = false` em B, mesmo send sai 3 com "recusado: módulo clipboard desligado em notebook-b".
 2. Roteiro 6 automático: B pausado: send recusado com "pausado"; resume; nada reenviado (inbox de B inalterado).
 3. Roteiro 7: `cargo test --workspace` verde; `clipsync diagnose` lista portais (InputCapture v1, RemoteDesktop v2), data-control ausente, Input Leap ativo.
