@@ -1572,7 +1572,7 @@ Base informada: **30dcd43**, export e cache em `~/.cache/clipsync-verdict/{src,t
 | `cargo test -p clipsync-core mesh_` | 4 casos de malha e 1 TLS aprovados. QUIC real em loopback, Hello/PeerUp, desconhecido, reconexão e chave trocada/Blocked. |
 | `cargo test -p clipsync-core stream_and_datagram -- --nocapture` | 2 aprovados: uni + datagrama; controle 65.537 B recusado com STOP/RESET Protocol após ler apenas o prefixo. 300 amostras: RTT fluxo p95 629,432 µs; datagrama p95 405,839 µs. |
 | clippy/fmt do workspace | Ambos saem 0, sem warnings/diffs. |
-| S1.6 · pairing/agent pela CLI | Será completado no veredito S4, próximo na fila. Não afirmar aprovação desses testes antes da execução. |
+| S1.6 · pairing/agent pela CLI | Executado depois neste mesmo export: pairing passa, mas o roteiro mesh falha no conjunto e passa isolado. **Pendente de S4-1**, conforme veredito S4 abaixo. |
 
 **P2 — complemento para cumprir os tamanhos literais:** o teste do repositório usa StatsRequest/Stats e datagrama de quatro movimentos, sem comprovar 1 KiB/64 B. Harness de revisão compilado por stdin contra o core novo, sem alterar fonte: endpoints QUIC reais com as configurações TLS do core, verificação dos pins das identidades sintéticas, uma mesma Connection, fluxo uni com **1.024 B** e datagrama com **64 B**, eco conferido byte a byte. 20 aquecimentos + 300 RTTs medidos por modalidade em 127.0.0.1, sem perdas nesta execução. Resultado: **fluxo p50 168 µs / p95 432 µs; datagrama p50 117 µs / p95 313 µs**, ambos < 1 ms. Este complemento mede o transporte com essas cargas; o caminho ModuleHost/agent foi exercitado separadamente pelo teste oficial. Valores são RTT, não latência unilateral. Não generalizar para outra máquina/carga.
 
@@ -1949,7 +1949,433 @@ c915f90d97c2bc68460be58a977189311c4f98007498ed20687571a7d4681970  crates/clipsyn
 
 Evidência integral: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p` (s1-results.json, p2-exact-results.json, p2-exact-stdin.txt e inventários).
 
+### S4 · Flux · 2026-10-27T12:50:23-03:00 · Não passa (flake reproduzido)
+
+Base informada: **30dcd43**, export/cache em `~/.cache/clipsync-verdict/{src,target}`. Numeração atual v1.8: S4.1 perfil, S4.2 controle, S4.3/4 roteiros pair/mesh, S4.5 init, S4.6 pausa, S4.7 diagnose, S4.8 lint/fmt; I.1/I.2 clipboard e pausa. **Roteiro completo saiu 101**; repetição isolada de mesh_ saiu 0. Todos os hashes do export permaneceram idênticos durante a fila.
+
+1. **S4-1 · P2 · `crates/clipsync-cli/tests/roteiro.rs:230` (chamado em `:479`)** — o roteiro completo falha esperando `chave do par mudou` depois de reinicializar a identidade de B. Na execução do Argus, `cargo test -p clipsync-cli --test roteiro` saiu **101**, com **7 aprovados e 1 falho**; último status de B era **desconectado**, não Blocked. A repetição isolada `... roteiro mesh_` saiu **0**, 1 aprovado em 41,21 s. Confirma **flake observado** no caminho de troca de identidade (além do relato anterior do Maestro sob `cargo test --workspace`). Não há evidência para atribuir a causa exclusivamente à concorrência ou ao timeout. O WAIT do helper é 20 s; investigação da sincronização do teste e do estado/backoff do agente cabe a Flux/Rivet. Impacto: gate S4.4 e integração S1.6 não reproduzem o resultado de forma confiável. Nenhuma correção foi aplicada; sucesso isolado não substitui o gate completo falho.
+
+#### Cobertura e drift de contrato
+
+| Critério | Resultado |
+|---|---|
+| Perfil | `cargo test -p clipsync-core profile_`: 10 aprovados. Permissões, identidade/pin, peers, estado e validação cobertos. |
+| Controle | O comando literal `cargo test -p clipsync-core control_` sai 0, mas **não executa o teste do socket**: o nome é `serve_request_roundtrip_stale_socket_and_cleanup` (`tests/control.rs:22`). O único teste selecionado é o RESET QUIC de mesh.rs. Para fechar a evidência, rodei **`cargo test -p clipsync-core --test control`**, 1 aprovado; cobre request/serve, socket velho, agente duplicado, oversized e limpeza. Drift do filtro a corrigir no contrato ou no nome do teste. |
+| Init / pairing / pausa / I.1 / I.2 | Os 7 casos não mesh do roteiro completo passam: três init, dois pair, um pause e um clip. O caso clip confere bytes=10, envio aplicado, saída 3 com pausa/módulo desligado e inbox sem replay após resume. |
+| Mesh | Falha no gate completo, passa isolado; achado S4-1. O relato anterior de falha sob workspace veio do Maestro; **Argus não rodou workspace nesta rodada**. |
+| `--help`, flags e perfil | Comandos da §6 presentes; --profile funciona antes/depois do subcomando. `run --help` não anuncia --listen; `run --listen` sai 2 conforme v1.8. **Drift textual menor:** títulos/ajuda e erros automáticos do clap continuam em inglês (`Usage`, `Commands`, `Options`, `Print help`, `error: unexpected argument`), apesar da exigência geral de saída em português de §2/§6. Saída real abaixo. |
+| Diagnose | Executado por Argus: Ubuntu/Wayland, DISPLAY :0, Input Leap Flatpak em execução, Barrier não detectado, XFixes disponível, data-control ausente, InputCapture v1 e RemoteDesktop v2. Exit 0. Sem DISPLAY, marca as dependências do clipboard ausentes e continua com exit 0. |
+| Lints/formato | Clippy workspace --all-targets -D warnings e fmt --all --check já executados nesta mesma base na revisão S1, ambos 0; nenhuma mudança de fonte desde então. |
+
+**Códigos observados:** 0 em help/diagnose/init; 1 em módulos vazios, stdin vazio e probe sem DISPLAY; 2 em --listen removido e send sem --stdin; 3 na recusa de pareamento, send com destino pausado/desligado (asserções do roteiro e log manual); 4 em status/pause sem agente. Init com resposta vazia de clipboard grava desligado; `stat` observou diretório 700 e chave 600. Perfis de revisão novos ficaram em `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles`, sem usar os perfis do Maestro.
+
+**Evidência manual incorporada (executada pelo Maestro, não por Argus):** [roteiro-2026-10-27.md](evidencias/roteiro-2026-10-27.md), release **30dcd43**, SHA-256 `b944a4bd391a624a017177adb7436a89a2cefb11ae974fbeadc6c2a4a1422709`. §14 itens 1/2/3/4/4b/6/7 mostram init, pareamento com mesmo código, status conectado, clipboard sintético aplicado/inbox bytes=10, pausa com rc=3, resume sem replay, módulo desligado rc=3 e diagnose rc=0. Complementam S4 e I.1/I.2; esse roteiro não exercita toda a troca de identidade do teste mesh_ e não encerra S4-1. Item 5/input gráfico segue pendente do usuário.
+
+**Atualização de S1.6:** os testes diretos de S1 e P2 continuam aprovados no bloco anterior. A integração exercitada pelo roteiro CLI **não está aprovada** por S4-1; a leitura de segurança permanece com o auditor do Maestro.
+
+#### Saídas reais
+
+Comando: `cargo test -p clipsync-core profile_`; exit **0**.
+
+stdout:
+
+```text
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+
+running 10 tests
+test profile_both_modules_off_and_bad_names_are_refused ... ok
+test profile_state_defaults_to_running_and_roundtrips_pause ... ok
+test profile_peers_file_has_64_hex_ids_and_flat_permissions ... ok
+test profile_key_with_loose_mode_is_refused_and_missing_profile_says_so ... ok
+test profile_fake_adapters_are_written_to_the_module_tables ... ok
+test profile_identity_id_is_the_single_pin_function ... ok
+test profile_peers_upsert_replaces_by_id_or_name_and_rejects_duplicates_on_load ... ok
+test profile_init_creates_private_profile_and_reloads_same_identity ... ok
+test profile_config_with_unknown_key_or_wrong_version_is_an_error ... ok
+test profile_reinit_gets_a_new_identity_but_keeps_peers ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+```
+
+stderr:
+
+```text
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
+     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
+     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
+     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
+     Running tests/profile.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
+```
+
+Comando: `cargo test -p clipsync-core control_`; exit **0**.
+
+stdout:
+
+```text
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 1 test
+test stream_and_datagram_control_frame_over_limit_is_reset ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+```
+
+stderr:
+
+```text
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
+     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
+     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
+     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
+     Running tests/profile.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
+```
+
+Comando: `cargo test -p clipsync-core --test diag`; exit **0**.
+
+stdout:
+
+```text
+
+running 1 test
+test system_diag_reports_os_session_display_and_both_input_tools ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+```
+
+stderr:
+
+```text
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
+```
+
+Comando: `cargo test -p clipsync-cli --test roteiro`; exit **101**.
+
+stdout:
+
+```text
+
+running 8 tests
+test init_refuses_a_config_with_both_modules_off_and_says_why ... ok
+test init_creates_profile_files_with_private_modes ... ok
+test init_without_a_clipboard_answer_writes_false_and_flags_variant_works ... ok
+test pair_declined_on_one_side_saves_nothing_on_either ... ok
+test pair_shows_the_same_code_and_saves_permissions_on_both_sides ... ok
+test pause_blocks_and_resume_returns_and_state_survives ... ok
+test clip_send_arrives_in_the_inbox_and_is_refused_when_the_module_is_off ... ok
+test mesh_connects_refuses_strangers_reconnects_and_flags_a_changed_key ... FAILED
+
+failures:
+
+---- mesh_connects_refuses_strangers_reconnects_and_flags_a_changed_key stdout ----
+
+thread 'mesh_connects_refuses_strangers_reconnects_and_flags_a_changed_key' (565008) panicked at crates/clipsync-cli/tests/roteiro.rs:230:9:
+status never showed "chave do par mudou"; last: notebook-a · id c9df-b094-01b6-937e · escuta 0.0.0.0:39080 · ativo
+Pares:
+  notebook-b (3529-e380-26b4-df4f) · desconectado · 127.0.0.1:40958 · módulos do par: nenhum · permissões: clipboard-out
+Módulos:
+  clipboard: ligado · adaptador fake · último evento: nenhum · último bloqueio: nenhum
+  input: ligado · adaptador fake+fake · último evento: nenhum · último bloqueio: nenhum
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    mesh_connects_refuses_strangers_reconnects_and_flags_a_changed_key
+
+test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 40.64s
+
+```
+
+stderr:
+
+```text
+   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
+   Compiling clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+   Compiling clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+   Compiling clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.17s
+     Running tests/roteiro.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/roteiro-8bb0db80bf9a908a)
+error: test failed, to rerun pass `-p clipsync-cli --test roteiro`
+```
+
+Comando: `cargo test -p clipsync-cli --test roteiro mesh_`; exit **0**.
+
+stdout:
+
+```text
+
+running 1 test
+test mesh_connects_refuses_strangers_reconnects_and_flags_a_changed_key ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 41.21s
+
+```
+
+stderr:
+
+```text
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running tests/roteiro.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/roteiro-8bb0db80bf9a908a)
+```
+
+Comando: `cargo test -p clipsync-core --test control`; exit **0**.
+
+stdout:
+
+```text
+
+running 1 test
+test serve_request_roundtrip_stale_socket_and_cleanup ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+```
+
+stderr:
+
+```text
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
+```
+
+Comando: `cargo run -q -p clipsync-cli -- --help`; exit **0**.
+
+stdout:
+
+```text
+Teclado, mouse e clipboard entre os seus computadores
+
+Usage: clipsync [OPTIONS] <COMMAND>
+
+Commands:
+  init      Cria a identidade e a configuração deste dispositivo
+  status    Mostra o agente, os pares e os módulos
+  pair      Pareia este dispositivo com outro
+  run       Sobe o agente em primeiro plano (Ctrl-C encerra)
+  pause     Pausa o envio e a aplicação
+  resume    Retoma sem reenviar o que foi copiado na pausa
+  send      Envia o texto da entrada padrão aos pares autorizados
+  inbox     Lista a caixa de recebidos do clipboard
+  diagnose  Verifica sistema, clipboard e input
+  probe     Provas técnicas
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+      --profile <DIR>  Pasta do perfil (padrão: $CLIPSYNC_PROFILE, depois ~/.config/clipsync)
+  -h, --help           Print help
+  -V, --version        Print version
+```
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync run --help`; exit **0**.
+
+stdout:
+
+```text
+Sobe o agente em primeiro plano (Ctrl-C encerra)
+
+Usage: clipsync run [OPTIONS]
+
+Options:
+      --profile <DIR>  Pasta do perfil (padrão: $CLIPSYNC_PROFILE, depois ~/.config/clipsync)
+  -h, --help           Print help
+```
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync diagnose`; exit **0**.
+
+stdout:
+
+```text
+[ok] sistema · sistema operacional: Ubuntu 26.04.1 LTS
+[ok] sistema · sessão gráfica: wayland · ubuntu:GNOME
+[ok] sistema · DISPLAY / XWayland: DISPLAY=:0; servidor X11 respondendo no socket
+[ok] sistema · Input Leap: em execução (Flatpak): só detectado; o ClipSync não o altera e as duas ferramentas podem competir pelo mesmo mouse e teclado
+[aviso] sistema · Barrier: não detectado
+[ok] clipboard · ponte XWayland (DISPLAY): DISPLAY definido; conexão X11 aberta
+[ok] clipboard · XFixes: SelectionNotify do CLIPBOARD disponível
+[aviso] clipboard · data-control (Wayland): ausente (zwlr/ext_data_control): observação só pela ponte XWayland
+[ok] input · portal InputCapture: versão 1
+[ok] input · portal RemoteDesktop: versão 2; dispositivos BitFlags<DeviceType>(0b111, Keyboard | Pointer | Touchscreen)
+[ok] input · monitores: eDP-1
+[aviso] input · Input Leap / Barrier: em execução: input-leapc; podem disputar a captura
+```
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync init --profile /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a` · stdin nome + resposta vazia de clipboard; exit **0**.
+
+stdout:
+
+```text
+Módulos do ClipSync (nada é transmitido agora, e cada permissão é concedida depois, no pareamento):
+  • input: este computador pode enviar teclado e mouse a um par, e receber os de um par que você autorizar.
+  • clipboard: textos copiados aqui podem ser enviados a pares autorizados, e os deles chegam aqui.
+Nome deste dispositivo [kappxs-Aspire-A515-57]: Ligar o módulo de clipboard? [s/N] Perfil criado em /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a
+  dispositivo: argus-fixture
+  id: 03fd-b3c5-bb4c-a2d5
+  escuta: 0.0.0.0:47800
+  input: ligado · clipboard: desligado
+Nada foi transmitido.
+Próximo passo: `clipsync pair host` neste computador e `clipsync pair join ENDEREÇO` no outro.
+```
+
+Comando: `stat -c '%a %n' /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a/identity.key.pem`; exit **0**.
+
+stdout:
+
+```text
+700 /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a
+600 /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a/identity.key.pem
+```
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync status --profile /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a`; exit **4**.
+
+stdout:
+
+```text
+argus-fixture · escuta 0.0.0.0:47800 · input ligado · clipboard desligado · agente parado (suba com `clipsync run`)
+Pares:
+  nenhum par pareado
+```
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync --profile /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a pause`; exit **4**.
+
+stderr:
+
+```text
+erro: agente parado (suba com `clipsync run`)
+```
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync init --profile /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/off --name off --modules ''`; exit **1**.
+
+stderr:
+
+```text
+erro: pelo menos um módulo precisa estar ligado
+```
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync run --listen 127.0.0.1:0`; exit **2**.
+
+stderr:
+
+```text
+error: unexpected argument '--listen' found
+
+Usage: clipsync run [OPTIONS]
+
+For more information, try '--help'.
+```
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync send --profile /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a`; exit **2**.
+
+stderr:
+
+```text
+error: the following required arguments were not provided:
+  --stdin
+
+Usage: clipsync send --stdin --profile <DIR>
+
+For more information, try '--help'.
+```
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync send --stdin --profile /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a`; exit **1**.
+
+stderr:
+
+```text
+erro: nada para enviar: a entrada está vazia
+```
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync probe clipboard --write` · env -u DISPLAY; exit **1**.
+
+stderr:
+
+```text
+erro: a ponte de clipboard exige XWayland ativo (DISPLAY)
+```
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync diagnose` · env -u DISPLAY; exit **0**.
+
+stdout:
+
+```text
+[ok] sistema · sistema operacional: Ubuntu 26.04.1 LTS
+[ok] sistema · sessão gráfica: wayland · ubuntu:GNOME
+[ausente] sistema · DISPLAY / XWayland: DISPLAY indefinido: a ponte de clipboard exige XWayland ativo
+[ok] sistema · Input Leap: em execução (Flatpak): só detectado; o ClipSync não o altera e as duas ferramentas podem competir pelo mesmo mouse e teclado
+[aviso] sistema · Barrier: não detectado
+[ausente] clipboard · ponte XWayland (DISPLAY): a ponte de clipboard exige XWayland ativo (DISPLAY)
+[ausente] clipboard · XFixes: sem DISPLAY não há como verificar
+[aviso] clipboard · data-control (Wayland): ausente (zwlr/ext_data_control): observação só pela ponte XWayland
+[ok] input · portal InputCapture: versão 1
+[ok] input · portal RemoteDesktop: versão 2; dispositivos BitFlags<DeviceType>(0b111, Keyboard | Pointer | Touchscreen)
+[ok] input · monitores: eDP-1
+[aviso] input · Input Leap / Barrier: em execução: input-leapc; podem disputar a captura
+```
+
+Evidência integral: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p` (s4-results.json, s4-mesh-isolated.json, s4-extra-results.json, cli-binary.sha256 e after-all.json). Nenhum fonte foi editado, nenhum git executado.
+
 ## Findings
+
+### S4 · 30dcd43 · aberto
+
+1. **S4-1 · P2 · `crates/clipsync-cli/tests/roteiro.rs:230` (chamado em `:479`)** — o roteiro completo falha esperando `chave do par mudou` depois de reinicializar a identidade de B. Na execução do Argus, `cargo test -p clipsync-cli --test roteiro` saiu **101**, com **7 aprovados e 1 falho**; último status de B era **desconectado**, não Blocked. A repetição isolada `... roteiro mesh_` saiu **0**, 1 aprovado em 41,21 s. Confirma **flake observado** no caminho de troca de identidade (além do relato anterior do Maestro sob `cargo test --workspace`). Não há evidência para atribuir a causa exclusivamente à concorrência ou ao timeout. O WAIT do helper é 20 s; investigação da sincronização do teste e do estado/backoff do agente cabe a Flux/Rivet. Impacto: gate S4.4 e integração S1.6 não reproduzem o resultado de forma confiável. Nenhuma correção foi aplicada; sucesso isolado não substitui o gate completo falho.
+
 
 ### S3 · 3eaa730 · histórico — encerrados na v1.1 (30dcd43)
 
