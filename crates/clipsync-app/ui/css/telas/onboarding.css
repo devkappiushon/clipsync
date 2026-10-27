@@ -1,1 +1,95 @@
 /* Tela: onboarding. Só tokens de tokens.css; classes prefixadas com .onboarding. */
+
+.onboarding {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding-top: var(--s-4);
+}
+
+.onboarding__marca {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+.onboarding__passos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.onboarding__passos li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.onboarding__passos li[aria-current="step"] {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.onboarding__numero {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--raio);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.onboarding__passos li[aria-current="step"] .onboarding__numero {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.onboarding__passo--feito .onboarding__numero {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+  color: var(--accent);
+}
+
+.onboarding__impressao {
+  font-size: var(--fs-lg);
+  letter-spacing: 0.04em;
+}
+
+.onboarding__modulos {
+  display: grid;
+  gap: var(--s-3);
+}
+
+.onboarding__resultados {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.onboarding__resultados li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+}
+
+.onboarding__resultado-topo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
