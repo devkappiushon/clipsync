@@ -1,0 +1,28 @@
+[package]
+name = "clipsync-app"
+description = "ClipSync: app desktop (Tauri 2) com o agente no mesmo processo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "clipsync-app"
+path = "src/main.rs"
+
+[dependencies]
+# TODO(contrato §12.1 e §12.3): quando o crate do Rivet existir, trocar o stub `src/ui.rs` por
+# `clipsync-ui = { path = "../clipsync-ui" }`. O app depende só de ui + tauri (grafo da §12.1).
+tauri.workspace = true
+tauri-plugin-notification.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[lints]
+workspace = true

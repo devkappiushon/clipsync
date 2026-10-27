@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Janela principal: núcleo do Tauri (janela, eventos), o comando clipsync do app e a notificação do sistema. Nenhuma URL remota.",
+  "windows": ["main"],
+  "permissions": ["core:default", "notification:default", "allow-clipsync"]
+}

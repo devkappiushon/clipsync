@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>ClipSync</title>
+  <rect width="512" height="512" rx="112" fill="#1f4e8c"/>
+  <g fill="#ffffff">
+    <rect x="120" y="188" width="210" height="40"/>
+    <polygon points="330,150 330,266 398,208"/>
+    <rect x="182" y="284" width="210" height="40"/>
+    <polygon points="182,246 182,362 114,304"/>
+  </g>
+</svg>
