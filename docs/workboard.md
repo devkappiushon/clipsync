@@ -1,6 +1,6 @@
 # workboard · ClipSync MVP de hoje
 
-**Estado: MVP de 2026-10-27 FECHADO.** S0 a S4 e I passam no warden (Argus). Segurança liberada, com 0 bloqueantes (`docs/seguranca.md`). **S5 (Windows e release): código entregue, e a segurança LIBEROU** (Sentinel 10777b4: 0 BLOCKER, 3 MÉDIO, 8 BAIXO). **Release v0.1.0 publicado** em 2026-10-27, a partir de c04de08. **CI ainda não verde no Windows:** 1 teste com corrida em `tests/control.rs`, que o Rivet está corrigindo. Pendências consolidadas e próxima fatia no fim deste arquivo.
+**Estado: MVP de 2026-10-27 FECHADO.** S0 a S4 e I passam no warden (Argus). Segurança liberada, com 0 bloqueantes (`docs/seguranca.md`). **S5 (Windows e release): código entregue, e a segurança LIBEROU** (Sentinel 10777b4: 0 BLOCKER, 3 MÉDIO, 8 BAIXO). **Release v0.1.0 publicado** em 2026-10-27, a partir de c04de08. **CI verde nos dois runners** em ec8eee3 (run 40576377462). Os três critérios da S5 passam: a S5 está FECHADA. O próximo release sai de ec8eee3 ou depois. Pendências consolidadas e próxima fatia no fim deste arquivo.
 
 Contrato: `docs/contrato.md` (v1.13). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Git: até a S4 só o Maestro commitava; na S5 cada builder commita os próprios arquivos na main local, sem push (contrato §11 regra 12). Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
 
@@ -46,7 +46,7 @@ Estado: PASSA no warden (após reemissão)
 Pronto: §9 I itens 1 a 4.
 Estado: PASSA no warden
 
-## S5 · Windows e release (v1.11 a v1.13; código fechado em 2026-10-27)
+## S5 · Windows e release (v1.11 a v1.13; FECHADA em 2026-10-27: release em c04de08, CI verde em ec8eee3)
 Regras: contrato §11. Pronto: §9 S5 itens 1 a 10. Os três critérios do Maestro são:
 - (A) checagem de compilação Windows verde no workspace (itens 1 a 7);
 - (B) CI verde nos dois runners (item 8);
@@ -100,10 +100,17 @@ Verificação local: `export PATH=$HOME/.cargo/bin:$PATH`, depois `cargo clippy 
     - `clipsync-v0.1.0-linux-x86_64.tar.gz`: 3.988.409 bytes. O binário tem 8,3 MB (strip + LTO) e roda neste notebook: `clipsync --version` dá `clipsync 0.1.0`.
     - `clipsync-v0.1.0-windows-x86_64.zip`: 2.672.545 bytes. O `clipsync.exe` tem 6.089.216 bytes, PE32+ x86-64.
     - `sha256sum -c SHA256SUMS` deu OK nos dois: tar.gz `6d641b52…` e zip `03acc283…`.
-  - **Critério B, CI nos dois runners: NÃO PASSA ainda.**
-    - CI run 40573127883 no mesmo commit. O job Linux ficou verde.
-    - No job Windows, clippy e build ficaram verdes, e 46 testes passaram. Falhou 1: `tests/control.rs::pipe_name_is_drawn_per_serve_published_and_removed`, com `ERROR_PIPE_BUSY` ao abrir o pipe cru logo depois da sonda. É uma corrida no teste, e o Rivet está corrigindo.
-    - O binário publicado não é afetado: o código é o mesmo, e a falha está no teste. O critério B só passa com o job Windows verde num commit novo.
+  - **Critério B, CI nos dois runners: PASSA** (2026-10-27, relato do Maestro).
+    - CI run 40576377462 no HEAD ec8eee3. O job Linux ficou verde. O job Windows também: clippy, build e 127 testes passando, 0 falhas.
+    - É a primeira execução completa de core, proto, clipboard e cli no Windows, incluindo mesh com QUIC e o named pipe.
+    - Caminho até lá:
+      - run 40573127883: 1 falha de corrida no teste do pipe (`ERROR_PIPE_BUSY`), corrigida em e4d8ab1;
+      - run 40574717785: 1 falha porque o relógio por processo devolvia 0 na primeira chamada, corrigida em ec8eee3;
+      - 38814c9 pôs `--no-fail-fast` no job Windows.
+  - **O release v0.1.0 continua o de c04de08. O próximo release leva ec8eee3.**
+    - Depois de c04de08, o binário só mudou no `mono_us()` do Windows (proto `time.rs`), que nunca mais devolve 0.
+    - No binário 0.1.0, o 0 só podia sair na primeira chamada do processo, e nenhum código de produção decide por esse valor. O Keel conferiu por grep em 2026-10-27: no clipboard, `mono_us()` só alimenta `ChangeEvent.t_mono_us` (`poll.rs`, `x11.rs`, `fake.rs`) e o texto sintético do probe. O `module.rs` não lê `t_mono_us`. O input, único leitor de latência, não roda no Windows.
+    - Por isso o comportamento do 0.1.0 no Windows não muda. Os outros commits (e4d8ab1, 38814c9) só tocam teste e CI.
   - O tag publicou com o job Windows do CI vermelho. É o caso que o S5-08 descreve: o ruleset de tag `v*` deve exigir CI verde antes de publicar.
 - **Licença (v1.12, decisão do Maestro):** a 0.1.0 sai num repositório privado, sem LICENSE; o README segue com "a definir". A licença passa a ser pré-condição do primeiro release público (pendência 1). Push e tag são só do usuário.
 
@@ -207,7 +214,7 @@ Commits 0e76039, f54c995, 8daf2f5 e 3c2bad0. A implementação (Tauri) segue dep
    - S5-10: actions fixadas por tag móvel, e `dtolnay/rust-toolchain@master` no CI. Correção: fixar por SHA.
    - S5-11: o `SHA256SUMS` não prova a origem. Correção: **attestations** (`actions/attest-build-provenance`) sobre os artefatos e o `SHA256SUMS`.
 4. **Prova em Windows real:**
-   - pelo CI: o job Windows já rodou (run 40573127883: clippy e build verdes, 46 testes ok, 1 falha de corrida em `pipe_name_is_drawn_per_serve_published_and_removed`, com o Rivet corrigindo). Falta ficar verde;
+   - pelo CI: FEITO. O run 40576377462 em ec8eee3 rodou 127 testes no runner Windows, com 0 falhas, incluindo mesh (QUIC) e pipe. Isso prova o código no Windows, não o uso real: o clipboard do Windows segue experimental;
    - numa máquina do usuário: o roteiro de 10 minutos com duas contas do Sentinel (`docs/seguranca.md`, "Como confirmar em Windows"), que confirma ou derruba o S5-01 e o S5-04, mais o item 3 das provas pendentes abaixo.
 
 ### Qualidade
