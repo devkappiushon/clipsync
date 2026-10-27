@@ -16,6 +16,8 @@ pub const MAX_REASON_BYTES: usize = 256;
 pub const MAX_DATAGRAM_BYTES: usize = 1_200;
 pub const MAX_EVENTS_PER_DATAGRAM: usize = 32;
 pub const MAX_INBOX_ITEMS: usize = 50;
+/// Ring of `AgentStatus::recent_blocks`.
+pub const MAX_RECENT_BLOCKS: usize = 20;
 pub const CLIP_TTL_MS: u32 = 600_000;
 pub const SEEN_EVENTS_CAP: usize = 1_024;
 pub const PAIR_WINDOW_SECS: u64 = 120;

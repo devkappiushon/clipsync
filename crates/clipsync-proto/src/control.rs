@@ -11,6 +11,7 @@ use crate::ids::{EventId, ModuleKind, ModuleSet, PeerId};
 use crate::input::LoopbackStats;
 use crate::module::PeerPerms;
 use crate::redact::{ByteLen, Redacted};
+use crate::wire::RejectReason;
 
 /// `Debug` is manual: ClipSend text is redacted.
 #[derive(Serialize, Deserialize)]
@@ -57,6 +58,30 @@ pub struct AgentStatus {
     pub paused: bool,
     pub peers: Vec<PeerStatus>,
     pub modules: Vec<ModuleStatus>,
+    /// Newest first, at most MAX_RECENT_BLOCKS. `default`: an older agent sends none.
+    #[serde(default)]
+    pub recent_blocks: Vec<BlockRecord>,
+}
+
+/// One refusal by the mesh. Facts only, never content.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct BlockRecord {
+    /// Wall clock; display only.
+    pub at_unix_ms: u64,
+    pub peer: PeerId,
+    pub peer_name: String,
+    pub cause: BlockCause,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockCause {
+    /// A message from the peer failed `authorize_inbound`.
+    Inbound {
+        kind: ModuleKind,
+        reason: RejectReason,
+    },
+    /// The peer presented a key other than the pinned one; its dialer stopped.
+    KeyChanged,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -365,11 +365,72 @@ async fn mesh_changed_key_is_blocked_with_constant_reason() {
             })
     })
     .await;
+    let blocks = status(&a.profile).await.unwrap().recent_blocks;
+    assert!(
+        matches!(&blocks[..], [r] if r.peer == b.id && r.peer_name == "b" && r.cause == BlockCause::KeyChanged && r.at_unix_ms > 0),
+        "{blocks:?}"
+    );
     // Blocked: A does not dial again.
     let again = tokio::time::timeout(Duration::from_secs(3), ep.accept()).await;
     assert!(again.is_err(), "A must not redial a blocked peer");
     ep.close(0u32.into(), b"");
     stop(ra).await;
+}
+
+/// L6: every refusal of `authorize_inbound` lands in `recent_blocks`, newest first, capped, without content.
+#[tokio::test(flavor = "multi_thread")]
+async fn mesh_inbound_refusals_are_recorded_newest_first_and_capped() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (node(&dir, "a"), node(&dir, "b"));
+    trust(&a, &b, "b", ALL);
+    // B lets A do nothing: every offer from A is refused at B's door.
+    trust(&b, &a, "a", PeerPerms::default());
+    let (mut ra, rb) = (start(&a, false), start(&b, false));
+    next_peer_up(&mut ra.clip).await;
+    let host = (&mut ra._clip_host).await.unwrap();
+    const SECRET: &str = "segredo-que-nao-pode-vazar";
+    for _ in 0..MAX_RECENT_BLOCKS + 3 {
+        let offer = ClipOffer {
+            id: EventId::random(),
+            lamport: 1,
+            mime: MIME_TEXT_UTF8.into(),
+            text: SECRET.into(),
+            created_unix_ms: 1,
+            ttl_ms: CLIP_TTL_MS,
+        };
+        host.send_reliable(b.id, ModuleMsg::Clip(ClipMsg::Offer(offer)))
+            .await
+            .unwrap();
+    }
+    wait_until("B records the refusals", || async {
+        status(&b.profile)
+            .await
+            .is_some_and(|s| s.recent_blocks.len() == MAX_RECENT_BLOCKS)
+    })
+    .await;
+    let s = status(&b.profile).await.unwrap();
+    for r in &s.recent_blocks {
+        assert_eq!((r.peer, r.peer_name.as_str()), (a.id, "a"));
+        assert_eq!(
+            r.cause,
+            BlockCause::Inbound {
+                kind: ModuleKind::Clipboard,
+                reason: RejectReason::NotAuthorized
+            }
+        );
+    }
+    assert!(
+        s.recent_blocks
+            .windows(2)
+            .all(|w| w[0].at_unix_ms >= w[1].at_unix_ms),
+        "newest first"
+    );
+    assert!(!format!("{s:?}").contains(SECRET));
+    assert!(!serde_json::to_string(&s).unwrap().contains(SECRET));
+    // A was not refused by anyone.
+    assert!(status(&a.profile).await.unwrap().recent_blocks.is_empty());
+    stop(ra).await;
+    stop(rb).await;
 }
 
 fn pct(mut v: Vec<Duration>, q: f64) -> Duration {

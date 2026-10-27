@@ -199,6 +199,7 @@ impl Agent {
             paused: self.mesh.paused(),
             peers: self.mesh.peer_statuses(),
             modules,
+            recent_blocks: self.mesh.recent_blocks(),
         }
     }
 

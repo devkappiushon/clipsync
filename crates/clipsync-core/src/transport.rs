@@ -5,19 +5,19 @@
 //! nothing reaches the modules. Module frames ride one uni stream each, input rides datagrams,
 //! and every inbound message passes `authorize_inbound*` here, before any module sees it.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clipsync_proto::{
-    ALPN_MESH, ClipMsg, CloseCode, Datagram, EventId, Frame, Hello, InputDatagram,
-    MAX_CONTROL_FRAME_BYTES, MAX_FRAME_BYTES, MIN_PROTOCOL_VERSION, ModuleHost, ModuleInput,
-    ModuleKind, ModuleMsg, ModuleSet, PROTOCOL_VERSION, PeerId, PeerInfo, PeerPerms, PeerState,
-    PeerStatus, SendError, WireError, authorize_inbound, authorize_inbound_datagram,
-    authorize_outbound, authorize_outbound_datagram, decode_datagram, encode_datagram,
-    encode_frame, read_frame, write_frame,
+    ALPN_MESH, BlockCause, BlockRecord, ClipMsg, CloseCode, Datagram, EventId, Frame, Hello,
+    InputDatagram, MAX_CONTROL_FRAME_BYTES, MAX_FRAME_BYTES, MAX_RECENT_BLOCKS,
+    MIN_PROTOCOL_VERSION, ModuleHost, ModuleInput, ModuleKind, ModuleMsg, ModuleSet,
+    PROTOCOL_VERSION, PeerId, PeerInfo, PeerPerms, PeerState, PeerStatus, SendError, WireError,
+    authorize_inbound, authorize_inbound_datagram, authorize_outbound, authorize_outbound_datagram,
+    decode_datagram, encode_datagram, encode_frame, read_frame, write_frame,
 };
 use quinn::{Connection, Endpoint, RecvStream, SendStream, VarInt};
 use tokio::sync::{Notify, mpsc, watch};
@@ -100,6 +100,8 @@ struct Inner {
     modules: HashMap<ModuleKind, mpsc::Sender<ModuleInput>>,
     paused: AtomicBool,
     peers: Mutex<HashMap<PeerId, Slot>>,
+    /// Newest first, at most MAX_RECENT_BLOCKS. Locked on its own, never inside `peers`.
+    blocks: Mutex<VecDeque<BlockRecord>>,
     next_gen: AtomicU64,
     stop: watch::Sender<bool>,
 }
@@ -211,6 +213,7 @@ impl Mesh {
             modules: opts.modules,
             paused: AtomicBool::new(opts.paused),
             peers: Mutex::new(slots),
+            blocks: Mutex::new(VecDeque::new()),
             next_gen: AtomicU64::new(1),
             stop: watch::Sender::new(false),
         });
@@ -268,6 +271,17 @@ impl Mesh {
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
         out
+    }
+
+    /// What the mesh refused lately, newest first.
+    pub fn recent_blocks(&self) -> Vec<BlockRecord> {
+        self.inner
+            .blocks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .cloned()
+            .collect()
     }
 
     /// New peers.toml (ReloadPeers): pins change at once; removed peers are closed and announced
@@ -362,6 +376,25 @@ impl Inner {
 
     fn perms_of(&self, peer: &PeerId) -> Option<PeerPerms> {
         self.lock().get(peer).map(|s| s.entry.perms)
+    }
+
+    /// Call with `peers` unlocked: the name is read from it.
+    fn record_block(&self, peer: PeerId, cause: BlockCause) {
+        let peer_name = self
+            .lock()
+            .get(&peer)
+            .map_or_else(|| peer.short(), |s| s.entry.name.clone());
+        let at_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+        let mut blocks = self.blocks.lock().unwrap_or_else(PoisonError::into_inner);
+        blocks.push_front(BlockRecord {
+            at_unix_ms,
+            peer,
+            peer_name,
+            cause,
+        });
+        blocks.truncate(MAX_RECENT_BLOCKS);
     }
 
     async fn broadcast(&self, make: impl Fn() -> ModuleInput) {
@@ -504,6 +537,7 @@ impl Inner {
                             reason: msg::KEY_CHANGED.to_string(),
                         };
                     }
+                    self.record_block(peer, BlockCause::KeyChanged);
                     return;
                 }
                 Err(DialFail::Other(e)) => {
@@ -738,6 +772,13 @@ impl Inner {
                             .await
                     }
                     Err(reason) => {
+                        self.record_block(
+                            from,
+                            BlockCause::Inbound {
+                                kind: m.kind(),
+                                reason,
+                            },
+                        );
                         let reply = Frame::Rejected {
                             kind: m.kind(),
                             ref_id: offer_id(&m),
