@@ -1,4 +1,6 @@
-# feature-spec · ClipSync MVP de hoje (contrato v1, Keel, 2026-10-27)
+# Contrato · ClipSync MVP de hoje (v1.1, Keel, 2026-10-27)
+
+v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -48,7 +50,7 @@ Build: frio ~6 min, incremental ~30 s. Os quatro builders trabalham no MESMO che
 ```
 DIR/
   config.toml         configuração versionada (usuário edita)
-  identity.key.pem    chave privada Ed25519 PKCS#8, modo 0600
+  identity.key.pem    chave privada ECDSA P-256 PKCS#8, modo 0600 (ADR 0003)
   identity.cert.pem   certificado autoassinado (rcgen), CN = device_name
   peers.toml          pares confiáveis + permissões (escrito por pair; usuário pode editar)
   state.toml          estado persistido pelo agente: paused
@@ -384,7 +386,7 @@ pub mod control { pub async fn request(p: &Profile, req: ControlRequest) -> Resu
 pub mod diag { pub async fn system() -> Vec<DiagItem>; } // SO, XDG_SESSION_TYPE, DISPLAY/XWayland, Input Leap e Barrier (processos em /proc, inclusive flatpak), só detecta e orienta
 ```
 Regras de transporte (implementação livre dentro delas):
-1. Identidade: Ed25519 (rcgen), PeerId = SHA-256(SPKI DER). **Um verificador único** (`core::tls::PinVerifier`) implementa `ClientCertVerifier` e `ServerCertVerifier`: valida o X.509 com o próprio cert como âncora (autoassinado), verifica a assinatura TLS 1.3 real com o provider ring, e o pino é SHA-256 do SPKI. Modo malha: pino precisa estar em peers.toml. Modo pareamento (ALPN_PAIR): aceita qualquer pino, mas exige posse da chave. Cert de cliente obrigatório nos dois modos (TLS mútuo).
+1. Identidade: ECDSA P-256 (rcgen; ADR 0003), PeerId = SHA-256(SPKI DER). **Um verificador único** (`core::tls::PinVerifier`) implementa `ClientCertVerifier` e `ServerCertVerifier`: valida o X.509 com o próprio cert como âncora (autoassinado), verifica a assinatura TLS 1.3 real com o provider ring, e o pino é SHA-256 do SPKI. Modo malha: pino precisa estar em peers.toml. Modo pareamento (ALPN_PAIR): aceita qualquer pino, mas exige posse da chave. Cert de cliente obrigatório nos dois modos (TLS mútuo).
 2. **Retomada TLS 1.3 desligada (obrigatório)**, senão o verificador não roda na reconexão. Servidor: `session_storage = NoServerSessionStorage`, `send_tls13_tickets = 0`. Cliente: `resumption = Resumption::disabled()`. Vale para malha e pareamento.
 3. Pareamento: host escuta em porta efêmera (`--port 0` padrão), imprime `Aguardando em <addr>:<porta> (expira em 2 min)`. No fluxo de controle aberto pelo join (B): Hello B->A, Hello A->B, depois o compromisso de `PairMsg` (§4): B envia Commit{H(nB)}, A envia Nonce{nA}, B revela nB, A confere H(nB). Código = u64 BE de `export_keying_material(8 bytes, PAIR_EXPORTER_LABEL, contexto nB||nA)` mod 1_000_000, "NNN NNN". nA e nB: 32 bytes aleatórios novos por tentativa. **Uma tentativa por janela**: qualquer falha (hash não confere, recusa, timeout, frame fora de ordem) fecha com CloseCode::PairFailed e encerra `pair host` (sai 3). Conexões extras durante a tentativa são recusadas. Cada lado mostra código + nome + id curto e pergunta permissões só dos módulos ligados (input_in com aviso de confiança total). Cada lado envia Confirm{accept}; grava peers.toml **só se os dois aceitarem**. Se o agente estiver rodando, manda `ReloadPeers`.
 4. Malha: `run` escuta em `network.listen`, disca cada par (backoff 1 s até 30 s, jitter ±20%). Fluxo bidi de controle aberto por quem disca. **Conectado só depois de Hello de aplicação autenticado nos DOIS sentidos** (o `connect()` do quinn volta antes de o servidor validar o cert do cliente): antes disso nada de PeerUp, nada de módulo, status = Connecting. Versão incompatível fecha com CloseCode::Version. Mensagens de módulo: um fluxo uni por frame. Datagramas: `encode_datagram`. keep-alive 5 s, idle 15 s, datagramas ligados.
