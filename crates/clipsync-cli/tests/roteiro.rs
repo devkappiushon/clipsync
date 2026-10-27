@@ -10,7 +10,15 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 const BIN: &str = env!("CARGO_BIN_EXE_clipsync");
-const WAIT: Duration = Duration::from_secs(20);
+/// Generous on purpose: under a loaded `cargo test --workspace` the mesh needs the dialing delay of the
+/// larger PeerId (2 s) plus backoff retries before a peer shows as connected.
+const WAIT: Duration = Duration::from_secs(60);
+
+/// These tests start real agents and share the CPU with the rest of the workspace: run them one at a time.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn cmd(profile: &Path, args: &[&str]) -> Command {
     let mut c = Command::new(BIN);
@@ -286,6 +294,7 @@ fn mesh(a_modules: &str, b_modules: &str, a_allow: &str, b_allow: &str) -> Mesh 
 
 #[test]
 fn init_creates_profile_files_with_private_modes() {
+    let _serial = serial();
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("cs-a");
@@ -311,6 +320,7 @@ fn init_creates_profile_files_with_private_modes() {
 
 #[test]
 fn init_without_a_clipboard_answer_writes_false_and_flags_variant_works() {
+    let _serial = serial();
     let tmp = tempfile::tempdir().unwrap();
     let (code, ..) = run(&tmp.path().join("x"), &["init"], "so-o-nome\n");
     assert_eq!(code, 0);
@@ -341,6 +351,7 @@ fn init_without_a_clipboard_answer_writes_false_and_flags_variant_works() {
 
 #[test]
 fn init_refuses_a_config_with_both_modules_off_and_says_why() {
+    let _serial = serial();
     let tmp = tempfile::tempdir().unwrap();
     let (code, _, err) = run(
         &tmp.path().join("z"),
@@ -356,6 +367,7 @@ fn init_refuses_a_config_with_both_modules_off_and_says_why() {
 
 #[test]
 fn pair_shows_the_same_code_and_saves_permissions_on_both_sides() {
+    let _serial = serial();
     let tmp = tempfile::tempdir().unwrap();
     let (a, b) = (tmp.path().join("a"), tmp.path().join("b"));
     init(&a, "notebook-a", "input,clipboard", 47810);
@@ -392,6 +404,7 @@ fn pair_shows_the_same_code_and_saves_permissions_on_both_sides() {
 
 #[test]
 fn pair_declined_on_one_side_saves_nothing_on_either() {
+    let _serial = serial();
     let tmp = tempfile::tempdir().unwrap();
     let (a, b) = (tmp.path().join("a"), tmp.path().join("b"));
     init(&a, "notebook-a", "clipboard", 47812);
@@ -406,6 +419,7 @@ fn pair_declined_on_one_side_saves_nothing_on_either() {
 
 #[test]
 fn mesh_connects_refuses_strangers_reconnects_and_flags_a_changed_key() {
+    let _serial = serial();
     let mut m = mesh(
         "input,clipboard",
         "input,clipboard",
@@ -484,6 +498,7 @@ fn mesh_connects_refuses_strangers_reconnects_and_flags_a_changed_key() {
 
 #[test]
 fn pause_blocks_and_resume_returns_and_state_survives() {
+    let _serial = serial();
     let m = mesh("clipboard", "clipboard", "clipboard-out", "clipboard-in");
     let (code, out, _) = run(&m.b, &["pause"], "");
     assert_eq!(code, 0);
@@ -518,6 +533,7 @@ fn pause_blocks_and_resume_returns_and_state_survives() {
 
 #[test]
 fn clip_send_arrives_in_the_inbox_and_is_refused_when_the_module_is_off() {
+    let _serial = serial();
     let m = mesh("clipboard", "clipboard", "clipboard-out", "clipboard-in");
     let (code, out, err) = run(&m.a, &["send", "--stdin"], "olá ção");
     assert_eq!(code, 0, "{err}");

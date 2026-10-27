@@ -1560,6 +1560,395 @@ c3957b861828cfef5e00f5b238350b5a233ec0b289f48f2f4a322e67731b794f  s3-bucket-stdi
 
 Evidências completas e hashes do export: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p` (s3-results.json, s3-boundary-results.json, before.json/after-s3.json).
 
+### S1 · Rivet · 2026-10-27T12:45:23-03:00 · Passa nos testes solicitados; auditoria separada
+
+Base informada: **30dcd43**, export e cache em `~/.cache/clipsync-verdict/{src,target}`. Contrato v1.8: numeração atual S1.1 proto; S1.2 pairing; S1.3 TLS; S1.4 P2; S1.5 malha; S1.6 comportamento exercitado pela CLI; S1.7 lint/fmt. O pedido usava a numeração antiga (incluindo S1.10); esta matriz mapeia pelos critérios e nomes dos comandos, sem omitir TLS/pareamento. **Todos os comandos desta revisão saíram 0.** Inventário do export idêntico antes/depois.
+
+| Comando/critério | Resultado observado |
+|---|---|
+| `cargo test -p clipsync-proto` | 40 testes aprovados: limites/validação, Debug, autorização, MemHub e Unreachable fora do wire. |
+| `cargo test -p clipsync-core tls_` | 5 aprovados: contador nas reconexões, desconhecido, chave trocada, modo de pairing e atualização de pins. |
+| `cargo test -p clipsync-core pairing_` | 8 aprovados, incluindo 7 casos de pairing e um teste TLS cujo nome contém pairing_. Commit inválido, conexão extra, janela após falha, nonces, confirmação bilateral e recusa estão cobertos. |
+| `cargo test -p clipsync-core mesh_` | 4 casos de malha e 1 TLS aprovados. QUIC real em loopback, Hello/PeerUp, desconhecido, reconexão e chave trocada/Blocked. |
+| `cargo test -p clipsync-core stream_and_datagram -- --nocapture` | 2 aprovados: uni + datagrama; controle 65.537 B recusado com STOP/RESET Protocol após ler apenas o prefixo. 300 amostras: RTT fluxo p95 629,432 µs; datagrama p95 405,839 µs. |
+| clippy/fmt do workspace | Ambos saem 0, sem warnings/diffs. |
+| S1.6 · pairing/agent pela CLI | Será completado no veredito S4, próximo na fila. Não afirmar aprovação desses testes antes da execução. |
+
+**P2 — complemento para cumprir os tamanhos literais:** o teste do repositório usa StatsRequest/Stats e datagrama de quatro movimentos, sem comprovar 1 KiB/64 B. Harness de revisão compilado por stdin contra o core novo, sem alterar fonte: endpoints QUIC reais com as configurações TLS do core, verificação dos pins das identidades sintéticas, uma mesma Connection, fluxo uni com **1.024 B** e datagrama com **64 B**, eco conferido byte a byte. 20 aquecimentos + 300 RTTs medidos por modalidade em 127.0.0.1, sem perdas nesta execução. Resultado: **fluxo p50 168 µs / p95 432 µs; datagrama p50 117 µs / p95 313 µs**, ambos < 1 ms. Este complemento mede o transporte com essas cargas; o caminho ModuleHost/agent foi exercitado separadamente pelo teste oficial. Valores são RTT, não latência unilateral. Não generalizar para outra máquina/carga.
+
+**Captura de tráfego:** não verificada. tshark ausente, tcpdump presente; o Maestro registra ausência de CAP_NET_RAW em `docs/evidencias/roteiro-2026-10-27.md`. Sem sudo e sem captura de tráfego alheio. As medições acima são comunicadas ao Maestro para o workboard; Argus escreve somente verdicts.
+
+**Limite desta aprovação:** leitura de segurança/cripto do S1 ficou com o auditor recrutado pelo Maestro. Aqui se verificaram execução, cobertura e drift de contrato. Os testes de reason foram avaliados com a exceção v1.7 (strings constantes do rustls no handshake, CloseCode em closes de aplicação). Este bloco não substitui a auditoria nem aprova toda a integração.
+
+#### Saídas reais
+
+Comando: `cargo test -p clipsync-proto`; exit **0**.
+
+stdout:
+
+```text
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+test inbound_datagram_table ... ok
+test outbound_datagram_table ... ok
+test inbound_table ... ok
+test outbound_table ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 7 tests
+test event_ids_are_random ... ok
+test module_set ... ok
+test peer_id_from_hex_errors ... ok
+test peer_id_hex_roundtrip_and_short_form ... ok
+test reject_reasons_have_portuguese_text ... ok
+test peer_id_is_sha256_of_spki ... ok
+test mono_us_is_monotonic ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 7 tests
+test link_delivers_peer_up_with_grants_and_remote_modules ... ok
+test inbound_refusal_becomes_rejected_at_sender ... ok
+test paused_destination_rejects_offer_but_ack_passes ... ok
+test delivers_authorized_offer ... ok
+test outbound_rules_return_errors ... ok
+test datagrams_follow_the_same_rules ... ok
+test invalid_or_oversized_message_is_not_sent ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 5 tests
+test control_request_debug_hides_clip_send_text ... ok
+test clip_offer_debug_hides_text ... ok
+test inbox_item_debug_hides_preview ... ok
+test key_and_button_debug_hide_code ... ok
+test control_messages_roundtrip_as_json ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 17 tests
+test close_codes_are_stable_short_tokens ... ok
+test datagram_over_1200_bytes_is_refused ... ok
+test datagram_with_32_events_fits_and_roundtrips ... ok
+test encode_refuses_body_over_max ... ok
+test garbage_and_trailing_bytes_are_decode_errors ... ok
+test module_msg_kind ... ok
+test control_frame_of_64k_plus_one_is_refused ... ok
+test unreachable_never_goes_on_the_wire ... ok
+test every_frame_variant_roundtrips ... ok
+test oversized_frame_is_refused_before_allocating ... ok
+test validate_device_name_bounds ... ok
+test validate_hello_min_version ... ok
+test validate_refuses_nan_and_infinite_floats ... ok
+test validate_refuses_33_events ... ok
+test validate_refuses_pos_outside_unit_range ... ok
+test write_then_read_over_a_duplex ... ok
+test validate_clip_offer_mime_and_size ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+```
+
+stderr:
+
+```text
+   Compiling rustix v1.1.6
+   Compiling linux-raw-sys v0.12.1
+   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.02s
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_proto-4b49005cfb6ac050)
+     Running tests/authorize.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/authorize-951137c2be6334f2)
+     Running tests/ids.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/ids-13024bae7b84b7f7)
+     Running tests/memhub.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/memhub-7439a3a7f369aeb3)
+     Running tests/redact.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/redact-567bd45310785f8c)
+     Running tests/wire.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/wire-e2699de60d8c4ef6)
+   Doc-tests clipsync_proto
+```
+
+Comando: `cargo test -p clipsync-core tls_`; exit **0**.
+
+stdout:
+
+```text
+
+running 5 tests
+test tls::tests::tls_pin_set_replace ... ok
+test tls::tests::tls_changed_server_key_detected_by_dialer ... ok
+test tls::tests::tls_unknown_client_refused_with_fixed_reason ... ok
+test tls::tests::tls_pairing_mode_accepts_any_key_but_mesh_does_not ... ok
+test tls::tests::tls_verifier_runs_on_every_connection_resumption_is_off ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+```
+
+stderr:
+
+```text
+   Compiling rustix v1.1.6
+   Compiling rustls v0.23.46
+   Compiling quinn-udp v0.5.16
+   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling tempfile v3.27.0
+   Compiling quinn-proto v0.11.19
+   Compiling quinn v0.11.12
+   Compiling clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.37s
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
+     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
+     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
+     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
+     Running tests/profile.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
+```
+
+Comando: `cargo test -p clipsync-core pairing_`; exit **0**.
+
+stdout:
+
+```text
+
+running 8 tests
+test pairing::tests::pairing_commitment_is_domain_separated ... ok
+test tls::tests::tls_pairing_mode_accepts_any_key_but_mesh_does_not ... ok
+test pairing::tests::pairing_bad_reveal_fails_saves_nothing_and_host_ends ... ok
+test pairing::tests::pairing_declined_on_one_side_saves_nothing ... ok
+test pairing::tests::pairing_happy_path_same_code_and_both_saved ... ok
+test pairing::tests::pairing_code_depends_on_both_nonces ... ok
+test pairing::tests::pairing_window_takes_one_attempt_only ... ok
+test pairing::tests::pairing_after_a_failure_the_window_is_closed ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 4.10s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+```
+
+stderr:
+
+```text
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
+     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
+     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
+     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
+     Running tests/profile.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
+```
+
+Comando: `cargo test -p clipsync-core mesh_`; exit **0**.
+
+stdout:
+
+```text
+
+running 1 test
+test tls::tests::tls_pairing_mode_accepts_any_key_but_mesh_does_not ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 4 tests
+test mesh_connects_after_hello_both_ways ... ok
+test mesh_restart_reconnects ... ok
+test mesh_unknown_identity_never_connects ... ok
+test mesh_changed_key_is_blocked_with_constant_reason ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 4.23s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+```
+
+stderr:
+
+```text
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
+     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
+     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
+     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
+     Running tests/profile.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
+```
+
+Comando: `cargo test -p clipsync-core stream_and_datagram -- --nocapture`; exit **0**.
+
+stdout:
+
+```text
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 2 tests
+test stream_and_datagram_control_frame_over_limit_is_reset ... ok
+test stream_and_datagram ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 2.51s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+```
+
+stderr:
+
+```text
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
+     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
+     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
+     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
+RTT fluxo 1 frame: p50 519.715µs p95 629.432µs · datagrama 4 eventos: p50 177.177µs p95 405.839µs (300 de 300)
+     Running tests/profile.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
+```
+
+Comando: `cargo clippy --workspace --all-targets -- -D warnings`; exit **0**.
+
+stderr:
+
+```text
+    Checking clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+    Checking clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
+    Checking clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+    Checking clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+    Checking clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.93s
+```
+
+Comando: `cargo fmt --all --check`; exit **0**.
+
+stdout/stderr vazios.
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/p2-exact-tests --nocapture`; exit **0**.
+
+stdout:
+
+```text
+
+running 1 test
+same_quic_connection=true loopback=127.0.0.1 measurement=RTT warmup=20 samples=300 stream_payload_bytes=1024 stream_p50_us=168 stream_p95_us=432 datagram_payload_bytes=64 datagram_p50_us=117 datagram_p95_us=313
+test p2_exact_payload_sizes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+```
+
+Hashes relevantes:
+
+```text
+751f5d6e2f1c4992bec4a7b749a41330e3d26778cb18e4f1c2a31c40a2885de0  docs/contrato.md
+c915f90d97c2bc68460be58a977189311c4f98007498ed20687571a7d4681970  crates/clipsync-core/src/tls.rs
+4cb61b771887fe3c2034cf7851fddc12f18fc448b82cfbfab15c9af901a0195f  crates/clipsync-core/src/pairing.rs
+6f4bb939c97ec1ebf5e27a7580ca5470dabda082fb333e917713510c689c6a3b  crates/clipsync-core/src/transport.rs
+279ed2f0eb25087cb5bbf2dad3122ea3ef933c156f8715f31bac29b7d2c20491  crates/clipsync-core/tests/mesh.rs
+781aa047350e2b4926333536600a85785329c06491582cc524cf45e62e753158  p2-exact-stdin.txt
+```
+
+Evidência integral: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p` (s1-results.json, p2-exact-results.json, p2-exact-stdin.txt e inventários).
+
 ## Findings
 
 ### S3 · 3eaa730 · histórico — encerrados na v1.1 (30dcd43)
