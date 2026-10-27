@@ -388,6 +388,11 @@ impl Profile {
     /// Creates DIR (0700), a fresh identity (key 0600) and `config.toml`. An existing profile gets a NEW
     /// identity and config; `peers.toml` and `state.toml` are kept.
     pub fn init(&self, opts: InitOptions) -> Result<Identity, CoreError> {
+        self.init_with(opts, Identity::generate()?)
+    }
+
+    /// `init` with an identity made earlier, so a UI can show its fingerprint before anything is written.
+    pub fn init_with(&self, opts: InitOptions, identity: Identity) -> Result<Identity, CoreError> {
         valid_name(&opts.device_name)?;
         if opts.modules.is_empty() {
             return Err(CoreError::Config(
@@ -406,7 +411,6 @@ impl Profile {
         fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700))
             .map_err(|e| io_ctx("permissões do perfil", e))?;
 
-        let identity = Identity::generate()?;
         let raw = RawConfig {
             version: CONFIG_VERSION,
             device_name: opts.device_name,

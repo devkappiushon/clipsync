@@ -42,6 +42,23 @@ fn profile_init_creates_private_profile_and_reloads_same_identity() {
 }
 
 #[test]
+fn profile_init_with_writes_the_identity_it_was_given_and_nothing_on_a_bad_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let p = Profile::resolve(Some(tmp.path().join("a"))).unwrap();
+    let made = clipsync_core::Identity::generate().unwrap();
+    let mut bad = opts(false, false);
+    bad.device_name = "a\u{1b}b".into();
+    assert!(matches!(
+        p.init_with(bad, made.clone()),
+        Err(CoreError::Config(_))
+    ));
+    assert!(!p.is_initialized(), "a refused init writes nothing");
+    let saved = p.init_with(opts(false, false), made.clone()).unwrap();
+    assert_eq!(saved.id(), made.id());
+    assert_eq!(p.load_identity().unwrap().id(), made.id());
+}
+
+#[test]
 fn profile_fake_adapters_are_written_to_the_module_tables() {
     let tmp = tempfile::tempdir().unwrap();
     let p = Profile::resolve(Some(tmp.path().join("a"))).unwrap();
