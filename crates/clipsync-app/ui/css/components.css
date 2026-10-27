@@ -493,3 +493,23 @@ kbd {
     opacity: 0.45;
   }
 }
+
+/* Girador: indicador de espera fora de botão (mesma animação do botão ocupado) */
+
+.girador {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border: 2px solid var(--muted);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: girar 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .girador {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
+  }
+}

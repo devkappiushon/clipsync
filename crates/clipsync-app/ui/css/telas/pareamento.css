@@ -1,1 +1,49 @@
 /* Tela: pareamento. Só tokens de tokens.css; classes prefixadas com .pareamento. */
+
+.pareamento {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.pareamento__corpo {
+  max-width: 720px;
+}
+
+.pareamento__codigo {
+  margin: 0;
+  padding: var(--s-3) var(--s-4);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--raio);
+  font-family: var(--font-mono);
+  font-size: var(--fs-codigo);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.pareamento__tempo {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.pareamento__enderecos {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pareamento__passo {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.pareamento__par {
+  overflow-wrap: anywhere;
+}
