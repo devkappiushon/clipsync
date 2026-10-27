@@ -347,15 +347,16 @@ dependencies = [
 name = "clipsync-core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "clipsync-proto",
  "hex",
  "quinn",
- "quinn-proto",
  "rand",
  "rcgen",
  "rustix",
  "rustls",
  "serde",
+ "serde_json",
  "sha2",
  "tempfile",
  "thiserror",
@@ -372,13 +373,16 @@ dependencies = [
  "anyhow",
  "ashpd",
  "async-trait",
+ "clap",
  "clipsync-proto",
+ "futures-util",
  "humantime",
  "reis",
  "serde",
  "tempfile",
  "thiserror",
  "tokio",
+ "toml",
  "tracing",
 ]
 

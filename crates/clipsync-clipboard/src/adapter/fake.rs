@@ -11,6 +11,7 @@ struct State {
     events: VecDeque<ChangeEvent>,
     writes: usize,
     fail_writes: bool,
+    block_reads: bool,
 }
 
 #[derive(Default)]
@@ -84,6 +85,12 @@ impl FakeClipboardHandle {
         self.shared.lock().writes
     }
     /// Makes the next writes fail with `ClipError::Busy` (apply-failure tests).
+    /// While set, `read_text` blocks (a slow clipboard owner); pass `false` to release it.
+    pub fn block_reads(&self, block: bool) {
+        let mut st = self.shared.lock();
+        st.block_reads = block;
+        self.shared.cv.notify_all();
+    }
     pub fn fail_writes(&self, fail: bool) {
         self.shared.lock().fail_writes = fail;
     }
@@ -116,15 +123,14 @@ impl ClipboardAdapter for FakeClipboard {
         }
     }
     fn read_text(&mut self) -> Result<Option<ClipSnapshot>, ClipError> {
-        Ok(self
-            .shared
-            .lock()
-            .contents
-            .clone()
-            .map(|text| ClipSnapshot {
-                mime: MIME_TEXT_UTF8.into(),
-                text,
-            }))
+        let mut st = self.shared.lock();
+        while st.block_reads {
+            st = self.shared.cv.wait(st).unwrap_or_else(|e| e.into_inner());
+        }
+        Ok(st.contents.clone().map(|text| ClipSnapshot {
+            mime: MIME_TEXT_UTF8.into(),
+            text,
+        }))
     }
     fn write_text(&mut self, text: &str) -> Result<(), ClipError> {
         let mut st = self.shared.lock();

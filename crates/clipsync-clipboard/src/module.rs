@@ -37,6 +37,8 @@ enum Cmd {
 enum WriteResult {
     Written,
     Conflict,
+    /// The agent was paused between the authorization and the write.
+    Paused,
     Failed(ClipError),
 }
 
@@ -63,7 +65,7 @@ fn read_with_retries(ad: &mut dyn ClipboardAdapter) -> Result<Option<ClipSnapsho
     Err(last)
 }
 
-fn handle_cmd(ad: &mut dyn ClipboardAdapter, cmd: Cmd) -> bool {
+fn handle_cmd(ad: &mut dyn ClipboardAdapter, host: &dyn ModuleHost, cmd: Cmd) -> bool {
     match cmd {
         Cmd::Stop => return false,
         Cmd::Read { reply } => {
@@ -75,12 +77,21 @@ fn handle_cmd(ad: &mut dyn ClipboardAdapter, cmd: Cmd) -> bool {
             reply,
         } => {
             let res = match read_with_retries(ad) {
-                Ok(Some(cur)) if Some(hash_text(&cur.text)) != expected => WriteResult::Conflict,
-                Ok(_) => match ad.write_text(&text) {
-                    Ok(()) => WriteResult::Written,
-                    Err(e) => WriteResult::Failed(e),
-                },
                 Err(e) => WriteResult::Failed(e),
+                // The read can be slow. Pause and the known content are judged AFTER it, right
+                // before the write, because both may have changed since the offer was authorized.
+                Ok(cur) => {
+                    if host.paused() {
+                        WriteResult::Paused
+                    } else if cur.is_some_and(|c| Some(hash_text(&c.text)) != expected) {
+                        WriteResult::Conflict
+                    } else {
+                        match ad.write_text(&text) {
+                            Ok(()) => WriteResult::Written,
+                            Err(e) => WriteResult::Failed(e),
+                        }
+                    }
+                }
             };
             let _ = reply.send(res);
         }
@@ -92,12 +103,13 @@ fn adapter_thread(
     mut ad: Box<dyn ClipboardAdapter>,
     cmd_rx: std_mpsc::Receiver<Cmd>,
     ev_tx: mpsc::Sender<AdapterEvent>,
+    host: Arc<dyn ModuleHost>,
 ) {
     loop {
         loop {
             match cmd_rx.try_recv() {
                 Ok(cmd) => {
-                    if !handle_cmd(ad.as_mut(), cmd) {
+                    if !handle_cmd(ad.as_mut(), host.as_ref(), cmd) {
                         return;
                     }
                 }
@@ -229,7 +241,10 @@ impl Module for ClipboardModule {
         let adapter_name = adapter.name().to_owned();
         let (cmd_tx, cmd_rx) = std_mpsc::channel();
         let (ev_tx, ev_rx) = mpsc::channel(64);
-        let thread = tokio::task::spawn_blocking(move || adapter_thread(adapter, cmd_rx, ev_tx));
+        let thread_host = host.clone();
+        let thread = tokio::task::spawn_blocking(move || {
+            adapter_thread(adapter, cmd_rx, ev_tx, thread_host)
+        });
         let mut st = State::new(cfg, adapter_name, host, cmd_tx.clone());
         st.init_current().await;
         let res = st.event_loop(rx, ev_rx).await;
@@ -493,6 +508,10 @@ impl State {
                 self.current = Some(h);
                 self.last = Some((o.lamport, from));
                 DeliveryState::Applied
+            }
+            WriteResult::Paused => {
+                self.ledger.forget(&h);
+                DeliveryState::Rejected(RejectReason::Paused)
             }
             WriteResult::Conflict => {
                 self.ledger.forget(&h);

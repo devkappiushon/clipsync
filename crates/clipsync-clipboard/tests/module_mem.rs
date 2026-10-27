@@ -424,3 +424,29 @@ async fn k_ttl_counts_from_local_receipt_and_drops_the_text() {
     );
     assert_eq!(items[0].bytes, "ttl-curto-texto".len());
 }
+
+#[tokio::test]
+async fn l_pause_between_authorization_and_write_blocks_the_write() {
+    let hub = MemHub::new();
+    let mut a = hub.add_node("a", BOTH);
+    let b = spawn_clip(&hub, "b", ClipMode::Auto).await;
+    hub.link(a.id, b.id, ALL, ALL);
+    b.fake.block_reads(true); // the worker stalls inside the read that precedes the write
+    send_offer(&a, b.id, offer(1, "durante o bloqueio")).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    hub.set_paused(b.id, true);
+    b.fake.block_reads(false);
+    assert_eq!(
+        next_ack(&mut a).await.state,
+        DeliveryState::Rejected(RejectReason::Paused)
+    );
+    settle().await;
+    assert_eq!((b.fake.writes(), b.fake.contents()), (0, None));
+    let ModuleReply::ClipInbox(items) = command(&b, ModuleCommand::ClipInbox).await else {
+        panic!("inbox")
+    };
+    assert_eq!(
+        items[0].state,
+        DeliveryState::Rejected(RejectReason::Paused)
+    );
+}
