@@ -73,6 +73,7 @@ serde_json = "=1.0.154"
 # S6 · interface: Tauri 2 fixado (3.0 ainda é alfa). Sem plugins na 0.2.0.
 tauri = { version = "=2.12.5", features = ["tray-icon"] }
 tauri-build = { version = "=2.7.4", features = [] }
+tauri-plugin-notification = "=2.7.0"
 # Interfaces de rede para o pareamento e o diagnóstico (contrato §12).
 if-addrs = "=0.15.0"
 async-trait = "=0.1.92"
