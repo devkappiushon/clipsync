@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClipSync · protótipo das telas</title>
+<meta name="description" content="Protótipo navegável das sete telas do ClipSync: onboarding, dispositivos, pareamento, layout de telas, clipboard, diagnóstico e preferências.">
+<meta name="author" content="João Pedro · montesouza.dev">
+<style>
+:root{--bg:#f6f7f9;--panel:#ffffff;--text:#15181d;--muted:#5b6270;--line:#dfe3ea;--accent:#1f4e8c;--accent-text:#ffffff;--ok:#1d7a4a;--warn:#9a6700;--err:#b4232c;--radius:8px;--shadow:0 1px 2px rgba(20,24,32,.08);--mono:"Geist Mono","JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;--sans:Inter,"Inter Variable",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--head:Geist,"Plus Jakarta Sans",Inter,system-ui,sans-serif}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#111418;--panel:#181c22;--text:#e8ebf0;--muted:#9aa3b2;--line:#2a3039;--accent:#7fb0f0;--accent-text:#0c1a2b;--ok:#5cc48a;--warn:#e2b23a;--err:#f07178;--shadow:0 1px 2px rgba(0,0,0,.4)}}
+:root[data-theme="dark"]{--bg:#111418;--panel:#181c22;--text:#e8ebf0;--muted:#9aa3b2;--line:#2a3039;--accent:#7fb0f0;--accent-text:#0c1a2b;--ok:#5cc48a;--warn:#e2b23a;--err:#f07178;--shadow:0 1px 2px rgba(0,0,0,.4)}
+*{box-sizing:border-box}html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:clamp(14px,.95rem,16px);line-height:1.5}
+.app{display:grid;grid-template-columns:240px 1fr;min-height:100vh}
+nav{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:16px}
+.brand{font-family:var(--head);font-weight:600;font-size:18px;padding:8px 8px 16px}
+nav button.tab{all:unset;cursor:pointer;display:block;width:100%;padding:8px;border-radius:var(--radius);margin-bottom:4px}
+nav button.tab:hover{background:var(--bg)}nav button.tab[aria-current="page"]{background:var(--accent);color:var(--accent-text)}
+nav button:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.navfoot{margin-top:auto;font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-top:16px}
+.navfoot b{color:var(--text);font-weight:600}
+main{padding:clamp(16px,3vw,32px);max-width:1040px}
+h1{font-family:var(--head);font-size:clamp(22px,2vw,28px);margin:0 0 4px;font-weight:600}
+h2{font-family:var(--head);font-size:16px;margin:24px 0 8px;font-weight:600}
+.lead{color:var(--muted);margin:0 0 16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-bottom:16px}
+.row{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+.btn{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--text);padding:8px 16px;border-radius:var(--radius);cursor:pointer}
+.btn.primary{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
+.btn.danger{color:var(--err);border-color:var(--err)}
+.btn[disabled]{opacity:.5;cursor:default}
+label{display:block;font-size:13px;color:var(--muted);margin-bottom:4px}
+input[type=text],select{font:inherit;width:100%;max-width:360px;padding:8px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg);color:var(--text)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.code{font-family:var(--mono);font-size:clamp(32px,4vw,48px);letter-spacing:.08em;text-align:center;padding:16px;border:1px dashed var(--line);border-radius:var(--radius)}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-weight:500}
+td.num,th.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.state{display:inline-flex;align-items:center;gap:8px;font-size:13px}
+.state::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.err{color:var(--err)}.muted{color:var(--muted)}
+.switch{display:flex;align-items:flex-start;gap:16px;padding:16px;border:1px solid var(--line);border-radius:var(--radius)}
+.switch input{width:40px;height:24px;margin:0;accent-color:var(--accent)}
+.steps{display:flex;gap:8px;margin-bottom:16px;font-size:13px;color:var(--muted)}.steps span[aria-current]{color:var(--text);font-weight:600}
+.canvas{position:relative;height:360px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg);overflow:hidden}
+.mon{position:absolute;border:2px solid var(--line);border-radius:4px;background:var(--panel);font-size:12px;padding:4px 8px;font-family:var(--mono)}
+.mon.sel{border-color:var(--accent)}.seg{position:absolute;background:var(--accent);width:4px;border-radius:2px}
+.link{position:absolute;height:2px;background:var(--accent);opacity:.6}
+.kv{display:grid;grid-template-columns:180px 1fr;gap:8px 16px;font-size:14px}.kv dt{color:var(--muted)}.kv dd{margin:0}
+.inbox-item{display:grid;grid-template-columns:1fr auto;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}
+details summary{cursor:pointer;color:var(--accent)}
+.empty{padding:32px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:var(--radius)}
+.view{display:none}.view[data-active]{display:block}
+footer{margin-top:32px;font-size:13px;color:var(--muted)}
+@media (max-width:760px){.app{grid-template-columns:1fr}nav{border-right:0;border-bottom:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div class="app">
+<nav aria-label="Seções">
+  <div class="brand">ClipSync</div>
+  <button class="tab" data-view="onboarding" aria-current="page">Primeiro uso</button>
+  <button class="tab" data-view="dispositivos">Dispositivos</button>
+  <button class="tab" data-view="pareamento">Pareamento</button>
+  <button class="tab" data-view="layout">Layout de telas</button>
+  <button class="tab" data-view="clipboard">Clipboard</button>
+  <button class="tab" data-view="diagnostico">Diagnóstico</button>
+  <button class="tab" data-view="preferencias">Preferências</button>
+  <div class="navfoot">
+    <div><b>notebook-a</b> · <span class="mono">f3d7-ea9a</span></div>
+    <div class="state ok" style="margin-top:8px">2 de 2 pares conectados</div>
+    <div style="margin-top:16px"><button class="btn" id="pausa" aria-pressed="false">Pausar tudo · Ctrl+Alt+P</button></div>
+    <div style="margin-top:8px"><button class="btn" id="tema">Tema: sistema</button></div>
+  </div>
+</nav>
+<main>
+
+<section class="view" id="onboarding" data-active>
+  <h1>Primeiro uso</h1>
+  <p class="lead">Três passos. Nada é transmitido antes de você concluir.</p>
+  <div class="steps"><span aria-current="step">1 Esta máquina</span><span>2 O que sincronizar</span><span>3 Teste</span></div>
+  <div class="card">
+    <label for="nome">Nome desta máquina</label>
+    <input type="text" id="nome" value="notebook-a">
+    <p class="muted" style="font-size:13px;margin:8px 0 0">O nome é só para você reconhecer a máquina. A identidade é a chave criptográfica, impressão digital <span class="mono">f3d7-ea9a-056e-51c3</span>.</p>
+  </div>
+  <h2>O que sincronizar</h2>
+  <div class="card" style="display:grid;gap:16px">
+    <div class="switch"><input type="checkbox" checked id="m-input" aria-describedby="d-input"><div><label for="m-input" style="color:var(--text);font-size:15px">Teclado e mouse</label><div id="d-input" class="muted" style="font-size:13px">Move o cursor para outra máquina pelas bordas que você configurar. No Linux pede permissão de captura de entrada; no Windows não pede nada.</div></div></div>
+    <div class="switch"><input type="checkbox" id="m-clip" aria-describedby="d-clip"><div><label for="m-clip" style="color:var(--text);font-size:15px">Área de transferência</label><div id="d-clip" class="muted" style="font-size:13px">Envia o texto que você copiar aos pares autorizados e recebe deles. Desligado por padrão. Só texto nesta versão.</div></div></div>
+  </div>
+  <h2>Teste</h2>
+  <div class="card row"><button class="btn primary">Rodar teste com conteúdo sintético</button><span class="muted" style="font-size:13px">O teste pode alterar o clipboard por alguns segundos e restaura em seguida.</span></div>
+  <div class="row"><button class="btn primary">Concluir</button><button class="btn">Voltar</button></div>
+</section>
+
+<section class="view" id="dispositivos">
+  <h1>Dispositivos</h1>
+  <p class="lead">Quem pode enviar, quem pode receber e quem pode controlar esta máquina.</p>
+  <div class="row" style="margin-bottom:16px"><button class="btn primary">Parear novo dispositivo</button></div>
+  <div class="card" style="padding:0">
+  <table>
+    <thead><tr><th>Nome</th><th>Estado</th><th>Endereço</th><th>Clipboard</th><th>Controle</th><th>Última atividade</th></tr></thead>
+    <tbody>
+      <tr><td><b>pc-pessoal</b><div class="mono muted" style="font-size:12px">aa31-537a</div></td><td><span class="state ok">conectado</span></td><td class="num">192.168.115.30:47800</td><td>envia e recebe</td><td>controla esta máquina</td><td class="num">há 2 min</td></tr>
+      <tr><td><b>pc-de-casa</b><div class="mono muted" style="font-size:12px">1bc6-7a55</div></td><td><span class="state warn">offline</span></td><td class="num">192.168.115.41:47800</td><td>só recebe</td><td>não</td><td class="num">ontem, 22:14</td></tr>
+      <tr><td><b>notebook-antigo</b><div class="mono muted" style="font-size:12px">817a-ab9c</div></td><td><span class="state err">bloqueado: chave mudou</span></td><td class="num">192.168.115.55:47800</td><td>pausado</td><td>não</td><td class="num">12 out</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <h2>pc-pessoal</h2>
+  <div class="card">
+    <div class="kv"><dt>Permissões que esta máquina concede</dt><dd>
+      <div class="row"><label style="margin:0"><input type="checkbox" checked> pode me enviar clipboard</label><label style="margin:0"><input type="checkbox" checked> pode receber meu clipboard</label><label style="margin:0"><input type="checkbox" checked> pode controlar meu teclado e mouse</label></div>
+      <p class="muted" style="font-size:13px;margin:8px 0 0">Conceder controle é confiança total: esse dispositivo pode digitar e clicar qualquer coisa aqui enquanto estiver autorizado.</p></dd></div>
+    <div class="row" style="margin-top:16px"><button class="btn">Pausar este par</button><button class="btn">Reparear</button><button class="btn danger">Revogar</button></div>
+  </div>
+</section>
+
+<section class="view" id="pareamento">
+  <h1>Pareamento</h1>
+  <p class="lead">Confirme o mesmo código nas duas máquinas. O código vem da conexão, não da rede.</p>
+  <div class="card">
+    <div class="row" style="margin-bottom:16px"><button class="btn primary" aria-pressed="true">Aceitar pareamento</button><button class="btn">Conectar a outra máquina</button></div>
+    <div class="kv"><dt>Endereço desta máquina</dt><dd class="mono">192.168.115.12:47900</dd><dt>Tempo restante</dt><dd class="mono">1:42</dd></div>
+    <div style="margin:16px 0 8px">Par: <b>pc-pessoal</b> · <span class="mono">aa31-537a-d810-b104</span> · módulos: clipboard, input</div>
+    <div class="code">241 015</div>
+    <p style="margin:16px 0 8px">Confirme que a outra máquina mostra o mesmo código.</p>
+    <div class="row"><button class="btn primary">São iguais</button><button class="btn danger">São diferentes, cancelar</button></div>
+  </div>
+  <h2>Permissões iniciais</h2>
+  <div class="card">
+    <div class="row"><label style="margin:0"><input type="checkbox" checked> recebe clipboard</label><label style="margin:0"><input type="checkbox" checked> envia clipboard</label><label style="margin:0"><input type="checkbox"> pode me controlar</label></div>
+    <div class="row" style="margin-top:16px"><button class="btn primary">Concluir</button></div>
+  </div>
+</section>
+
+<section class="view" id="layout">
+  <h1>Layout de telas</h1>
+  <p class="lead">Ligue um trecho de borda de um monitor à borda de um monitor de outra máquina. Bordas entre monitores da mesma máquina não cruzam.</p>
+  <div class="canvas" aria-label="Monitores em escala">
+    <div class="mon" style="left:32px;top:72px;width:240px;height:135px">pc-pessoal · DP-1<br>2560×1440</div>
+    <div class="mon sel" style="left:280px;top:72px;width:240px;height:135px">pc-pessoal · HDMI-1<br>1920×1080</div>
+    <div class="seg" style="left:518px;top:140px;height:66px" aria-label="segmento selecionado: metade inferior da borda direita"></div>
+    <div class="link" style="left:522px;top:172px;width:120px"></div>
+    <div class="mon" style="left:642px;top:150px;width:192px;height:108px">notebook-a · eDP-1<br>1920×1080</div>
+    <div class="mon" style="left:32px;top:250px;width:192px;height:108px;border-style:dashed">pc-de-casa · offline<br>1920×1080</div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <div class="kv">
+      <dt>Segmento selecionado</dt><dd>pc-pessoal · HDMI-1 · borda direita · de 50% a 100%</dd>
+      <dt>Destino</dt><dd><select><option>notebook-a · eDP-1 · borda esquerda</option><option>pc-de-casa · eDP-1 · borda esquerda</option></select></dd>
+      <dt>Atalho direto</dt><dd class="mono">Ctrl+Alt+2</dd>
+    </div>
+    <div class="row" style="margin-top:16px"><button class="btn primary">Salvar ligação</button><button class="btn danger">Remover</button></div>
+  </div>
+  <div class="card">
+    <h2 style="margin-top:0">Ligações</h2>
+    <table><thead><tr><th>De</th><th>Para</th><th>Atalho</th><th></th></tr></thead><tbody>
+      <tr><td>pc-pessoal · HDMI-1 · direita 50–100%</td><td>notebook-a · eDP-1 · esquerda</td><td class="num">Ctrl+Alt+2</td><td><button class="btn">Remover</button></td></tr>
+    </tbody></table>
+    <div class="row" style="margin-top:16px"><label style="margin:0"><input type="checkbox" checked> cantos mortos (8 px)</label><label style="margin:0"><input type="checkbox"> travar nesta tela · Scroll Lock</label><button class="btn">Copiar layout para os pares</button></div>
+  </div>
+</section>
+
+<section class="view" id="clipboard">
+  <h1>Clipboard</h1>
+  <p class="lead">Texto copiado aqui vai aos pares autorizados. O que chega fica na caixa até você decidir.</p>
+  <div class="card">
+    <div class="kv">
+      <dt>Módulo</dt><dd><span class="state ok">ligado</span> · adaptador <span class="mono">x11-xfixes</span> via XWayland · plataforma: validada para texto</dd>
+      <dt>Modo</dt><dd><select><option>automático: aplica e registra na caixa</option><option>manual: só caixa</option><option>com confirmação</option></select></dd>
+      <dt>Interruptores</dt><dd class="row"><label style="margin:0"><input type="checkbox"> pausar captura</label><label style="margin:0"><input type="checkbox"> modo privado (nada entra nem sai)</label></dd>
+    </div>
+  </div>
+  <h2>Caixa de recebidos</h2>
+  <div class="card">
+    <div class="inbox-item"><div><b>pc-pessoal</b> · <span class="num">15:40:37</span> · texto · <span class="num">10 bytes</span> · <span class="state ok">aplicado</span><details><summary>Mostrar prévia</summary><div class="mono" style="margin-top:8px">olá ção</div></details></div><div class="row"><button class="btn">Copiar</button><button class="btn">Descartar</button></div></div>
+    <div class="inbox-item"><div><b>pc-de-casa</b> · <span class="num">15:12:03</span> · texto · <span class="num">2,1 KiB</span> · <span class="state warn">recusado: pausado</span></div><div class="row"><button class="btn" disabled>Copiar</button><button class="btn">Descartar</button></div></div>
+    <p class="muted" style="font-size:13px;margin:16px 0 0">Itens expiram em 10 minutos e não são gravados em disco nesta versão.</p>
+  </div>
+</section>
+
+<section class="view" id="diagnostico">
+  <h1>Diagnóstico</h1>
+  <p class="lead">O que o sistema oferece, o que o ClipSync está usando e por que algo foi bloqueado.</p>
+  <div class="card"><h2 style="margin-top:0">Sistema</h2><div class="kv">
+    <dt>Sistema operacional</dt><dd>Ubuntu 26.04.1 LTS · GNOME 50.1 · Wayland</dd>
+    <dt>XWayland</dt><dd><span class="state ok">DISPLAY=:0, servidor X11 respondendo</span></dd>
+    <dt>Portais</dt><dd>InputCapture v1 · RemoteDesktop v2 · teclado, ponteiro, touchscreen</dd>
+    <dt>Monitores</dt><dd class="mono">eDP-1 1920×1080 @ 0,0</dd>
+  </div></div>
+  <div class="card"><h2 style="margin-top:0">Adaptadores</h2><div class="kv">
+    <dt>Clipboard</dt><dd><span class="state ok">x11-xfixes</span> · data-control ausente no compositor: observação pela ponte XWayland</dd>
+    <dt>Captura</dt><dd><span class="state ok">portal-inputcapture</span> · 1 diálogo por sessão</dd>
+    <dt>Emulação</dt><dd><span class="state ok">portal-remotedesktop</span> · token salvo, sem novo diálogo</dd>
+  </div></div>
+  <div class="card"><h2 style="margin-top:0">Conflitos</h2>
+    <div class="state warn">Input Leap em execução (Flatpak, cliente de 192.168.115.30): os dois podem disputar teclado e mouse. Pause um deles.</div>
+    <div class="state ok" style="margin-top:8px">Barrier não detectado</div>
+  </div>
+  <div class="card"><h2 style="margin-top:0">Rede e últimos bloqueios</h2>
+    <table><thead><tr><th>Par</th><th>RTT</th><th>Entrada p95</th><th>Último bloqueio</th></tr></thead><tbody>
+      <tr><td>pc-pessoal</td><td class="num">1,2 ms</td><td class="num">0,4 ms</td><td class="muted">nenhum</td></tr>
+      <tr><td>pc-de-casa</td><td class="num">—</td><td class="num">—</td><td>15:12 · oferta recusada: pausado</td></tr>
+    </tbody></table>
+    <div class="row" style="margin-top:16px"><button class="btn">Exportar pacote de suporte</button><span class="muted" style="font-size:13px">Mostra o que vai no pacote antes de gerar; sem conteúdo de clipboard, teclas ou chaves.</span></div>
+  </div>
+</section>
+
+<section class="view" id="preferencias">
+  <h1>Preferências</h1>
+  <p class="lead">Atalhos, inicialização, notificações e aparência.</p>
+  <div class="card"><h2 style="margin-top:0">Atalhos</h2><table><tbody>
+    <tr><td>Abrir o ClipSync</td><td class="num">Ctrl+Alt+C</td><td><button class="btn">Alterar</button></td></tr>
+    <tr><td>Pausar tudo</td><td class="num">Ctrl+Alt+P</td><td><button class="btn">Alterar</button></td></tr>
+    <tr><td>Enviar clipboard uma vez</td><td class="num">Ctrl+Alt+S</td><td><button class="btn">Alterar</button></td></tr>
+    <tr><td>Travar nesta tela</td><td class="num">Scroll Lock</td><td><button class="btn">Alterar</button></td></tr>
+  </tbody></table></div>
+  <div class="card"><h2 style="margin-top:0">Inicialização</h2><label style="margin:0;color:var(--text)"><input type="checkbox"> iniciar o agente com a sessão (pede confirmação uma vez)</label></div>
+  <div class="card"><h2 style="margin-top:0">Notificações</h2>
+    <label style="margin:0 0 8px;color:var(--text)"><input type="checkbox" checked> item recebido (mostra só a origem, nunca o conteúdo)</label>
+    <label style="margin:0 0 8px;color:var(--text)"><input type="checkbox" checked> dispositivo conectou ou desconectou</label>
+    <label style="margin:0;color:var(--text)"><input type="checkbox"> bloqueio por política</label>
+  </div>
+  <div class="card"><h2 style="margin-top:0">Aparência e idioma</h2><div class="row">
+    <div><label for="tema-sel">Tema</label><select id="tema-sel"><option>sistema</option><option>claro</option><option>escuro</option></select></div>
+    <div><label for="idioma">Idioma</label><select id="idioma"><option>português (Brasil)</option><option>English</option></select></div>
+    <label style="margin:0;color:var(--text)"><input type="checkbox"> reduzir movimento</label>
+  </div></div>
+  <footer>ClipSync 0.1 · MVP de 2026-10-27 · licença a definir · feito por montesouza.dev</footer>
+</section>
+
+</main>
+</div>
+<script>
+(function(){
+  var tabs=document.querySelectorAll('nav .tab'),views=document.querySelectorAll('.view');
+  function show(id){views.forEach(function(v){if(v.id===id)v.setAttribute('data-active','');else v.removeAttribute('data-active')});tabs.forEach(function(t){if(t.dataset.view===id)t.setAttribute('aria-current','page');else t.removeAttribute('aria-current')});try{localStorage.setItem('clipsync-view',id)}catch(e){}}
+  tabs.forEach(function(t){t.addEventListener('click',function(){show(t.dataset.view)})});
+  var saved=null;try{saved=localStorage.getItem('clipsync-view')}catch(e){}
+  if(saved&&document.getElementById(saved))show(saved);
+  var p=document.getElementById('pausa');p.addEventListener('click',function(){var on=p.getAttribute('aria-pressed')==='true';p.setAttribute('aria-pressed',String(!on));p.textContent=(!on?'Retomar · Ctrl+Alt+P':'Pausar tudo · Ctrl+Alt+P')});
+  var t=document.getElementById('tema'),modes=['sistema','claro','escuro'],i=0;
+  t.addEventListener('click',function(){i=(i+1)%3;var m=modes[i];t.textContent='Tema: '+m;var r=document.documentElement;if(m==='claro')r.setAttribute('data-theme','light');else if(m==='escuro')r.setAttribute('data-theme','dark');else r.removeAttribute('data-theme')});
+})();
+</script>
+</body>
+</html>
