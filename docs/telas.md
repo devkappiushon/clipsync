@@ -1,6 +1,6 @@
 # Telas do ClipSync (protótipo Figma e base da UI Tauri)
 
-Desktop 1280×800, temas claro e escuro. Sistema: Inter no corpo, Geist nos títulos, Geist Mono em códigos, ids e valores de tabela (`tabular-nums`). Atalhos sempre com a tecla Windows como modificador, escrita "Win" (no Linux a mesma tecla é a Super; nunca o símbolo de command da Apple): padrão `Win+Alt+<tecla>`. Escala de 8 pt. Um raio de borda (8 px) e uma elevação. Paleta: fundo neutro, texto alto contraste, um acento azul-escuro para ação primária, verde e vermelho só para estado, sempre com ícone ou texto junto. Sem roxo, sem emoji como ícone, sem travessão em texto de interface, sem kicker decorativo. Foco visível em tudo. Textos em português, preparados para tradução.
+Desktop 1280×800, temas claro e escuro. Sistema: Inter no corpo, Geist nos títulos, Geist Mono em códigos, ids e valores de tabela (`tabular-nums`). Atalhos sempre com a tecla Windows como modificador, escrita "Win" (no Linux a mesma tecla é a Super; nunca o símbolo de command da Apple): padrão `Win+Alt+<tecla>`. Escala de 8 pt. Um raio de borda (8 px) e uma elevação. Paleta: fundo neutro, texto alto contraste, um acento azul-escuro para ação primária, verde e vermelho só para estado, sempre com ícone ou texto junto. Sem roxo, sem emoji como ícone, sem travessão em texto de interface, sem kicker decorativo. Foco visível em tudo. Textos em português, preparados para tradução. O que não tem backend na versão atual aparece desabilitado com o texto "indisponível nesta versão", nunca escondido (contrato §12.2 regra 6).
 
 ## Estrutura comum
 
@@ -18,7 +18,7 @@ Lista em tabela: nome, estado (conectado, pausado, offline, bloqueado por chave 
 
 ## 3. Pareamento
 
-Dois modos em abas: "Aceitar" (mostra endereço e porta em mono, tempo restante de 2 minutos, botão cancelar) e "Conectar" (campo endereço:porta). Depois da conexão: código numérico de 6 dígitos em Geist Mono, grande, com a frase "Confirme que a outra máquina mostra o mesmo código", dois botões: "São iguais" e "São diferentes, cancelar". Em seguida, permissões iniciais por módulo com padrão conservador (clipboard recebe e envia; controle desligado) e botão "Concluir".
+Dois modos em abas: "Aceitar" (mostra endereço e porta em mono, tempo restante de 2 minutos, botão cancelar) e "Conectar" (campo endereço:porta). Depois da conexão: código numérico de 6 dígitos em Geist Mono, grande, com a frase "Confirme que a outra máquina mostra o mesmo código", dois botões: "São iguais" e "São diferentes, cancelar". Em seguida, permissões iniciais por módulo, todas desligadas por padrão: o usuário liga o que quiser (prompt-mestre §2.1). Ligar o controle pede a confirmação de confiança total. Botão "Concluir".
 
 ## 4. Layout de telas
 

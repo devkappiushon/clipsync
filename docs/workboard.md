@@ -2,7 +2,9 @@
 
 **Estado: MVP de 2026-10-27 FECHADO.** S0 a S4 e I passam no warden (Argus). Segurança liberada, com 0 bloqueantes (`docs/seguranca.md`). **S5 (Windows e release): código entregue, e a segurança LIBEROU** (Sentinel 10777b4: 0 BLOCKER, 3 MÉDIO, 8 BAIXO). **Release v0.1.0 publicado** em 2026-10-27, a partir de c04de08. **CI verde nos dois runners** em ec8eee3 (run 40576377462). Os três critérios da S5 passam: a S5 está FECHADA. O próximo release sai de ec8eee3 ou depois. Pendências consolidadas e próxima fatia no fim deste arquivo.
 
-Contrato: `docs/contrato.md` (v1.13). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Git: até a S4 só o Maestro commitava; na S5 cada builder commita os próprios arquivos na main local, sem push (contrato §11 regra 12). Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
+**S6 (interface visual): ABERTA em 2026-10-27.** Contrato §12 (v1.14). Atribuições na seção S6 abaixo.
+
+Contrato: `docs/contrato.md` (v1.14). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Git: até a S4 só o Maestro commitava; na S5 cada builder commita os próprios arquivos na main local, sem push (contrato §11 regra 12). Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
 
 ## Ordem
 1. S0 Bolt fecha primeiro (esqueleto compila). Só então S1, S2, S3 começam a editar seus crates.
@@ -114,6 +116,26 @@ Verificação local: `export PATH=$HOME/.cargo/bin:$PATH`, depois `cargo clippy 
   - O tag publicou com o job Windows do CI vermelho. É o caso que o S5-08 descreve: o ruleset de tag `v*` deve exigir CI verde antes de publicar.
 - **Licença (v1.12, decisão do Maestro):** a 0.1.0 sai num repositório privado, sem LICENSE; o README segue com "a definir". A licença passa a ser pré-condição do primeiro release público (pendência 1). Push e tag são só do usuário.
 
+## S6 · interface visual (v1.14; ABERTA em 2026-10-27)
+Regras, comandos, eventos e critérios: contrato §12. Critérios do Maestro: (a) `cargo test -p clipsync-ui` com os 7 fluxos; (b) 9 telas no portal com o mock, conferidas contra o Figma; (c) AppImage do CI com o agente real; (d) bandeja e entrada na barra de aplicações; (e) release v0.2.0; (f) Sentinel liberado.
+
+Verificação local: `export PATH=$HOME/.cargo/bin:$PATH`, depois `cargo clippy --all-targets -- -D warnings && cargo test` SEM `--workspace` (o `clipsync-app` fica fora do `default-members` e só compila no CI).
+
+Ordem: o Rivet entrega o proto da §12.6 primeiro e marca aqui "proto S6 pronto". O resto anda em paralelo; o Pixel começa já, com o mock.
+
+- **Rivet · clipsync-ui, proto e core.** Posse: `crates/clipsync-ui/src/{lib,api,agent,status,onboarding,devices,pairing,clipboard,diag,prefs,events,msg}.rs`, `tests/fixtures/`, `crates/clipsync-proto/**`, `crates/clipsync-core/**`. Faz:
+  - proto da §12.6 (variantes no fim, `PROTOCOL_VERSION = 2`, mínimo 1, `RemoteTooOld`, `recent_blocks`);
+  - core: `init_with` (L1), `recent_blocks` (L6), versão do par no `PeerInfo`, gravação do `[clipboard] mode`;
+  - `Ui` com `start`, `call`, `subscribe` e `shutdown`, os comandos das telas 1, 2, 3, 5, 6 e 7, os eventos e o `plan` + `build` duplicados (dívida).
+
+  Pronto: §12.9 itens 1 e 2. Estado: a fazer · proto S6: pendente
+- **Vector · layout e input.** Posse: `crates/clipsync-ui/src/{layout,input}.rs` e `crates/clipsync-input/**`. Faz: `layout.toml`, comandos da tela 4, `InputState`, `InputReload`, `InputLock`, `InputSwitch`, `InputOffer`, `Zones`, `EnterAt`, captura contínua guiada pelas ligações, `self_test` do input (L7). Pronto: §12.9 item 3. Estado: a fazer
+- **Flux · casca Tauri e clipboard.** Posse: `crates/clipsync-app/**` menos `ui/`, `crates/clipsync-ui/src/autostart.rs`, `crates/clipsync-clipboard/**` e `crates/clipsync-cli/**`. Faz: `tauri.conf.json`, capabilities, comando `clipsync`, laço de eventos, bandeja, fechar = esconder, Sair com Bye, ícones, autostart; no clipboard, `ClipApply`, `ClipDiscard`, `ClipSendCurrent` e `self_test` (L5, L7). Pronto: §12.9 item 4. Estado: a fazer
+- **Pixel · frontend.** Posse: `crates/clipsync-app/ui/**`. Faz: as 9 telas (onboarding em 3 passos mais 6), temas claro e escuro, fontes locais OFL, `mock.js` com cenários, estados de carregamento, vazio, erro e "indisponível nesta versão". Pronto: §12.9 item 5. Estado: a fazer
+- **Maestro · workspace, CI, release e instalação.** Posse: `Cargo.toml` raiz, `Cargo.lock`, `.github/workflows/**`, `README.md`. Faz: `default-members`, as 4 deps aprovadas (§12.8 item 2), apt no job Linux, `version` 0.2.0, bundles no `release.yml`, instalação local com `.desktop`. Pronto: §12.9 itens 6 e 7. Estado: a fazer
+- **Argus:** veredito por tela no portal (critério b) e pelo artefato (critérios c e d).
+- **Sentinel:** webview e superfície `clipsync` (critério f).
+
 ## Telas (Figma)
 Prontas em 2026-10-27:
 - as nove telas, nos temas claro e escuro;
@@ -183,6 +205,15 @@ Commits 0e76039, f54c995, 8daf2f5 e 3c2bad0. A implementação (Tauri) segue dep
 
   A licença foi ajustada em três lugares: §9 S5 item 10, §10 item 1 e §11 regra 9.
 
+- 2026-10-27 · Maestro + Keel · Contrato v1.14, fatia S6 · interface visual (§12):
+  - (a) Maestro: Tauri 2 num processo com o agente dentro; lógica em `clipsync-ui` (sem Tauri); um comando Tauri `clipsync` com `UiRequest` tipado; eventos por consulta de 1 s; UI sempre pelo socket de controle; `ui.toml` e `layout.toml` no perfil;
+  - (b) Maestro: permissão inicial do pareamento tudo desligado (`docs/telas.md` corrigida); agente sobe sozinho com perfil existente; o que não tem backend aparece desabilitado com "indisponível nesta versão";
+  - (c) Maestro: `layout.toml` é a fonte única do layout; `InputReload`; `set_layout_options`, `lock_to_screen` e `switch_to_device`; `plan` + `build` duplicados (dívida);
+  - (d) **Keel, ajuste à decisão "variante no fim, sem bump":** o 0.1.0 fecha a conexão com `CloseCode::Protocol` quando um frame de módulo não decodifica (`transport.rs`). Variantes vão no fim, mas `PROTOCOL_VERSION` sobe para 2 com mínimo 1 (o 0.1.0 aceita), e o core só manda variante nova a par com versão 2 (`RemoteTooOld`). O monitor de entrada vai em `EnterAt`, não num campo novo do `Enter`;
+  - (e) Keel: `Zones` só sai para par a quem concedi `input_in`; `EnterAt` e `LayoutOffer` só entram com `input_in`; com ligação no `layout.toml`, o agente captura sozinho;
+  - (f) Keel: deps aprovadas `tauri =2.12.5` (tray-icon), `tauri-build =2.7.4`, `tauri-plugin-notification =2.7.0`, `if-addrs =0.15.0`. Recusados: plugins opener, dialog, global-shortcut e autostart, `toml_edit` e a feature `devtools`;
+  - (g) Keel, nomes: `layout_set_options`, `layout_set_device` (junta mover e atalho), `InputState` (no lugar de `InputZones`); `lock_internal_edges` não é comando.
+
 ## Medições
 - P2 (Argus/Rivet, loopback, build debug, 300 RTTs): fluxo uni 1024 B p95 432 µs · datagrama 64 B p95 313 µs. Passa no critério do §9 S1 item 4 (p95 < 1 ms). Spike em release deu < 100 µs; a diferença vem do build debug.
 - Texto em claro no fio: NÃO verificado. tshark e tcpdump exigem CAP_NET_RAW, e não há sudo nesta máquina.
@@ -242,4 +273,4 @@ Commits 0e76039, f54c995, 8daf2f5 e 3c2bad0. A implementação (Tauri) segue dep
    - checagem de conflito com Input Leap e Barrier antes de capturar.
    2A e 2B andam em paralelo com builders diferentes, como no prompt mestre §7.
    A S5 (2026-10-27) já adianta parte da 2A: binário release, e o clipboard Windows por polling, experimental. Na 2A sobra a prova em máquina real e a segurança de LAN.
-4. **Tauri** (janela, bandeja, editor de layout) só depois de o usuário rodar `sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev pkg-config`. Até lá, CLI e TOML.
+4. **Tauri** (janela, bandeja, editor de layout): virou a S6 (v1.14). Compila só no CI; aqui roda pelo AppImage.
