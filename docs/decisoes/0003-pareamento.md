@@ -30,7 +30,7 @@ Um código de 6 dígitos tirado só do `export_keying_material` é forçável po
 
 ## Por que o compromisso resolve
 
-B se compromete com nB antes de conhecer nA, e A escolhe nA depois de receber o compromisso. Quem está no meio precisa fixar o seu nB do lado de A antes de ver o nA que A vai sortear. Então o código daquele lado sai aleatório para ele, e a chance de coincidir é 1 em 10^6 por janela. Cada tentativa sorteia um nA novo depois do Commit, então as chances não se somam a favor dele: com 3 tentativas, o teto por janela é 3 em 10^6. Um Reveal falso fecha a janela na hora.
+B se compromete com nB antes de conhecer nA, e A escolhe nA depois de receber o compromisso. Quem está no meio precisa fixar o seu nB do lado de A antes de ver o nA que A vai sortear. Então o código daquele lado sai aleatório para ele, e a chance de coincidir é 1 em 10^6 por tentativa. Cada tentativa sorteia um nA novo depois do Commit, então é um sorteio independente. Com 3 tentativas, o teto por janela é 3 em 10^6. Um Reveal falso fecha a janela na hora.
 
 ## Consequências
 
