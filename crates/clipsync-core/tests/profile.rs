@@ -200,3 +200,50 @@ fn profile_peers_file_has_64_hex_ids_and_flat_permissions() {
     );
     assert_eq!(p.load_peers().unwrap(), peers);
 }
+
+#[test]
+fn profile_peer_with_a_hostile_name_is_quarantined_and_the_rest_loads() {
+    let tmp = tempfile::tempdir().unwrap();
+    let p = Profile::resolve(Some(tmp.path().join("a"))).unwrap();
+    p.init(opts(false, false)).unwrap();
+    let entry = |id: u8, name: &str| {
+        format!(
+            "[[peer]]\nid = \"{}\"\nname = \"{}\"\naddr = \"127.0.0.1:1\"\npaired_at = \"2026-10-27T14:00:00Z\"\nclipboard_in = false\nclipboard_out = false\ninput_in = false\n",
+            format!("{id:02x}").repeat(32),
+            // TOML basic strings take \uXXXX escapes, not Rust's \u{..}
+            name.chars()
+                .map(|c| if c.is_ascii() && !c.is_control() {
+                    c.to_string()
+                } else {
+                    format!("\\u{:04X}", c as u32)
+                })
+                .collect::<String>()
+        )
+    };
+    let text = format!(
+        "version = 1\n{}{}{}{}",
+        entry(1, "bom"),
+        entry(2, "ev\u{1b}[2Jil"),
+        entry(3, "csi\u{9b}8-bit"),
+        entry(4, "rtl\u{202e}txt")
+    );
+    std::fs::write(p.peers_path(), text).unwrap();
+    let peers = p.load_peers().unwrap();
+    let names: Vec<&str> = peers.peer.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["bom"],
+        "controls, C1 and bidi overrides are quarantined"
+    );
+}
+
+#[test]
+fn profile_device_name_with_formatting_characters_is_refused_at_init() {
+    let tmp = tempfile::tempdir().unwrap();
+    let p = Profile::resolve(Some(tmp.path().join("a"))).unwrap();
+    for bad in ["a\u{202e}b", "a\u{200b}b", "a\u{feff}b", "a\u{9b}b", "a\nb"] {
+        let mut o = opts(true, false);
+        o.device_name = bad.into();
+        assert!(matches!(p.init(o), Err(CoreError::Config(_))), "{bad:?}");
+    }
+}

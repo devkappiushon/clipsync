@@ -14,7 +14,8 @@ pub const REFUSED_BY_PEER: &str = "recusado pelo par: certificado não confiáve
 pub const MODULE_GONE: &str = "módulo encerrado";
 /// ControlResponse::Error / last_block when a module does not answer in time.
 pub const MODULE_TIMEOUT: &str = "módulo não respondeu a tempo";
-/// Pause/resume could not persist state.toml.
-pub const STATE_NOT_SAVED: &str = "não foi possível gravar state.toml";
+/// Pause/resume applied in memory, but state.toml could not be written.
+pub const STATE_NOT_SAVED: &str =
+    "aplicado agora, mas não foi possível gravar state.toml: não sobrevive a reinício";
 /// ReloadPeers could not read peers.toml.
 pub const PEERS_NOT_LOADED: &str = "não foi possível ler peers.toml";

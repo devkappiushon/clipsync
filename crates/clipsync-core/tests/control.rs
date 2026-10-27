@@ -74,3 +74,48 @@ async fn serve_request_roundtrip_stale_socket_and_cleanup() {
     server.await.unwrap().unwrap();
     assert!(!p.socket_path().exists(), "socket removed on shutdown");
 }
+
+#[tokio::test]
+async fn socket_is_created_private_and_a_live_agent_is_never_unlinked() {
+    let tmp = tempfile::tempdir().unwrap();
+    let p = Profile::resolve(Some(tmp.path().to_owned())).unwrap();
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let sock = p.socket_path();
+    let server = tokio::spawn(async move {
+        control::serve(&sock, Arc::new(H), async {
+            let _ = stopped.await;
+        })
+        .await
+    });
+    for _ in 0..100 {
+        if p.socket_path().exists() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let mode = std::fs::metadata(p.socket_path())
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600);
+    // no temporary socket is left behind
+    let leftovers: Vec<_> = std::fs::read_dir(tmp.path())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains("tmp-"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+    // a second serve loses and the first socket is still the one answering
+    assert!(matches!(
+        control::serve(&p.socket_path(), Arc::new(H), std::future::pending()).await,
+        Err(CoreError::AgentAlreadyRunning)
+    ));
+    assert!(matches!(
+        control::request(&p, ControlRequest::Pause).await,
+        Ok(ControlResponse::Ok)
+    ));
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+}

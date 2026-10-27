@@ -169,7 +169,7 @@ impl Validate for Frame {
 
 impl Validate for Hello {
     fn validate(&self) -> Result<(), WireError> {
-        validate_name(&self.device_name)?;
+        validate_device_name(&self.device_name)?;
         if self.min_version > self.version {
             return Err(WireError::Invalid("hello min_version > version"));
         }
@@ -194,15 +194,36 @@ impl Validate for Datagram {
     }
 }
 
-/// Device names: 1..=MAX_NAME_BYTES bytes of UTF-8.
-pub(crate) fn validate_name(name: &str) -> Result<(), WireError> {
+/// The ONE rule for device names, local (profile) and remote (Hello): 1..=MAX_NAME_BYTES bytes
+/// of UTF-8, no control characters (C0, DEL, C1 including the 8-bit CSI U+009B) and no
+/// invisible or bidi formatting characters. A peer's name is printed next to the pairing code,
+/// so anything that moves the cursor or reorders text could forge the code on screen (S1-01).
+pub fn validate_device_name(name: &str) -> Result<(), WireError> {
     if name.is_empty() {
         return Err(WireError::Invalid("empty device name"));
     }
     if name.len() > MAX_NAME_BYTES {
         return Err(WireError::Invalid("device name too long"));
     }
+    if name.chars().any(|c| c.is_control() || is_format_char(c)) {
+        return Err(WireError::Invalid(
+            "control or formatting character in device name",
+        ));
+    }
     Ok(())
+}
+
+/// Zero-width and bidi formatting characters.
+fn is_format_char(c: char) -> bool {
+    matches!(c,
+        '\u{061C}'                   // arabic letter mark (bidi)
+        | '\u{200B}'..='\u{200F}'    // zero-width space/joiners, LRM, RLM
+        | '\u{2028}' | '\u{2029}'     // line and paragraph separators
+        | '\u{202A}'..='\u{202E}'    // bidi embeddings and overrides
+        | '\u{2060}'..='\u{2064}'    // word joiner, invisible operators
+        | '\u{2066}'..='\u{2069}'    // bidi isolates
+        | '\u{FEFF}'                  // zero-width no-break space / BOM
+    )
 }
 
 /// Encodes with the length prefix. Fails if the body exceeds `max` or `validate()` fails.

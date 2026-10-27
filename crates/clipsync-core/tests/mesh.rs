@@ -517,3 +517,32 @@ async fn stream_and_datagram_control_frame_over_limit_is_reset() {
     let mut buf = [0u8; 1];
     assert!(matches!(recv.read(&mut buf).await, Err(quinn::ReadError::Reset(c)) if c == code));
 }
+
+/// S1-08: pause fails closed. With state.toml impossible to write, Pause still pauses (the
+/// response is an error that says so) and the agent stays paused.
+#[tokio::test(flavor = "multi_thread")]
+async fn pause_fails_closed_when_state_cannot_be_saved() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let a = node(&dir, "a");
+    let ra = start(&a, false);
+    wait_until("agent up", || async { status(&a.profile).await.is_some() }).await;
+    // Read-only profile dir: the atomic write of state.toml (tmp + rename) fails.
+    let ro = std::fs::Permissions::from_mode(0o500);
+    std::fs::set_permissions(&a.profile.dir, ro).unwrap();
+    let resp = control::request(&a.profile, ControlRequest::Pause).await;
+    std::fs::set_permissions(&a.profile.dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(
+        matches!(resp, Ok(ControlResponse::Error { .. })),
+        "{resp:?}"
+    );
+    assert!(
+        status(&a.profile).await.unwrap().paused,
+        "must stay paused in memory"
+    );
+    assert!(
+        !a.profile.load_state().unwrap().paused,
+        "nothing was persisted"
+    );
+    stop(ra).await;
+}

@@ -101,14 +101,23 @@ pub async fn serve(
     handler: Arc<dyn ControlHandler>,
     shutdown: impl Future<Output = ()> + Send,
 ) -> Result<(), CoreError> {
+    // Only "nobody answers" proves the socket is stale. Any other connect error (a full backlog, say)
+    // means a live agent may be there, and its socket must not be deleted.
     if socket.exists() {
         match UnixStream::connect(socket).await {
             Ok(_) => return Err(CoreError::AgentAlreadyRunning),
-            Err(_) => std::fs::remove_file(socket)?,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+                ) =>
+            {
+                std::fs::remove_file(socket)?;
+            }
+            Err(e) => return Err(e.into()),
         }
     }
-    let listener = UnixListener::bind(socket)?;
-    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
+    let listener = bind_private(socket)?;
     let mut tasks = tokio::task::JoinSet::new();
     tokio::pin!(shutdown);
     loop {
@@ -147,5 +156,23 @@ async fn serve_one(mut stream: UnixStream, handler: Arc<dyn ControlHandler>) {
     let resp = handler.handle(req).await;
     if let Err(e) = write_message(&mut stream, &resp, MAX_FRAME_BYTES).await {
         tracing::debug!(error = %e, "control response not delivered");
+    }
+}
+
+/// Binds under a temporary name, restricts it to 0600, then links it to `socket`: the final name never
+/// exists with a wider mode, and `hard_link` fails if another agent got there first.
+fn bind_private(socket: &Path) -> Result<UnixListener, CoreError> {
+    let tmp = socket.with_extension(format!("tmp-{}", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    let listener = UnixListener::bind(&tmp)?;
+    let linked = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
+        .and_then(|()| std::fs::hard_link(&tmp, socket));
+    let _ = std::fs::remove_file(&tmp);
+    match linked {
+        Ok(()) => Ok(listener),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(CoreError::AgentAlreadyRunning)
+        }
+        Err(e) => Err(e.into()),
     }
 }

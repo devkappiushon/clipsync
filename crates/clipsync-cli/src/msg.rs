@@ -114,8 +114,12 @@ fn humanize(secs: u64) -> String {
         format!("{secs} s")
     }
 }
-pub fn pair_prompt(code: &str, name: &str, id: &str, modules: &str) -> String {
-    format!("Código: {code}\nPar: {name} (id {id}) · módulos: {modules}")
+pub fn pair_peer(name: &str, id: &str, modules: &str) -> String {
+    format!("Par: {name} (id {id}) · módulos: {modules}")
+}
+/// Printed AFTER the peer's name and right before the question, so a hostile name cannot push it away.
+pub fn pair_code(code: &str) -> String {
+    format!("Código: {code}")
 }
 pub fn paired(name: &str, id: &str, perms: &str) -> String {
     format!("Pareado com {name} (id {id}). Permissões concedidas por você: {perms}")

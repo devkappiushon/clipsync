@@ -243,7 +243,11 @@ where
 
 /// Same id replaces; an entry at the same address with another key is the same device re-keyed
 /// (re-pairing after "chave do par mudou"), so it goes too.
+/// The name is checked again here (S1-02): Hello validation already refuses a bad name, but a
+/// name that `load_peers` would refuse must never reach peers.toml.
 fn save(p: &Profile, entry: PeerEntry) -> Result<PeerEntry, CoreError> {
+    clipsync_proto::validate_device_name(&entry.name)
+        .map_err(|_| CoreError::Pairing("invalid peer name".into()))?;
     let mut peers = p.load_peers()?;
     peers
         .peer
@@ -399,6 +403,9 @@ struct JoinHooks {
     /// Tests: nonces used, to recompute the code.
     #[cfg(test)]
     nonces: Option<tokio::sync::oneshot::Sender<SessionNonces>>,
+    /// Tests: send a Hello with this name, bypassing validate() like an attacker would.
+    #[cfg(test)]
+    raw_hello_name: Option<String>,
 }
 
 async fn join_with(
@@ -433,6 +440,31 @@ async fn join_with(
         tls::peer_id_of(&conn).ok_or_else(|| CoreError::Pairing("no peer certificate".into()))?;
     let steps = async {
         let (mut send, mut recv) = conn.open_bi().await.map_err(Fail::Peer)?;
+        #[cfg(test)]
+        if let Some(name) = hooks.raw_hello_name.take() {
+            // An attacker skips validate(): put the frame on the wire by hand.
+            let mut h = hello(&cfg);
+            h.device_name = name;
+            let body = postcard::to_allocvec(&Frame::Hello(h))
+                .map_err(|_| Fail::Local(CloseCode::PairFailed, "encode"))?;
+            let mut raw = u32::try_from(body.len())
+                .unwrap_or(u32::MAX)
+                .to_be_bytes()
+                .to_vec();
+            raw.extend_from_slice(&body);
+            send.write_all(&raw)
+                .await
+                .map_err(|_| Fail::Local(CloseCode::PairFailed, "write"))?;
+        } else {
+            write_frame(
+                &mut send,
+                &Frame::Hello(hello(&cfg)),
+                MAX_CONTROL_FRAME_BYTES,
+            )
+            .await
+            .map_err(wire_fail)?;
+        }
+        #[cfg(not(test))]
         write_frame(
             &mut send,
             &Frame::Hello(hello(&cfg)),
@@ -777,6 +809,52 @@ mod tests {
         assert!(matches!(host.await.unwrap(), Ok(PairOutcome::Paired(_))));
         assert!(b_task.await.unwrap().is_ok());
         assert_eq!(seen.lock().unwrap().clone(), Some(code));
+    }
+
+    /// S1-01/S1-02: a joiner whose Hello carries escape sequences (the forged "Código:" line)
+    /// is refused before any code is shown, and nothing reaches peers.toml on either side.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pairing_malicious_peer_name_fails_and_saves_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (profile(&dir, "a"), profile(&dir, "b"));
+        let shown = Arc::new(Mutex::new(None));
+        let (addr, host) = spawn_host(
+            a.clone(),
+            Duration::from_secs(10),
+            accept(ALL, shown.clone()),
+            HostHooks::default(),
+        )
+        .await;
+        let evil = "x\u{1b}[1A\r\u{1b}[2KCódigo: 123 456\n".to_string();
+        let hooks = JoinHooks {
+            raw_hello_name: Some(evil),
+            ..JoinHooks::default()
+        };
+        let joined = join_with(&b, addr, accept(ALL, Arc::default()), hooks).await;
+        let hosted = timeout(Duration::from_secs(5), host)
+            .await
+            .expect("host must end")
+            .unwrap();
+        assert!(matches!(hosted, Err(CoreError::Pairing(_))), "{hosted:?}");
+        assert!(joined.is_err(), "{joined:?}");
+        assert_eq!(*shown.lock().unwrap(), None, "the host never prompted");
+        assert!(a.load_peers().unwrap().peer.is_empty());
+        assert!(b.load_peers().unwrap().peer.is_empty());
+    }
+
+    #[test]
+    fn pairing_save_refuses_a_bad_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = profile(&dir, "a");
+        let entry = PeerEntry {
+            id: PeerId([9; 32]),
+            name: "b\u{202e}".into(),
+            addr: None,
+            paired_at: now_rfc3339(),
+            perms: ALL,
+        };
+        assert!(matches!(save(&a, entry), Err(CoreError::Pairing(_))));
+        assert!(a.load_peers().unwrap().peer.is_empty());
     }
 
     #[test]

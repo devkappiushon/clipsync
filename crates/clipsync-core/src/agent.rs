@@ -202,14 +202,20 @@ impl Agent {
         }
     }
 
+    /// Fails closed (S1-08): the new state applies in memory first, then is persisted. If
+    /// state.toml cannot be written, the agent keeps the new state (a pause stays a pause) and
+    /// answers with an error saying it will not survive a restart.
     async fn set_paused(&self, paused: bool) -> ControlResponse {
-        if let Err(e) = self.profile.save_state(&State { version: 1, paused }) {
-            return ControlResponse::Error {
-                message: format!("{}: {e}", msg::STATE_NOT_SAVED),
-            };
-        }
         self.mesh.set_paused(paused).await;
-        ControlResponse::Ok
+        match self.profile.save_state(&State { version: 1, paused }) {
+            Ok(()) => ControlResponse::Ok,
+            Err(e) => {
+                tracing::error!(paused, error = %e, "{}", msg::STATE_NOT_SAVED);
+                ControlResponse::Error {
+                    message: msg::STATE_NOT_SAVED.to_string(),
+                }
+            }
+        }
     }
 }
 

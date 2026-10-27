@@ -1,6 +1,6 @@
 //! Profile directory: config, identity, peers and persisted state (contract §3).
 use crate::CoreError;
-use clipsync_proto::{MAX_NAME_BYTES, ModuleSet, PeerId, PeerPerms};
+use clipsync_proto::{ModuleSet, PeerId, PeerPerms};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use serde::{Deserialize, Serialize};
@@ -274,13 +274,11 @@ fn io_ctx(context: impl std::fmt::Display, e: std::io::Error) -> CoreError {
     CoreError::Io(std::io::Error::new(e.kind(), format!("{context}: {e}")))
 }
 
+/// The one rule for device names, shared with the wire (`Hello::validate`): no controls (C0, DEL, C1
+/// including U+009B) and no Unicode formatting characters, 1 to 64 bytes.
 fn valid_name(name: &str) -> Result<(), CoreError> {
-    if name.is_empty() || name.len() > MAX_NAME_BYTES || name.chars().any(char::is_control) {
-        return Err(CoreError::Config(format!(
-            "device_name deve ter de 1 a {MAX_NAME_BYTES} bytes e nenhum caractere de controle"
-        )));
-    }
-    Ok(())
+    clipsync_proto::validate_device_name(name)
+        .map_err(|e| CoreError::Config(format!("device_name inválido: {e}")))
 }
 
 /// Writes `data` to `path` through a private temp file and an atomic rename; mode 0600.
@@ -483,10 +481,17 @@ impl Profile {
                 peers.version
             )));
         }
+        // A peer whose name is unusable is quarantined (skipped, logged by id only) instead of making
+        // the whole profile unreadable: one bad entry must not take the other pairings down.
+        let mut peers = peers;
+        peers.peer.retain(|p| {
+            let ok = valid_name(&p.name).is_ok();
+            if !ok {
+                tracing::warn!(peer = %p.id.short(), "peers.toml: entrada com nome inválido ignorada");
+            }
+            ok
+        });
         for (i, p) in peers.peer.iter().enumerate() {
-            valid_name(&p.name).map_err(|_| {
-                CoreError::Profile(format!("peers.toml: nome inválido em {}", p.id.short()))
-            })?;
             if peers.peer[..i].iter().any(|q| q.id == p.id) {
                 return Err(CoreError::Profile(format!(
                     "peers.toml: id repetido ({})",

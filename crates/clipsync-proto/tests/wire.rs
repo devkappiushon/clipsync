@@ -363,3 +363,54 @@ fn unreachable_never_goes_on_the_wire() {
         ModuleReply::ClipSent(v) if v[0].state == DeliveryState::Unreachable
     ));
 }
+
+#[test]
+fn validate_device_name_rejects_control_and_bidi() {
+    for ok in [
+        "notebook-a",
+        "Notebook do João",
+        "çãé ü 日本",
+        &"a".repeat(MAX_NAME_BYTES),
+    ] {
+        assert!(validate_device_name(ok).is_ok(), "{ok:?}");
+    }
+    let bad = [
+        "a\u{1b}[1A\r\u{1b}[2KCódigo: 123 456\n", // the S1-01 proof
+        "a\nb",
+        "a\rb",
+        "a\tb",
+        "\u{0}",
+        "a\u{7f}",
+        "a\u{85}",
+        "a\u{9b}2J",
+        "a\u{200b}b",
+        "a\u{200e}",
+        "a\u{200f}",
+        "a\u{2028}",
+        "a\u{2029}",
+        "a\u{202a}",
+        "\u{202e}cba",
+        "a\u{2066}",
+        "a\u{2069}",
+        "\u{feff}a",
+        "a\u{061c}",
+        "a\u{2060}",
+    ];
+    for name in bad {
+        assert!(
+            matches!(validate_device_name(name), Err(WireError::Invalid(_))),
+            "{name:?}"
+        );
+        let mut h = hello(name);
+        h.device_name = name.into();
+        let f = Frame::Hello(h);
+        assert!(f.validate().is_err(), "{name:?}");
+        assert!(encode_frame(&f, MAX_FRAME_BYTES).is_err(), "{name:?}");
+        // A peer that skips validate() is caught on decode.
+        let raw = postcard::to_allocvec(&f).unwrap();
+        assert!(
+            matches!(decode_frame_body(&raw), Err(WireError::Invalid(_))),
+            "{name:?}"
+        );
+    }
+}

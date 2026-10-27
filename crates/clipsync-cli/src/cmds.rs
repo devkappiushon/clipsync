@@ -43,7 +43,7 @@ pub async fn status(profile: &Profile) -> Result<(), Fail> {
             println!(
                 "{}",
                 msg::status_head(
-                    &s.device_name,
+                    &text::clean(&s.device_name),
                     &s.id.short(),
                     &s.listen.to_string(),
                     s.paused
@@ -58,7 +58,7 @@ pub async fn status(profile: &Profile) -> Result<(), Fail> {
                 println!(
                     "{}",
                     msg::peer_line(
-                        &p.name,
+                        &text::clean(&p.name),
                         &p.id.short(),
                         &text::peer_state(&p.state),
                         &addr,
@@ -75,8 +75,8 @@ pub async fn status(profile: &Profile) -> Result<(), Fail> {
                         text::kind(m.kind),
                         m.enabled,
                         m.adapter.as_deref().unwrap_or("-"),
-                        m.last_event.as_deref().unwrap_or(msg::NONE),
-                        m.last_block.as_deref().unwrap_or(msg::NONE)
+                        &text::clean(m.last_event.as_deref().unwrap_or(msg::NONE)),
+                        &text::clean(m.last_block.as_deref().unwrap_or(msg::NONE))
                     )
                 );
             }
@@ -104,7 +104,12 @@ pub async fn status(profile: &Profile) -> Result<(), Fail> {
                 println!("  {}", msg::NO_PEERS);
             }
             for p in &peers.peer {
-                println!("  {} ({}) · {}", p.name, p.id.short(), text::perms(p.perms));
+                println!(
+                    "  {} ({}) · {}",
+                    text::clean(&p.name),
+                    p.id.short(),
+                    text::perms(p.perms)
+                );
             }
             Err(Fail {
                 code: 4,
@@ -187,18 +192,19 @@ pub async fn inbox(profile: &Profile) -> Result<(), Fail> {
 }
 
 fn inbox_line(i: &InboxItem) -> String {
-    let state = text::delivery(&i.from, i.state);
+    let from = text::clean(&i.from);
+    let state = text::delivery(&from, i.state);
     let state = state
-        .strip_prefix(&format!("{}: ", i.from))
+        .strip_prefix(&format!("{from}: "))
         .unwrap_or(&state)
         .to_owned();
     msg::inbox_line(
         &i.id.short(),
-        &i.from,
+        &from,
         &text::clock_utc(i.received_unix_ms),
         i.bytes,
         &state,
-        &i.preview,
+        &text::clean(&i.preview),
     )
 }
 

@@ -31,12 +31,12 @@ pub fn decide<R: BufRead, W: Write>(
     local: ModuleSet,
     allow: Option<PeerPerms>,
 ) -> std::io::Result<PairDecision> {
-    ui.say(&msg::pair_prompt(
-        &prompt.code,
-        &prompt.peer_name,
+    ui.say(&msg::pair_peer(
+        &text::clean(&prompt.peer_name),
         &prompt.peer_id.short(),
         &text::modules(prompt.peer_modules),
     ))?;
+    ui.say(&msg::pair_code(&prompt.code))?;
     let declined = PairDecision {
         accept: false,
         grants: PeerPerms::default(),
@@ -78,7 +78,11 @@ async fn finish(profile: &Profile, outcome: Result<PairOutcome, CoreError>) -> R
         Ok(PairOutcome::Paired(entry)) => {
             println!(
                 "{}",
-                msg::paired(&entry.name, &entry.id.short(), &text::perms(entry.perms))
+                msg::paired(
+                    &text::clean(&entry.name),
+                    &entry.id.short(),
+                    &text::perms(entry.perms)
+                )
             );
             // a running agent reads peers.toml again; no agent is fine
             let _ = control::request(profile, ControlRequest::ReloadPeers).await;
@@ -89,7 +93,7 @@ async fn finish(profile: &Profile, outcome: Result<PairOutcome, CoreError>) -> R
         } else {
             msg::PAIR_DECLINED_LOCAL
         })),
-        Err(CoreError::Pairing(d)) => Err(Fail::refused(msg::pair_failed(&d))),
+        Err(CoreError::Pairing(d)) => Err(Fail::refused(msg::pair_failed(&text::clean(&d)))),
         Err(e) => Err(e.into()),
     }
 }
@@ -120,4 +124,41 @@ pub async fn join(profile: &Profile, addr: &str, allow: Option<String>) -> Resul
     let local = profile.load_config()?.modules;
     let outcome = pairing::join(profile, addr, confirm_fn(local, allow)).await;
     finish(profile, outcome).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clipsync_proto::PeerId;
+
+    #[test]
+    fn hostile_name_is_cleaned_and_the_code_comes_right_before_the_question() {
+        let prompt = PairPrompt {
+            code: "123 456".into(),
+            peer_name: "evil\u{1b}[2J\nCódigo: 000 000".into(),
+            peer_id: PeerId([9; 32]),
+            peer_modules: ModuleSet {
+                clipboard: true,
+                input: false,
+            },
+        };
+        let mut out = Vec::new();
+        let decision = {
+            let mut ui = Prompter::new(&b"n\n"[..], &mut out);
+            decide(&mut ui, &prompt, ModuleSet::default(), None).unwrap()
+        };
+        assert!(!decision.accept);
+        let text = String::from_utf8(out).unwrap();
+        assert!(!text.contains('\u{1b}'), "{text:?}");
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(
+            lines[0].starts_with("Par: evil?[2J Código: 000 000"),
+            "{lines:?}"
+        );
+        assert_eq!(lines[1], "Código: 123 456");
+        assert!(
+            lines[2].contains("[s/N]"),
+            "the question follows the code: {lines:?}"
+        );
+    }
 }

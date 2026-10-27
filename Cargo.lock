@@ -350,6 +350,7 @@ dependencies = [
  "async-trait",
  "clipsync-proto",
  "hex",
+ "postcard",
  "quinn",
  "rand",
  "rcgen",
