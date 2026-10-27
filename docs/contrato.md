@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.12, Keel, 2026-10-27)
+# Contrato · ClipSync MVP de hoje (v1.13, Keel, 2026-10-27)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -12,6 +12,11 @@ v1.9: §9 S4 item 2 passa a usar `--test control`, porque o filtro por nome não
 v1.10 (auditoria `docs/seguranca.md`): §5 regra 3 define o que conta como tentativa de pareamento (Commit recebido; máx 3 por janela; Reveal divergente fecha na hora; implementação pós-MVP, S1-04). Regras dos achados em correção hoje: nome de dispositivo (S1-01, §4 validate e §2 regra 8), nome inválido nunca gravado (S1-02, regra 3), pausa falha fechada (S1-08, regra 8), socket criado de forma atômica (S1-09, control.rs).
 v1.11 (fatia S5 · Windows e release, decisões do Maestro + Keel): nova §11 e §9 S5. No Windows, a 0.1.0 tem malha, pareamento e clipboard; teclado e mouse ficam indisponíveis. Controle por named pipe só local (`reject_remote_clients`, `first_pipe_instance`, nome sorteado publicado em `DIR\agent.pipe`). Perfil protegido pela ACL do usuário, sem chmod, em `%LOCALAPPDATA%\clipsync`. Clipboard `win-poll` (arboard, 250 ms) experimental. Release por tag `v*` sem cache e com CRT estática. Na S5 cada builder commita os próprios arquivos (§11 regra 12). Posse do core inteiro volta ao Rivet durante a S5.
 v1.12 (Maestro aceitou os acréscimos da v1.11; pontos que o Rivet apontou): o Windows entra no próprio lugar, não só na §11. A §3 ganha o perfil padrão e o `agent.pipe`; a §4 ganha `mono_us` por processo no Windows; a §5 ganha `resolve`, `socket_path` e o named pipe. Licença (decisão do Maestro): a 0.1.0 sai num repositório privado, sem LICENSE. A regra passa a ser "licença antes do primeiro release público", e o README segue com "a definir". §9 S5 item 10, §10 item 1 e §11 regra 9 ajustados.
+v1.13 (fechamento da S5):
+- Decisão do Maestro: `probe input` fora do Linux sai 3 (recusado ou indisponível, `Fail::refused`), igual ao `probe clipboard`; o 1 fica para erro de execução (§11 regra 7, §9 S5 item 6).
+- A regra 8 da §11 foi cumprida em 707c780: `init` sem módulo utilizável recusa com 3 sem gravar nada, e `run` sem módulo sai 1 com `RUN_NO_MODULE`.
+- Revisão do Sentinel (`docs/seguranca.md`, S5): a regra 5 corrige o texto sobre o nome do pipe (S5-04: o nome é público, e quem protege é a DACL) e registra a lacuna de saída suja (S5-01). O desenho de segredo + HMAC foi aceito pelo Keel para depois da 0.1.0.
+- A regra 6 registra a escrita sem histórico e sem nuvem (S5-02, b81b08b).
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -754,11 +759,13 @@ Todos os comandos rodam da raiz do repo com `export PATH=$HOME/.cargo/bin:$PATH`
    - (d) `stop` encerra a thread em até 1 tique.
 
    `grep -n experimental crates/clipsync-clipboard/src/msg.rs` mostra o texto que o `diagnose` usa no Windows.
-6. **Teclado e mouse (Vector):** `grep -n UNAVAILABLE_ON_PLATFORM crates/clipsync-input/src/*.rs` mostra a mesma const em `lib.rs` (build), `probe.rs` e `diag.rs`. Entregue em b4f472a; falta a conferência.
+6. **Teclado e mouse (Vector):** `grep -n UNAVAILABLE_ON_PLATFORM crates/clipsync-input/src/*.rs` mostra a mesma const em `lib.rs` (build), `probe.rs` e `diag.rs`. `probe input` fora do Linux sai 3, não 1 (v1.13). Entregue em b4f472a e 36568a7.
 7. **cli (Flux):** um teste unitário cobre os três casos da §11 regra 8. Ele passa a plataforma como parâmetro de uma função pura, sem `cfg!` dentro dela, para rodar no Linux:
-   - `init` fora do Linux grava `input = false`;
+   - `init` fora do Linux grava `input = false`; sem módulo utilizável, o `init` sai 3 sem gravar nada (v1.13);
    - `input = true` fora do Linux avisa e segue sem o módulo;
-   - sem módulo sobrando, sai 1.
+   - `run` sem módulo sobrando sai 1 com `RUN_NO_MODULE`.
+
+   Cumprido em 707c780.
 8. **CI (Bolt):**
    - `python3 -c "import yaml;[yaml.safe_load(open(f)) for f in ('.github/workflows/ci.yml','.github/workflows/release.yml')]"` sai 0.
    - O job Windows de `ci.yml` roda `cargo clippy --workspace --all-targets --locked -- -D warnings` e `cargo test --workspace --locked`.
@@ -815,30 +822,43 @@ Regras:
 5. **Canal de controle no Windows (Rivet: control.rs e agent.rs).** Named pipe só local:
    - a primeira instância usa `ServerOptions::first_pipe_instance(true)`, e todas usam `reject_remote_clients(true)`;
    - o nome é sorteado a cada `serve`: `\\.\pipe\clipsync-` + 32 hex de 16 bytes do `rand`;
-   - o nome é publicado em `DIR\agent.pipe`, com escrita atômica (tmp + rename). Pela ACL do perfil, só o dono lê esse arquivo;
+   - o nome é publicado em `DIR\agent.pipe`, com escrita atômica (tmp + rename). **O nome não é segredo** (v1.13, S5-04): qualquer usuário local lista `\\.\pipe\`. Quem protege é a DACL padrão do pipe, que não deixa outro usuário conectar para escrita nem criar instância nova, junto com o nome sorteado na hora;
    - `request` lê o arquivo e conecta só a esse nome. No Windows, `Profile::socket_path()` devolve `DIR\agent.pipe`. As assinaturas da §5 não mudam;
    - se `agent.pipe` existe e o connect funciona, é `AgentAlreadyRunning`. Se o connect dá NotFound, o arquivo é velho e o `serve` o regrava. Qualquer outro erro sobe sem apagar nada. O `serve` apaga `agent.pipe` ao sair;
    - `agent.rs` não abre `UnixStream` direto. A checagem de agente vivo usa a mesma rotina do control.rs, uma por plataforma;
    - o quadro é o mesmo do Unix: u32 BE + JSON, no máximo MAX_FRAME_BYTES, uma requisição por conexão.
 
-   Por que o nome é sorteado: o namespace `\\.\pipe\` é global na máquina, e qualquer usuário lista os nomes. Com nome fixo, ou derivado do caminho do perfil, outro usuário local criaria o pipe antes do agente. Aí receberia o texto de `clipsync send --stdin`. Com o nome sorteado na hora, ninguém consegue criá-lo antes. A DACL padrão do pipe também não deixa outro usuário abrir instância nova nem conectar para escrita.
+   Por que o nome é sorteado: o namespace `\\.\pipe\` é global na máquina, e qualquer usuário lista os nomes. Com nome fixo, ou derivado do caminho do perfil, outro usuário local criaria o pipe antes do agente. Aí receberia o texto de `clipsync send --stdin`. Com o nome sorteado na hora, ninguém consegue criá-lo enquanto o agente está vivo.
+
+   **Lacunas conhecidas na 0.1.0** (multiusuário apenas; num PC de um usuário só não há atacante):
+   - **S5-01, MÉDIO:** depois de uma saída suja (console fechado, logoff, `taskkill`), o nome velho fica em `agent.pipe`. Outro usuário que já o listou pode criar o pipe e receber o próximo `send --stdin`.
+   - **Desenho aceito pelo Keel, para implementar depois da 0.1.0:**
+     - `agent.pipe` ganha uma 2ª linha com 16 bytes aleatórios de segredo;
+     - o cliente abre a conexão mandando um nonce de 16 bytes;
+     - o servidor responde `HMAC-SHA256(segredo, nonce)`;
+     - o cliente confere em tempo constante e só então manda o quadro de sempre. Se a resposta não bater, aborta sem mandar o texto e diz `AgentNotRunning` com aviso;
+     - o HMAC vem de `ring::hmac`: o ring já está no grafo, e a dep direta no core fica aprovada desde já.
+   - **S5-04, BAIXO:** conexões só de leitura de outro usuário podem prender tarefas do controle. Limitar tarefas simultâneas e reduzir o timeout de leitura no pipe (pendência).
 6. **Clipboard no Windows (Flux).** Adaptador `win-poll` (`WinClipboard`):
    - lê e escreve pelo arboard, com `WatchMode::Poll { interval_ms: 250 }`;
    - a cada 250 ms lê o texto, e só gera `ChangeEvent` quando o conteúdo muda. É a mesma regra da §7 regra 3: recópia idêntica não é cópia nova;
    - clipboard ocupado por outro app (`Busy`): tenta de novo no próximo tique, sem evento e sem erro para o usuário. Só texto;
    - `adapter = "auto"` escolhe `win-poll` no Windows. `"x11"` no Windows é erro de config;
-   - as regras 1 a 12 da §7 valem do mesmo jeito: livro de escritas, Lamport, caixa, pausa, e conteúdo nunca em log.
+   - as regras 1 a 12 da §7 valem do mesmo jeito: livro de escritas, Lamport, caixa, pausa, e conteúdo nunca em log;
+   - (v1.13, S5-02, b81b08b) texto recebido de par é escrito com `exclude_from_history()` e `exclude_from_cloud()` do arboard: não entra no Win+V nem na nuvem da Microsoft;
+   - marcador de gerenciador de senha (`ExcludeClipboardContentFromMonitorProcessing`) ainda não é lido (S5-03, pendência). Ler esse marcador pede `clipboard-win` como dep direta, e isso passa pelo Keel.
 
    **É experimental até o teste em máquina real.** O `diagnose` e o README dizem "experimental", e a matriz continua "não testada" na linha Windows.
 7. **Teclado e mouse no Windows (Vector, entregue em b4f472a).** ashpd e reis só existem no Linux. Fora do Linux:
    - `build` devolve `ModuleError::Adapter(msg::UNAVAILABLE_ON_PLATFORM)`;
-   - `probe input` sai 1 com o mesmo texto;
+   - `probe input` sai **3** com o mesmo texto (v1.13, decisão do Maestro: 3 = recusado ou indisponível, `Fail::refused`, igual ao `probe clipboard` fora do Linux; 1 fica para erro de execução);
    - o `diagnose` mostra o item.
 
    O Hello anuncia só os módulos que de fato rodam (Rivet confere no agent.rs). Assim, o par Linux recebe `RemoteModuleDisabled` ao tentar mandar input para o Windows.
 8. **cli no Windows (Flux).**
-   - Fora do Linux, o `init` grava `input = false` sem perguntar. A pergunta do clipboard mantém o padrão NÃO: recusar deixa zero módulos, e o `init` recusa com motivo.
-   - Com `input = true` fora do Linux, o `run` avisa `INPUT_UNAVAILABLE` e segue sem o módulo. Se não sobrar nenhum módulo, o `run` sai 1 com motivo.
+   - Fora do Linux, o `init` grava `input = false` sem perguntar. A pergunta do clipboard mantém o padrão NÃO. Se não sobrar módulo utilizável, o `init` recusa com motivo, sai 3 e não grava nada em disco.
+   - Com `input = true` fora do Linux, o `run` avisa `INPUT_UNAVAILABLE` e segue sem o módulo. Se não sobrar nenhum módulo, o `run` sai 1 com `RUN_NO_MODULE`.
+   - Cumprida em 707c780 (Flux), com testes puros que recebem a plataforma como parâmetro.
 9. **Release (Bolt).**
    - `[profile.release]`: `lto = true`, `codegen-units = 1`, `strip = true` (já no Cargo.toml).
    - `release.yml` dispara em tag `v*`. Ele falha se a tag sem o `v` diferir do `version` do `[workspace.package]`.

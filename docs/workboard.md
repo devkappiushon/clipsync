@@ -1,8 +1,8 @@
 # workboard · ClipSync MVP de hoje
 
-**Estado: MVP de 2026-10-27 FECHADO.** S0 a S4 e I passam no warden (Argus). Segurança liberada, com 0 bloqueantes (`docs/seguranca.md`). **S5 (Windows e release) EM ANDAMENTO** desde 2026-10-27. Pendências consolidadas e próxima fatia no fim deste arquivo.
+**Estado: MVP de 2026-10-27 FECHADO.** S0 a S4 e I passam no warden (Argus). Segurança liberada, com 0 bloqueantes (`docs/seguranca.md`). **S5 (Windows e release): código entregue, e a segurança LIBEROU** (Sentinel 10777b4: 0 BLOCKER, 3 MÉDIO, 8 BAIXO). Faltam o CI verde nos dois runners e o release v0.1.0, que dependem do push do usuário. Pendências consolidadas e próxima fatia no fim deste arquivo.
 
-Contrato: `docs/contrato.md` (v1.12). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Git: até a S4 só o Maestro commitava; na S5 cada builder commita os próprios arquivos na main local, sem push (contrato §11 regra 12). Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
+Contrato: `docs/contrato.md` (v1.13). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Git: até a S4 só o Maestro commitava; na S5 cada builder commita os próprios arquivos na main local, sem push (contrato §11 regra 12). Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
 
 ## Ordem
 1. S0 Bolt fecha primeiro (esqueleto compila). Só então S1, S2, S3 começam a editar seus crates.
@@ -46,7 +46,7 @@ Estado: PASSA no warden (após reemissão)
 Pronto: §9 I itens 1 a 4.
 Estado: PASSA no warden
 
-## S5 · Windows e release (v1.11, aberta em 2026-10-27)
+## S5 · Windows e release (v1.11 a v1.13; código fechado em 2026-10-27)
 Regras: contrato §11. Pronto: §9 S5 itens 1 a 10. Os três critérios do Maestro são:
 - (A) checagem de compilação Windows verde no workspace (itens 1 a 7);
 - (B) CI verde nos dois runners (item 8);
@@ -60,21 +60,31 @@ Verificação local: `export PATH=$HOME/.cargo/bin:$PATH`, depois `cargo clippy 
   - Hello anuncia só os módulos que rodam;
   - testes de control e mesh verdes no Windows.
 
-  Pronto: itens 1 a 4. Estado: entregue em 661bea9, com nome de pipe por hash e perfil em `%APPDATA%`. Em correção para a §11: nome sorteado + `DIR\agent.pipe` e `%LOCALAPPDATA%` (pedido do Maestro).
+  Pronto: itens 1 a 4. Estado: entregue. Commits:
+  - 661bea9: primeira versão;
+  - b66df03: nome sorteado a cada agente, publicado em `DIR\agent.pipe`, e perfil padrão em `%LOCALAPPDATA%`.
 - **Flux · clipboard e cli no Windows.** Posse: `crates/clipsync-clipboard/**` e `crates/clipsync-cli/**`. Faz:
   - adaptador `win-poll` (arboard, 250 ms, só texto), experimental;
   - init e run fora do Linux sem input;
   - teste do watcher e da escolha de módulos.
 
-  Pronto: itens 1, 2, 5 e 7. Estado: entregue (f4daff4, 36568a7); falta a conferência.
-- **Vector · input indisponível no Windows.** Posse: `crates/clipsync-input/**`. Pronto: itens 1, 3 e 6. Estado: entregue no commit b4f472a; falta a conferência.
+  Pronto: itens 1, 2, 5 e 7. Estado: entregue. Commits:
+  - f4daff4: clipboard e cli compilam no Windows;
+  - 36568a7: do Vector, compartilhado;
+  - b81b08b (S5-02): texto recebido escrito com `exclude_from_history` e `exclude_from_cloud`;
+  - 707c780: §11 regra 8. O `init` sem módulo utilizável sai 3 sem gravar, e o `run` sem módulo sai 1 com `RUN_NO_MODULE`. Testes puros por plataforma.
+- **Vector · input indisponível no Windows.** Posse: `crates/clipsync-input/**`. Pronto: itens 1, 3 e 6. Estado: entregue em b4f472a e 36568a7. Fora do Linux, o `probe input` sai 3 (v1.13).
 - **Bolt · release, CI e README.** Posse: `Cargo.toml` raiz, `Cargo.lock`, `.github/workflows/{ci,release}.yml` e `README.md`. Faz:
   - `[profile.release]` com LTO e strip (já feito);
   - `release.yml` por tag `v*`, sem cache, só `actions/*`, CRT estática no Windows, `ubuntu-24.04` e conferência tag = versão;
   - job Windows do CI com clippy e `test --workspace`;
   - quadro do README com clipboard Windows "experimental".
 
-  Pronto: itens 1, 8, 9 e 10. Estado: 5010629 (Bolt) e 176ac4e (Maestro, porque o Bolt estourou a cota do modelo). O item 9 passa na conferência estática do Keel em 2026-10-27:
+  Pronto: itens 1, 8, 9 e 10. Estado: entregue. Commits:
+  - 5010629: Bolt;
+  - 176ac4e e 9da97d9: Maestro, porque o Bolt estourou a cota do modelo. O 9da97d9 traz os avisos de Windows no README e `permissions` e `persist-credentials: false` nos workflows.
+
+  O item 9 passa na conferência estática do Keel em 2026-10-27:
   - `rust-cache` 0;
   - só `actions/*`;
   - crt-static no Windows;
@@ -83,6 +93,7 @@ Verificação local: `export PATH=$HOME/.cargo/bin:$PATH`, depois `cargo clippy 
   - YAML válido.
 
   O job Windows do CI roda clippy `-D warnings` e `test --workspace --locked`. Os itens 8 (CI verde) e 10 (release) esperam o push do usuário.
+- **Sentinel · segurança da S5:** LIBERADO para a tag v0.1.0 em 10777b4 (`docs/seguranca.md`, seção S5). 0 BLOCKER, 3 MÉDIO e 8 BAIXO. O S5-02 já foi corrigido em b81b08b; os demais estão em "Pendências pós-MVP → S5".
 - **Licença (v1.12, decisão do Maestro):** a 0.1.0 sai num repositório privado, sem LICENSE; o README segue com "a definir". A licença passa a ser pré-condição do primeiro release público (pendência 1). Push e tag são só do usuário.
 
 ## Telas (Figma)
@@ -140,6 +151,12 @@ Commits 0e76039, f54c995, 8daf2f5 e 3c2bad0. A implementação (Tauri) segue dep
   - (f) o job Windows do CI roda clippy, único lint do código `cfg(windows)`, e `test --workspace`;
   - (g) sem dep nova; Win32 direto fica fora da 0.1.0;
   - (h) licença decidida é pré-condição do tag (substituída na v1.12: vale para o primeiro release público).
+- 2026-10-27 · Maestro + Keel · Contrato v1.13, fechamento da S5:
+  - (a) decisão do Maestro: fora do Linux, o `probe input` sai 3 (recusado ou indisponível), igual ao `probe clipboard`; o 1 fica para erro de execução;
+  - (b) a §11 regra 8 foi cumprida em 707c780;
+  - (c) a §11 regra 5 foi corrigida conforme o S5-04: o nome do pipe é público, e quem protege é a DACL. A regra registra a lacuna S5-01;
+  - (d) o Keel aceitou o desenho do Sentinel para o S5-01: segredo de 16 bytes na 2ª linha de `agent.pipe`, nonce do cliente e `HMAC-SHA256` do servidor via `ring::hmac` (dep direta aprovada). Implementação depois da 0.1.0;
+  - (e) a §11 regra 6 registra o S5-02 (b81b08b) e deixa o S5-03 como pendência.
 - 2026-10-27 · Maestro · Acréscimos 1 a 6 da v1.11 aceitos. Licença: a 0.1.0 sai em repositório privado sem LICENSE; a regra passa a ser "licença antes do primeiro release público".
 - 2026-10-27 · Keel · Contrato v1.12: o Windows entra no próprio lugar, pelos pontos que o Rivet apontou:
   - §3: perfil padrão `%LOCALAPPDATA%\clipsync` e `agent.pipe` na árvore do perfil;
@@ -165,8 +182,22 @@ Commits 0e76039, f54c995, 8daf2f5 e 3c2bad0. A implementação (Tauri) segue dep
 3. S1-05: `validate()` aceita valores fora de qualquer faixa útil. Ressalva da liberação: caracteres invisíveis confundíveis (fora da lista da v1.10) ainda passam no nome do dispositivo.
 4. Ressalva da liberação: o `run` não recusa perfil com modo diferente de 0700 (parte da regra S1-09 que não entrou). A chave fica em arquivo 0600 até existir o cofre da plataforma (Secret Service, CNG, Keychain).
 5. Sem `cargo audit` nem `cargo deny` instalados: a auditoria de dependências não foi feita. Texto em claro no fio não verificado (falta CAP_NET_RAW). Embrulho do `quinn::crypto` via quinn-proto =0.11.19 para o reason de falha de handshake virar `CloseCode::reason()` (ADR 0002, contrato v1.7).
-6. Windows (S5): a ACL do perfil não é conferida, porque exige Win32 e FFI. Um `--profile` em pasta compartilhada expõe a chave.
-7. As duas plataformas ignoram o marcador de conteúdo sensível dos gerenciadores de senha (`ExcludeClipboardContentFromMonitorProcessing` no Windows, `x-kde-passwordManagerHint` no Linux). Uma senha copiada vai para os pares com `clipboard_out`. Ler o marcador exige formato customizado (FFI no Windows).
+6. Linux: o marcador `x-kde-passwordManagerHint` dos gerenciadores de senha não é lido; uma senha copiada vai para os pares com `clipboard_out`. Para o Windows, ver S5-03 abaixo.
+
+### S5 · Windows e release (`docs/seguranca.md`, Sentinel 10777b4)
+1. **S5-01 (MÉDIO), squatting do pipe depois de saída suja do agente.** Só afeta máquina com mais de um usuário. O desenho do segredo + HMAC foi aceito (contrato §11 regra 5). Implementar antes de usar em máquina compartilhada, RDP ou servidor de terminal.
+2. **S5-03 (MÉDIO), o marcador de gerenciador de senha não é lido no Windows** (`ExcludeClipboardContentFromMonitorProcessing`, `CanIncludeInClipboardHistory` = 0). A API do `clipboard-win` é segura e já está no `Cargo.lock` via arboard, mas virar dep direta passa pelo Keel. Até lá, o README manda pausar ao copiar senha.
+3. **BAIXO do Sentinel:**
+   - S5-04: o nome do pipe é público, e conexões só de leitura prendem tarefas do controle. Limitar as tarefas simultâneas e o timeout.
+   - S5-05: ninguém confere a ACL do perfil (exige Win32).
+   - S5-06: `first_pipe_instance` não impede um segundo agente do mesmo perfil.
+   - S5-07 (ci.yml sem `permissions`) e S5-09 (token do checkout no `.git/config`): corrigidos em 9da97d9. O Keel conferiu por grep: `permissions: contents: read` e `persist-credentials: false` nos dois workflows. Falta a confirmação do Sentinel.
+   - S5-08: qualquer tag `v*` publica sem CI verde. Correção: um **ruleset de tag `v*`** no GitHub.
+   - S5-10: actions fixadas por tag móvel, e `dtolnay/rust-toolchain@master` no CI. Correção: fixar por SHA.
+   - S5-11: o `SHA256SUMS` não prova a origem. Correção: **attestations** (`actions/attest-build-provenance`) sobre os artefatos e o `SHA256SUMS`.
+4. **Prova em Windows real:**
+   - pelo CI: o job Windows verde depois do push;
+   - numa máquina do usuário: o roteiro de 10 minutos com duas contas do Sentinel (`docs/seguranca.md`, "Como confirmar em Windows"), que confirma ou derruba o S5-01 e o S5-04, mais o item 3 das provas pendentes abaixo.
 
 ### Qualidade
 1. Ajuda e erros nativos do clap saem em inglês. O contrato (§2 regra 1, §6) pede português: localizar com template de ajuda e mapeamento de `clap::Error` para o `msg.rs`.
