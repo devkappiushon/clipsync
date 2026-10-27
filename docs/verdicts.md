@@ -1061,14 +1061,149 @@ Os dois testes verificam requisitos de comportamento; falharam com `duplicate_ac
 
 Inventários antes/depois iguais; conferência posterior também sem alterações. Evidência persistente: `/home/kappxs/.cache/clipsync-verdict/argus-e611a88-3609dhci` (results.json, before.json, after.json, boundary-results.json, probe-stdin.txt e boundary-tests).
 
+### S2 · v1.4 · 2026-10-27T12:28:01-03:00 · Passa no escopo automático
+
+Base informada pelo Maestro: export **7923e20**, em `/home/kappxs/.cache/clipsync-verdict/src`; cache `/home/kappxs/.cache/clipsync-verdict/target`. Gates executados de 12:25:23 a 12:25:30 -03:00, após `source ~/.cargo/env`. **Substitui a reprovação de S2 v1.3 no escopo automático e encerra S2-1/S2-2.** Itens manuais S2.2–S2.4 permanecem pendentes; não há aprovação de clipboard gráfico. S4 parcial (profile/control/diag/init) não foi revisada nem aprovada neste bloco.
+
+Resultado: **15 testes oficiais aprovados** (2 unitários de ledger, 12 de módulo, 1 smoke), zero falhos/ignorados; Clippy e fmt saem 0. As duas reproduções independentes foram recompiladas com as bibliotecas novas, usando o stdin **idêntico byte a byte** ao da reprovação: SHA-256 `ecb744ef315336cdfa81b59db54d78a79651d01b2aee29eddaf688918d224ad7`. Ambas agora passam, sem enfraquecer as asserções.
+
+| Achado | Correção lida e resultado observado |
+|---|---|
+| S2-1 · encerrado | Worker recebe ModuleHost; `module.rs:84` confere paused() depois da leitura e antes de write_text. WriteResult::Paused vira Rejected(Paused) em `:512`, remove a entrada do ledger e segue para inbox/Ack. Reprodução original: **paused=true writes=0 ack=Rejected(Paused)**. O novo teste oficial `l_pause_between_authorization_and_write_blocks_the_write` também confere caixa com Rejected(Paused) e nenhum write. |
+| S2-2 · encerrado | `ledger.rs:61` primeiro remove expirados, depois recusa duplicata, só então libera capacidade para um ID novo. Reprodução original: **capacity=1024 duplicate_accepted_as_new=false**. Os dois unitários novos cobrem duplicata na capacidade e esquecimento após TTL. |
+
+Leitura focada: alterações S2 limitadas a module.rs, ledger.rs, adapter/fake.rs (bloqueio de leitura para teste) e tests/module_mem.rs. Os arquivos de Debug, ClipOffer/InboxItem e o codec de Unreachable mantêm os hashes da revisão anterior. Os testes de Debug, vazio, eco, pausa, Unreachable local e expiração monotônica da caixa foram executados novamente pelo crate. O teste específico de recusa de Unreachable no wire foi executado na revisão anterior; seu código compartilhado relevante não mudou. Nenhum fonte do projeto/export foi editado pelo Argus.
+
+**Ressalva de reprodutibilidade:** durante os gates, somente `Cargo.lock` mudou de hash; os demais arquivos inventariados ficaram idênticos. Os comandos pedidos não usam --locked. Registro sem atribuir defeito a S2 ou afirmar que o lock original foi validado: antes `907ad512ba7c0a719d52064ddddfedcce2dbe6d11f5cdd824a37879dc778afd9`, depois `1402a6f6986f49c16748e0cacc42d6183d0d8ef525e89a6deb063aa3f88f2005`. O Maestro deve reconciliar o lock do export/commit; não alterei o lock manualmente.
+
+#### Saídas reais dos gates
+
+Comando: `cargo test -p clipsync-clipboard`; início `2026-10-27T12:25:23.064064-03:00`; exit **0**.
+
+stdout:
+
+```text
+
+running 2 tests
+test ledger::tests::ids_past_the_ttl_are_forgotten ... ok
+test ledger::tests::full_cap_repeating_the_oldest_id_is_a_duplicate_not_a_new_event ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 12 tests
+test i_debug_never_shows_content ... ok
+test h_manual_mode_only_fills_the_inbox ... ok
+test c_old_lamport_after_new_is_stale_and_goes_to_inbox ... ok
+test f_remote_module_disabled_is_reported ... ok
+test b_duplicate_event_id_applies_once_and_acks_duplicate ... ok
+test d_x_y_x_makes_three_offers_x_x_makes_one ... ok
+test l_pause_between_authorization_and_write_blocks_the_write ... ok
+test k_ttl_counts_from_local_receipt_and_drops_the_text ... ok
+test a_mesh_one_copy_two_offers_no_reoffer ... ok
+test e_own_write_echo_takeover_and_empty_do_not_offer ... ok
+test g_paused_neither_sends_nor_applies_and_resume_does_not_resend ... ok
+test j_clipsend_lists_every_target_and_no_ack_is_unreachable ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.01s
+
+
+running 1 test
+test smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+```
+
+stderr:
+
+```text
+   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.40s
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_clipboard-d5b415483d8ba192)
+     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-a2a6cec29a2a4f52)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-034f1adebe3f47bd)
+   Doc-tests clipsync_clipboard
+```
+
+Comando: `cargo clippy -p clipsync-clipboard --all-targets -- -D warnings`; início `2026-10-27T12:25:29.582489-03:00`; exit **0**.
+
+stderr:
+
+```text
+    Checking clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+    Checking clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.71s
+```
+
+Comando: `cargo fmt -p clipsync-clipboard --check`; início `2026-10-27T12:25:30.342140-03:00`; exit **0**.
+
+stdout/stderr vazios.
+
+#### Reexecução dos casos originais
+
+Compilação por stdin (exit 0), texto original preservado em `/home/kappxs/.cache/clipsync-verdict/argus-7923e20-3po5__ky/probe-stdin.txt`; comando completo e bibliotecas em `boundary-results.json`. O harness inclui também dois testes unitários do novo ledger; cada execução abaixo seleciona exatamente o caso original, por isso três testes ficam filtrados.
+
+```sh
+/home/kappxs/.cache/clipsync-verdict/argus-7923e20-3po5__ky/boundary-tests --exact duplicate_at_capacity_must_still_be_duplicate --nocapture
+```
+
+Exit **0**.
+
+```text
+
+running 1 test
+capacity=1024 duplicate_accepted_as_new=false
+test duplicate_at_capacity_must_still_be_duplicate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+```
+
+```sh
+/home/kappxs/.cache/clipsync-verdict/argus-7923e20-3po5__ky/boundary-tests --exact pause_during_prewrite_read_must_prevent_write --nocapture
+```
+
+Exit **0**.
+
+```text
+
+running 1 test
+paused=true writes=0 ack=Rejected(Paused)
+test pause_during_prewrite_read_must_prevent_write ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.10s
+
+```
+
+#### Hashes da base revisada
+
+```text
+87221da170a1501c83d6aa31be70b8873ced7432606c687ef6b59c07db692d9a  docs/contrato.md
+0f9feec98d357473ebd2cb596ac0463a07733484e4963e496c07bbf0d3378a63  crates/clipsync-clipboard/src/module.rs
+95a006d62fac407b50b63b5a5083bd5707cb1616607254e939fb3e6acd240538  crates/clipsync-clipboard/src/ledger.rs
+32686501f8185d74c09e33d3dc89fb6febea48ee11b4f86b3d2bb2b0ff87a49b  crates/clipsync-clipboard/src/adapter/fake.rs
+1632ebfd7e0bfdc5c2b7aa073ca3471cab5bbadd7ce444fe6e94c8c01903932c  crates/clipsync-clipboard/tests/module_mem.rs
+3d6eaa08715e9c267f8690d8f47768ea0ed3db7f37c5606bd145c4084d8995e1  crates/clipsync-proto/src/clip.rs
+14aa4f0445d1dbf0fb4b082d9d1bb5bb8f2d065f88ecbebf097a4f9d7d180e68  crates/clipsync-proto/src/control.rs
+```
+
+Evidência persistente: `/home/kappxs/.cache/clipsync-verdict/argus-7923e20-3po5__ky` (meta/results/before/after/boundary-results.json, probe-stdin.txt e boundary-tests).
+
 ## Findings
 
-### S2 v1.3 · e611a88 · achados ativos
+### S2 v1.3 · e611a88 · histórico — S2-1/S2-2 encerrados na v1.4 (7923e20)
 
 1. **S2-1 · P2 · `crates/clipsync-clipboard/src/module.rs:79`** — o worker chama `write_text` após a leitura do clipboard sem reavaliar a pausa. A autorização em `on_offer` (`:453`) ocorre antes de enfileirar Cmd::Write; enquanto o worker lê, o host pode ser pausado. Reproduzido deterministicamente com MemHub/FakeClipboard: bloquear a leitura anterior ao write, `set_paused(true)`, liberar a leitura; resultado **`paused=true writes=1 ack=Applied`**, embora o contrato §7.7/§7.10 exija não aplicar em pausa. O teste existente só pausa antes de enviar a oferta e não cobre essa janela. Impacto: conteúdo remoto ainda altera o clipboard depois da pausa entrar em vigor.
 2. **S2-2 · P2 · `crates/clipsync-clipboard/src/ledger.rs:67`** — `insert_new` remove a entrada mais antiga quando len>=SEEN_EVENTS_CAP antes de conferir se o ID recebido já está no mapa (`:74`). Com 1.024 IDs ainda válidos, repetir o mais antigo o apaga e reinsere como novo. Reproduzido no código exato de SeenEvents, no mesmo Instant (sem expiração): **`capacity=1024 duplicate_accepted_as_new=true`**. Viola §7.5 (repetido deve gerar Ack Duplicate) e deixa o resultado dependente do cache cheio. O caso oficial só cobre duplicado com a tabela praticamente vazia.
 
-Nenhuma correção aplicada. Os itens manuais S2.2–S2.4 continuam pendentes; não são a causa dos dois achados acima.
+Argus não aplicou correções. Flux corrigiu os dois achados na v1.4; a reemissão acima registra as reproduções originais aprovadas. Os itens manuais S2.2–S2.4 continuam pendentes.
 
 ### S0 · histórico do checkout em edição às 12:04 (encerrado na reemissão do export)
 
