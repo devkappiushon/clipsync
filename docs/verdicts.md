@@ -2370,6 +2370,40 @@ stdout:
 
 Evidência integral: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p` (s4-results.json, s4-mesh-isolated.json, s4-extra-results.json, cli-binary.sha256 e after-all.json). Nenhum fonte foi editado, nenhum git executado.
 
+### S2 · adendo manual · 2026-10-27T12:52:13-03:00 · Evidências M incorporadas
+
+Os itens S2.2/S2.3 deixam de aguardar a execução dos cenários abaixo: o Maestro os executou com o **release 30dcd43** e forneceu [docs/evidencias/roteiro-2026-10-27.md](evidencias/roteiro-2026-10-27.md). Argus leu o arquivo; **não executou esses probes gráficos**. SHA-256 da evidência lida: `b944a4bd391a624a017177adb7436a89a2cefb11ae974fbeadc6c2a4a1422709`. Cópia preservada no diretório de evidências da revisão 30dcd43.
+
+| Critério | Evidência e conclusão |
+|---|---|
+| S2.2 · observação real | Maestro usou `probe clipboard --watch 12s` com três cópias Wayland via wl-copy: três linhas de mime/tamanho, bytes=25, latências 24/17/26 ms, rc=0. **Passa no cenário registrado**. A janela foi 12 s, não os 15 s do comando de referência. O log não separa uma ação de fechar o app e observar ausência de evento; esse subcaso não é inferido da saída (o teste fake owner_takeover já passou na revisão automática). |
+| S2.3 · escrita/eco | Saída literal abaixo confirma escrita, releitura idêntica, eco descartado e nenhuma nova cópia; rc=0. **Passa**, conforme execução externa. O log também contém um warning arboard ao entregar ao clipboard manager; ele não mudou o rc nem as verificações impressas. Não converter esse warning em falha sem evidência. |
+| S2.4 · sem DISPLAY | **Executado por Argus no binário debug compilado do export 30dcd43**: `env -u DISPLAY clipsync probe clipboard --write` sai 1 e imprime a mensagem exigida; diagnose marca ponte/XFixes ausentes. Nenhuma escrita de clipboard real ocorreu nessa execução sem DISPLAY. |
+
+Saídas externas relevantes (texto sintético, sem clipboard do usuário):
+
+```text
+observação: eventos (XFixes via XWayland)
+mime=text/plain;charset=utf-8 bytes=25 latência_leitura=24 ms
+mime=text/plain;charset=utf-8 bytes=25 latência_leitura=17 ms
+mime=text/plain;charset=utf-8 bytes=25 latência_leitura=26 ms
+rc=0
+escrita: ok · leitura idêntica: ok · evento da própria escrita: descartado (eco) · nova cópia disparada: não
+2026-10-27T15:41:35.396038Z  WARN arboard::platform::linux::x11: Could not hand the clipboard contents over to the clipboard manager. The request timed out.
+rc=0
+clipboard restaurado
+```
+
+Saída direta de Argus para S2.4 (exit 1):
+
+```text
+erro: a ponte de clipboard exige XWayland ativo (DISPLAY)
+```
+
+A aprovação automática de S2 v1.4 consta no bloco anterior (15 testes e duas reproduções corrigidas). O inventário confirma que **nenhum arquivo de clipsync-clipboard mudou de 7923e20 para 30dcd43**; o roteiro CLI de clipboard/I.1/I.2 também passou na revisão 30dcd43. Este adendo acrescenta as observações manuais; não afirma nova execução dos gates S2.1/S2.5 nesse commit. Input gráfico/item 5 do roteiro permanece pendente do usuário e pertence a S3.
+
+Evidências diretas de S2.4 e diagnose em `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/s4-extra-results.json`; evidência manual integral no arquivo do Maestro e em `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/manual-evidence-copy.md`.
+
 ## Findings
 
 ### S4 · 30dcd43 · aberto
