@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.11, Keel, 2026-10-27)
+# Contrato · ClipSync MVP de hoje (v1.12, Keel, 2026-10-27)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -11,6 +11,7 @@ v1.8 (decisão do Maestro): `run` perde o flag `--listen` (§6). A porta vem só
 v1.9: §9 S4 item 2 passa a usar `--test control`, porque o filtro por nome não selecionava o arquivo. Pendências pós-MVP registradas no workboard: ajuda e erros do clap em inglês; embrulho quinn-proto.
 v1.10 (auditoria `docs/seguranca.md`): §5 regra 3 define o que conta como tentativa de pareamento (Commit recebido; máx 3 por janela; Reveal divergente fecha na hora; implementação pós-MVP, S1-04). Regras dos achados em correção hoje: nome de dispositivo (S1-01, §4 validate e §2 regra 8), nome inválido nunca gravado (S1-02, regra 3), pausa falha fechada (S1-08, regra 8), socket criado de forma atômica (S1-09, control.rs).
 v1.11 (fatia S5 · Windows e release, decisões do Maestro + Keel): nova §11 e §9 S5. No Windows, a 0.1.0 tem malha, pareamento e clipboard; teclado e mouse ficam indisponíveis. Controle por named pipe só local (`reject_remote_clients`, `first_pipe_instance`, nome sorteado publicado em `DIR\agent.pipe`). Perfil protegido pela ACL do usuário, sem chmod, em `%LOCALAPPDATA%\clipsync`. Clipboard `win-poll` (arboard, 250 ms) experimental. Release por tag `v*` sem cache e com CRT estática. Na S5 cada builder commita os próprios arquivos (§11 regra 12). Posse do core inteiro volta ao Rivet durante a S5.
+v1.12 (Maestro aceitou os acréscimos da v1.11; pontos que o Rivet apontou): o Windows entra no próprio lugar, não só na §11. A §3 ganha o perfil padrão e o `agent.pipe`; a §4 ganha `mono_us` por processo no Windows; a §5 ganha `resolve`, `socket_path` e o named pipe. Licença (decisão do Maestro): a 0.1.0 sai num repositório privado, sem LICENSE. A regra passa a ser "licença antes do primeiro release público", e o README segue com "a definir". §9 S5 item 10, §10 item 1 e §11 regra 9 ajustados.
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -60,7 +61,7 @@ Build: frio ~6 min, incremental ~30 s. Os quatro builders trabalham no MESMO che
 8. (v1.10, S1-01) Todo texto que vem do par (nome, motivo de bloqueio, preview do inbox) passa por filtro de caracteres de controle e formatação antes de ir ao terminal. No pareamento, a linha `Código:` é a última antes da pergunta, depois do nome.
 
 ## 3. Perfil (`--profile DIR`)
-`--profile` é global (qualquer posição). Padrão: `$XDG_CONFIG_HOME/clipsync` (ou `~/.config/clipsync`); env `CLIPSYNC_PROFILE`. DIR criado com 0700.
+`--profile` é global (qualquer posição). Padrão no Unix: `$XDG_CONFIG_HOME/clipsync` (ou `~/.config/clipsync`). Padrão no Windows: `%LOCALAPPDATA%\clipsync`, nunca o Roaming; sem `LOCALAPPDATA` dá `CoreError::Profile` pedindo `--profile`. Env `CLIPSYNC_PROFILE` nas duas plataformas. No Unix, DIR é criado com 0700. No Windows não há chmod: vale a ACL herdada do usuário (§11 regra 4).
 
 ```
 DIR/
@@ -69,12 +70,13 @@ DIR/
   identity.cert.pem   certificado autoassinado (rcgen, chamada do spike: SAN "clipsync"; nome do dispositivo NÃO vai no cert)
   peers.toml          pares confiáveis + permissões (escrito por pair; usuário pode editar)
   state.toml          estado persistido pelo agente: paused
-  agent.sock          socket de controle (Unix, 0600) enquanto `run` está de pé
+  agent.sock          Unix: socket de controle (0600) enquanto `run` está de pé
+  agent.pipe          Windows: arquivo com o nome do named pipe (`\\.\pipe\clipsync-<32 hex>`, sorteado a cada `run`), escrito por tmp + rename e apagado ao sair (§11 regra 5)
   portal-tokens.toml  restore_token do portal RemoteDesktop, modo 0600; escrito e lido SÓ por clipsync-input (Vector)
 ```
 `portal-tokens.toml`: `version = 1` · `remote_desktop = "<token>"`. Token inválido ou recusado: apaga a chave e pede o diálogo de novo. InputCapture v1 não tem token: 1 diálogo por sessão do agente (documentado na matriz).
 Segredo em arquivo 0600 é provisório (cofre da plataforma fica para depois; registrado em Aberto).
-Windows (v1.11): DIR padrão `%LOCALAPPDATA%\clipsync`, sem chmod (a ACL do usuário protege), e `agent.pipe` no lugar de `agent.sock`. Ver §11 regras 4 e 5.
+No Windows, os modos 0600 e 0700 desta seção não se aplicam: a ACL herdada do perfil protege `identity.key.pem` e `agent.pipe` (§11 regra 4; a conferência da ACL é pendência).
 
 ### config.toml
 ```toml
@@ -274,7 +276,9 @@ pub struct LoopbackStats { pub session: u32, pub received: u64, pub lost: u64, p
                            pub p50_us: u64, pub p95_us: u64, pub max_us: u64 }
 
 // time.rs
-/// CLOCK_MONOTONIC em µs (rustix). Comparável entre processos SÓ na mesma máquina (loopback).
+/// Unix: CLOCK_MONOTONIC em µs (rustix, dep só em cfg(unix)). Comparável entre processos SÓ na mesma máquina (loopback).
+/// Windows (v1.12): µs desde um `Instant` fixado na primeira chamada do processo (std, `OnceLock`). Vale SÓ dentro do
+/// processo; o único leitor entre processos é o loopback de input, que não existe no Windows (§11 regra 3).
 pub fn mono_us() -> u64;
 
 // module.rs: contrato core <-> módulos
@@ -343,7 +347,8 @@ pub fn authorize_inbound_datagram(local: ModuleSet, perms: &PeerPerms, paused: b
 // Inbound rejeitado: core responde Frame::Rejected{kind, ref_id: id da Offer se houver, reason}
 // e NÃO entrega ao módulo. Datagrama rejeitado: descartado e contado (sem resposta).
 
-// control.rs: IPC CLI <-> agente. Socket Unix DIR/agent.sock, quadro = u32 BE + JSON (serde_json),
+// control.rs: IPC CLI <-> agente. Unix: socket DIR/agent.sock. Windows: named pipe local cujo nome está em DIR\agent.pipe (§11 regra 5).
+// Quadro = u32 BE + JSON (serde_json),
 // máx MAX_FRAME_BYTES. Uma requisição, uma resposta, fecha.
 #[derive(Serialize, Deserialize)] // Debug manual (ClipSend redigido)
 pub enum ControlRequest { Status, Pause, Resume, ReloadPeers,
@@ -453,7 +458,7 @@ impl Identity {
 impl fmt::Debug for Identity {}                                            // só o id curto; nunca a chave
 pub struct Profile { pub dir: PathBuf }
 impl Profile {
-    pub fn resolve(arg: Option<PathBuf>) -> Result<Self, CoreError>;      // --profile > CLIPSYNC_PROFILE > XDG
+    pub fn resolve(arg: Option<PathBuf>) -> Result<Self, CoreError>;      // --profile > CLIPSYNC_PROFILE > XDG (Unix) | %LOCALAPPDATA%\clipsync (Windows)
     pub fn init(&self, opts: InitOptions) -> Result<Identity, CoreError>; // DIR 0700, key 0600, config, peers vazio, state
     pub fn load_config(&self) -> Result<Config, CoreError>;
     pub fn load_identity(&self) -> Result<Identity, CoreError>;           // recusa key com modo != 0600
@@ -461,7 +466,7 @@ impl Profile {
     pub fn save_peers(&self, p: &Peers) -> Result<(), CoreError>;         // escrita atômica (tmp + rename)
     pub fn load_state(&self) -> Result<State, CoreError>;                 // ausente = State::default()
     pub fn save_state(&self, s: &State) -> Result<(), CoreError>;
-    pub fn socket_path(&self) -> PathBuf;                                 // DIR/agent.sock
+    pub fn socket_path(&self) -> PathBuf;                                 // Unix: DIR/agent.sock | Windows: DIR\agent.pipe (arquivo com o nome do pipe)
 }
 pub struct InitOptions { pub device_name: String, pub modules: ModuleSet, pub listen: SocketAddr, pub fake_adapters: bool }
 pub struct Config { pub version: u32, pub device_name: String, pub modules: ModuleSet, pub listen: SocketAddr,
@@ -492,6 +497,10 @@ pub trait ControlHandler: Send + Sync + 'static { async fn handle(&self, req: Co
 /// Socket velho: apaga SÓ se o connect der ConnectionRefused ou NotFound; se connect funciona, AgentAlreadyRunning;
 /// qualquer outro erro sobe sem apagar nada. DIR com modo diferente de 0700 é recusado pelo `run`.
 /// Uma conexão = uma requisição + uma resposta (quadro u32 BE + JSON, máx MAX_FRAME_BYTES). Apaga o socket ao sair.
+/// Windows (v1.12, §11 regra 5): `socket` é DIR\agent.pipe. Named pipe local com `first_pipe_instance(true)` e
+/// `reject_remote_clients(true)`; nome `\\.\pipe\clipsync-` + 32 hex sorteados a cada serve, gravado em agent.pipe por tmp + rename.
+/// Vivo (connect ok) = AgentAlreadyRunning; NotFound = arquivo velho, regrava; outro erro sobe. Sem chmod; apaga agent.pipe ao sair.
+/// `request` conecta só ao nome lido de agent.pipe. Mesmas assinaturas nas duas plataformas.
 pub async fn serve(socket: &Path, handler: Arc<dyn ControlHandler>, shutdown: impl Future<Output = ()> + Send) -> Result<(), CoreError>;
 pub async fn request(p: &Profile, req: ControlRequest) -> Result<ControlResponse, CoreError>; // AgentNotRunning sem socket vivo
 
@@ -761,14 +770,14 @@ Todos os comandos rodam da raiz do repo com `export PATH=$HOME/.cargo/bin:$PATH`
    - `grep -n crt-static` mostra o RUSTFLAGS do build Windows;
    - `grep -n ubuntu-24.04` aparece no build Linux;
    - existe um passo que falha quando a tag sem o `v` difere do `version` do `[workspace.package]`.
-10. **Release v0.1.0.** Pré-condição: o usuário decidiu a licença (§11 regra 9). Depois que o usuário empurra a tag `v0.1.0`:
+10. **Release v0.1.0** (repositório privado, sem LICENSE, decisão do Maestro na v1.12; §11 regra 9). Depois que o usuário empurra a tag `v0.1.0`:
     - `gh release view v0.1.0 --json assets --jq '.assets[].name' | sort` lista exatamente `SHA256SUMS`, `clipsync-v0.1.0-linux-x86_64.tar.gz` e `clipsync-v0.1.0-windows-x86_64.zip`.
     - Num diretório vazio, `gh release download v0.1.0 && sha256sum -c SHA256SUMS` dá OK nos dois pacotes.
     - `tar -xzf clipsync-v0.1.0-linux-x86_64.tar.gz && ./clipsync --version` imprime `clipsync 0.1.0`.
     - O `.exe` num Windows real é prova M, pendente: o adaptador segue experimental até lá.
 
 ## 10. Aberto (decisão fora do time)
-1. **Licença** antes do primeiro commit (MIT/Apache-2.0 sugerido; GPL-3 só se copiar Lan Mouse). Usuário decide.
+1. **Licença** antes do primeiro release público (v1.12; a 0.1.0 sai em repositório privado sem LICENSE). MIT/Apache-2.0 sugerido; GPL-3 só se copiar Lan Mouse. Usuário decide.
 2. Chave privada em arquivo 0600 no perfil até existir cofre (Secret Service no Linux). Registrar na ADR de stack.
 3. Nome do monitor nas zonas do portal: o InputCapture não dá nome; Vector resolve por geometria (Mutter DisplayConfig ou wl_output). Se não der hoje, `monitor = "#0"`.
 4. ADRs (stack, transporte, licença) e `docs/matriz-compatibilidade.md`: sem dono neste contrato; o Maestro atribui.
@@ -838,7 +847,7 @@ Regras:
    - **Sem cache no release:** nada de `Swatinem/rust-cache` nem `actions/cache` no `release.yml`. Um cache restaurado de execução de PR pode envenenar o binário publicado. No CI, o cache continua liberado.
    - O `release.yml` só usa actions de `actions/*`. O toolchain vem do rustup do runner, que lê o `rust-toolchain.toml` (1.99.1).
    - Artefatos: `clipsync-<tag>-linux-x86_64.tar.gz` (binário `clipsync` + README), `clipsync-<tag>-windows-x86_64.zip` (`clipsync.exe` + README) e `SHA256SUMS` dos dois.
-   - **Pré-condição do tag:** a licença decidida pelo usuário (pendência 1 do workboard). O próprio README diz "a definir antes do primeiro release". Sem essa decisão, não há tag.
+   - **Licença (v1.12, decisão do Maestro):** a 0.1.0 sai num repositório privado, sem LICENSE, e o README segue com "a definir". Antes do primeiro release público (repositório público ou release visível fora da conta), o usuário decide a licença. Sem essa decisão, nada vira público.
 10. **CI (Bolt).** O job Windows (`windows-latest`) roda `cargo clippy --workspace --all-targets --locked -- -D warnings` e `cargo test --workspace --locked`.
     - Esse clippy é o único lugar onde o código `cfg(windows)` passa pelo lint.
     - O e2e `roteiro.rs` já é `cfg(unix)`.

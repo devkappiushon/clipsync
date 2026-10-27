@@ -2,7 +2,7 @@
 
 **Estado: MVP de 2026-10-27 FECHADO.** S0 a S4 e I passam no warden (Argus). Segurança liberada, com 0 bloqueantes (`docs/seguranca.md`). **S5 (Windows e release) EM ANDAMENTO** desde 2026-10-27. Pendências consolidadas e próxima fatia no fim deste arquivo.
 
-Contrato: `docs/contrato.md` (v1.11). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Git: até a S4 só o Maestro commitava; na S5 cada builder commita os próprios arquivos na main local, sem push (contrato §11 regra 12). Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
+Contrato: `docs/contrato.md` (v1.12). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Git: até a S4 só o Maestro commitava; na S5 cada builder commita os próprios arquivos na main local, sem push (contrato §11 regra 12). Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
 
 ## Ordem
 1. S0 Bolt fecha primeiro (esqueleto compila). Só então S1, S2, S3 começam a editar seus crates.
@@ -60,13 +60,13 @@ Verificação local: `export PATH=$HOME/.cargo/bin:$PATH`, depois `cargo clippy 
   - Hello anuncia só os módulos que rodam;
   - testes de control e mesh verdes no Windows.
 
-  Pronto: itens 1 a 4. Estado: em andamento (`time.rs` e os Cargo.toml de proto e core já sem rustix no Windows, ainda sem commit).
+  Pronto: itens 1 a 4. Estado: entregue em 661bea9, com nome de pipe por hash e perfil em `%APPDATA%`. Em correção para a §11: nome sorteado + `DIR\agent.pipe` e `%LOCALAPPDATA%` (pedido do Maestro).
 - **Flux · clipboard e cli no Windows.** Posse: `crates/clipsync-clipboard/**` e `crates/clipsync-cli/**`. Faz:
   - adaptador `win-poll` (arboard, 250 ms, só texto), experimental;
   - init e run fora do Linux sem input;
   - teste do watcher e da escolha de módulos.
 
-  Pronto: itens 1, 2, 5 e 7. Estado: em andamento (`poll.rs` e `win.rs` criados, ainda sem commit).
+  Pronto: itens 1, 2, 5 e 7. Estado: entregue (f4daff4, 36568a7); falta a conferência.
 - **Vector · input indisponível no Windows.** Posse: `crates/clipsync-input/**`. Pronto: itens 1, 3 e 6. Estado: entregue no commit b4f472a; falta a conferência.
 - **Bolt · release, CI e README.** Posse: `Cargo.toml` raiz, `Cargo.lock`, `.github/workflows/{ci,release}.yml` e `README.md`. Faz:
   - `[profile.release]` com LTO e strip (já feito);
@@ -74,8 +74,16 @@ Verificação local: `export PATH=$HOME/.cargo/bin:$PATH`, depois `cargo clippy 
   - job Windows do CI com clippy e `test --workspace`;
   - quadro do README com clipboard Windows "experimental".
 
-  Pronto: itens 1, 8, 9 e 10. Estado: em andamento. O `release.yml` atual ainda não segue a §11 regra 9: usa rust-cache e dtolnay, `ubuntu-latest` e não tem crt-static. O job Windows do CI ainda não roda clippy nem testa `clipsync-input`.
-- **Pré-condição do release:** o usuário decide a licença (pendência 1). Push e tag são só do usuário.
+  Pronto: itens 1, 8, 9 e 10. Estado: 5010629 (Bolt) e 176ac4e (Maestro, porque o Bolt estourou a cota do modelo). O item 9 passa na conferência estática do Keel em 2026-10-27:
+  - `rust-cache` 0;
+  - só `actions/*`;
+  - crt-static no Windows;
+  - `ubuntu-24.04`;
+  - passo tag = versão;
+  - YAML válido.
+
+  O job Windows do CI roda clippy `-D warnings` e `test --workspace --locked`. Os itens 8 (CI verde) e 10 (release) esperam o push do usuário.
+- **Licença (v1.12, decisão do Maestro):** a 0.1.0 sai num repositório privado, sem LICENSE; o README segue com "a definir". A licença passa a ser pré-condição do primeiro release público (pendência 1). Push e tag são só do usuário.
 
 ## Telas (Figma)
 Prontas em 2026-10-27:
@@ -131,7 +139,14 @@ Commits 0e76039, f54c995, 8daf2f5 e 3c2bad0. A implementação (Tauri) segue dep
   - (e) o release não usa cache (risco de envenenar o binário publicado), só usa `actions/*`, tem CRT estática no Windows (sem depender do VC++ Redistributable), roda em `ubuntu-24.04` fixo e confere tag = versão;
   - (f) o job Windows do CI roda clippy, único lint do código `cfg(windows)`, e `test --workspace`;
   - (g) sem dep nova; Win32 direto fica fora da 0.1.0;
-  - (h) licença decidida é pré-condição do tag.
+  - (h) licença decidida é pré-condição do tag (substituída na v1.12: vale para o primeiro release público).
+- 2026-10-27 · Maestro · Acréscimos 1 a 6 da v1.11 aceitos. Licença: a 0.1.0 sai em repositório privado sem LICENSE; a regra passa a ser "licença antes do primeiro release público".
+- 2026-10-27 · Keel · Contrato v1.12: o Windows entra no próprio lugar, pelos pontos que o Rivet apontou:
+  - §3: perfil padrão `%LOCALAPPDATA%\clipsync` e `agent.pipe` na árvore do perfil;
+  - §4: `mono_us` por processo no Windows. O Unix segue no CLOCK_MONOTONIC, com rustix só em cfg(unix);
+  - §5: `resolve`, `socket_path` = `DIR\agent.pipe` e o named pipe no `serve` e no `request`.
+
+  A licença foi ajustada em três lugares: §9 S5 item 10, §10 item 1 e §11 regra 9.
 
 ## Medições
 - P2 (Argus/Rivet, loopback, build debug, 300 RTTs): fluxo uni 1024 B p95 432 µs · datagrama 64 B p95 313 µs. Passa no critério do §9 S1 item 4 (p95 < 1 ms). Spike em release deu < 100 µs; a diferença vem do build debug.
@@ -141,7 +156,7 @@ Commits 0e76039, f54c995, 8daf2f5 e 3c2bad0. A implementação (Tauri) segue dep
 ## Pendências pós-MVP (consolidado em 2026-10-27)
 
 ### Decisões do usuário
-1. **Licença**, antes do primeiro commit público. **Agora bloqueia o tag v0.1.0 da S5.** Sugestão: MIT (ou MIT/Apache-2.0 dual, o padrão do ecossistema Rust). GPL-3 só se copiarmos código do Lan Mouse, o que o contrato evita.
+1. **Licença**, antes do primeiro release público (v1.12). A 0.1.0 sai em repositório privado, sem LICENSE. Sugestão: MIT (ou MIT/Apache-2.0 dual, o padrão do ecossistema Rust). GPL-3 só se copiarmos código do Lan Mouse, o que o contrato evita.
 2. **Regra da recópia** (contrato §7 regra 3): copiar o mesmo texto duas vezes seguidas não reenvia. Ela protege contra a tomada de posse do Mutter. O reenvio forçado é `clipsync send`. Aguarda confirmação.
 
 ### Segurança (`docs/seguranca.md`)
