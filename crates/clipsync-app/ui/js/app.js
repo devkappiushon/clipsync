@@ -3,10 +3,11 @@
 // que devolve { no, desmontar? } (ou uma promessa disso).
 
 import { api } from "./api.js";
-import { estadoErro } from "./areas.js";
-import { comCarregamento, selo } from "./componentes.js";
+import { aviso, estadoErro } from "./areas.js";
+import { botao, comCarregamento, selo } from "./componentes.js";
 import { h } from "./dom.js";
 import { aplicarAparencia, assinar, atualizarApp, iniciarEventos, obterApp, observarApp } from "./estado.js";
+import { mensagemDe } from "./formatar.js";
 import { icone } from "./icones.js";
 
 const ROTAS = [
@@ -27,6 +28,8 @@ const ROTA_PRIMEIRO_USO = "onboarding/1";
 const el = {
   app: document.getElementById("app"),
   conteudo: document.getElementById("conteudo"),
+  tela: document.getElementById("tela"),
+  avisoAgente: document.getElementById("aviso-agente"),
   menu: document.querySelectorAll("#menu a"),
   maquinaNome: document.getElementById("maquina-nome"),
   maquinaImpressao: document.getElementById("maquina-impressao"),
@@ -76,7 +79,7 @@ async function navegar() {
   marcarMenu(rota);
 
   const pagina = h("div", { class: "pagina" });
-  el.conteudo.replaceChildren(pagina);
+  el.tela.replaceChildren(pagina);
   el.conteudo.scrollTop = 0;
 
   try {
@@ -116,6 +119,40 @@ function pintarRodape(app) {
   el.pausarRotulo.textContent = app.paused ? "Retomar tudo" : "Pausar tudo";
 }
 
+/** Faixa acima da tela quando o agente está parado ou caiu: a causa e o botão para subir de novo. */
+function pintarAvisoAgente(app) {
+  const mostrar = app.initialized && (app.agent === "stopped" || app.agent === "failed");
+  el.avisoAgente.hidden = !mostrar;
+  if (!mostrar) {
+    el.avisoAgente.replaceChildren();
+    return;
+  }
+  const texto =
+    app.agent === "failed"
+      ? `O agente parou com erro: ${app.agent_error ?? "causa desconhecida"}`
+      : "O agente está parado. Nada é enviado nem recebido até você iniciá-lo.";
+  el.avisoAgente.replaceChildren(
+    aviso(
+      app.agent === "failed" ? "erro" : "aviso",
+      h("p", null, texto),
+      botao({
+        rotulo: "Iniciar agente",
+        variante: "primario",
+        icone: "retomar",
+        aoClicar: async () => {
+          try {
+            await api.agentStart();
+          } catch (erro) {
+            el.avisoAgente.querySelector("p").textContent = `Não foi possível iniciar o agente: ${mensagemDe(erro)}`;
+            return;
+          }
+          await atualizarApp();
+        },
+      }),
+    ),
+  );
+}
+
 function alternarPausa() {
   return comCarregamento(el.pausar, async () => {
     await api.pauseSet({ paused: !obterApp().paused });
@@ -130,11 +167,19 @@ async function iniciar() {
     el.conteudo.focus();
   });
   observarApp(pintarRodape);
+  observarApp(pintarAvisoAgente);
   window.addEventListener("hashchange", navegar);
 
   try {
     const app = await atualizarApp();
-    if (app.initialized) aplicarAparencia((await api.prefsGet()).appearance);
+    if (app.initialized) {
+      // A aparência vem do ui.toml; se falhar, a janela abre no tema do sistema e segue.
+      try {
+        aplicarAparencia((await api.prefsGet()).appearance);
+      } catch (erro) {
+        console.warn("sem preferências de aparência", erro);
+      }
+    }
     await iniciarEventos();
   } catch (erro) {
     console.error("falha ao ler o estado inicial", erro);

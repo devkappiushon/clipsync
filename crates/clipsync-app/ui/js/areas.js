@@ -1,8 +1,8 @@
-// Peças de página: cabeçalho, região assíncrona (carregando, vazio, erro) e estados.
+// Peças de página: cabeçalho, região assíncrona (carregando, vazio, erro), avisos e estados.
 
 import { h } from "./dom.js";
 import { botao, esqueleto } from "./componentes.js";
-import { mensagemDe } from "./formatar.js";
+import { INDISPONIVEL, mensagemDe } from "./formatar.js";
 
 /** Cabeçalho da tela: h1 (alvo do foco ao navegar), descrição de uma linha e ações no topo. */
 export function cabecalho({ titulo, descricao, acoes = [] }) {
@@ -14,8 +14,10 @@ export function cabecalho({ titulo, descricao, acoes = [] }) {
   );
 }
 
+/** `texto` pode ser uma frase ou nós prontos (lista de passos, por exemplo). */
 export function estadoVazio({ titulo, texto, acao }) {
-  return h("div", { class: "estado" }, h("h2", null, titulo), texto && h("p", { class: "muted" }, texto), acao);
+  const corpo = typeof texto === "string" ? h("p", { class: "muted" }, texto) : texto;
+  return h("div", { class: "estado" }, h("h2", null, titulo), corpo, acao);
 }
 
 /** Erro de uma busca. `erro` é o UiError ({ message }) ou um erro de JS. */
@@ -25,13 +27,23 @@ export function estadoErro(erro, aoTentar) {
     { class: "estado estado--erro", role: "alert" },
     h("h2", null, "Não foi possível carregar"),
     h("p", null, mensagemDe(erro)),
-    aoTentar && botao({ rotulo: "Tentar de novo", aoClicar: aoTentar }),
+    aoTentar && botao({ rotulo: "Tentar de novo", icone: "atualizar", aoClicar: aoTentar }),
   );
+}
+
+/** Mensagem em linha. tom: info | aviso | erro. Erro é anunciado na hora pelo leitor de tela. */
+export function aviso(tom, ...filhos) {
+  return h("div", { class: `aviso aviso--${tom}`, role: tom === "erro" ? "alert" : "status" }, filhos);
+}
+
+/** Texto padrão de recurso sem backend nesta versão (contrato §12.2 regra 6). */
+export function indisponivel() {
+  return h("span", { class: "nota" }, INDISPONIVEL);
 }
 
 /**
  * Região que busca dados e pinta o resultado.
- * buscar() -> dados; pintar(dados) -> Node (ou estadoVazio). Mostra esqueleto enquanto espera
+ * buscar() -> dados; pintar(dados, recarregar) -> Node (ou estadoVazio). Mostra esqueleto enquanto espera
  * e estadoErro se falhar. recarregar({ silencioso: true }) mantém o conteúdo atual durante a busca.
  */
 export function area({ buscar, pintar, linhas = 3 }) {

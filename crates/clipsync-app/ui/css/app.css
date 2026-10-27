@@ -376,3 +376,50 @@ body > .conteudo {
   height: 0;
   overflow: hidden;
 }
+
+h3 {
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+/* Aviso em linha: info | aviso | erro */
+
+.aviso {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--raio);
+  font-size: var(--fs-sm);
+}
+
+.aviso p {
+  flex: 1 1 240px;
+}
+
+.aviso--info {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.aviso--aviso {
+  background: var(--warn-soft);
+  color: var(--text);
+}
+
+.aviso--erro {
+  background: var(--err-soft);
+  color: var(--text);
+}
+
+/* Faixa do agente parado ou com falha, acima de qualquer tela */
+
+.aviso-agente {
+  max-width: 1040px;
+  margin: 0 auto var(--s-4);
+}
+
+.app[data-lateral="oculta"] .aviso-agente {
+  max-width: 640px;
+}

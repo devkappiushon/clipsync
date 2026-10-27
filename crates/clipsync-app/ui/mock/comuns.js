@@ -13,7 +13,7 @@ registrar({
     paused: estado.pausado,
     screen_locked: estado.telaTravada,
     mesh: malha(),
-    modules: { clipboard: true, input: plataforma === "linux" },
+    modules: { ...estado.modulos },
     input_supported: plataforma === "linux",
     version: "0.2.0",
     platform: plataforma,

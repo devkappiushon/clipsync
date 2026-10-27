@@ -27,7 +27,20 @@ export function emitir(event, data = {}) {
   for (const fn of ouvintes) fn({ payload: { event, data: structuredClone(data) } });
 }
 
-const SEMPRE_RESPONDEM = new Set(["app_state", "agent_start", "agent_stop", "onboarding_start", "onboarding_check_name", "onboarding_create"]);
+// Comandos que não passam pelo agente (perfil, peers.toml e ui.toml): respondem com o agente parado ou com falha.
+const SEMPRE_RESPONDEM = new Set([
+  "app_state",
+  "agent_start",
+  "agent_stop",
+  "onboarding_start",
+  "onboarding_check_name",
+  "onboarding_create",
+  "devices_list",
+  "prefs_get",
+  "prefs_set",
+]);
+
+export const agenteDePe = () => estado.agente === "in_app" || estado.agente === "external";
 
 export async function invoke(nome, { req }) {
   if (nome !== "clipsync") throw erro("unknown_command", `Comando ${nome} desconhecido.`);
@@ -35,7 +48,7 @@ export async function invoke(nome, { req }) {
   const tratador = comandos.get(req.cmd);
   if (!tratador) throw erro("unknown_command", `Comando ${req.cmd} desconhecido.`);
   await atraso();
-  if (cenario === "erro" && !SEMPRE_RESPONDEM.has(req.cmd)) {
+  if (!agenteDePe() && !SEMPRE_RESPONDEM.has(req.cmd)) {
     throw erro("agent_not_running", "O agente não está rodando. Inicie o agente e tente de novo.");
   }
   const resposta = await tratador(req.args ?? {});

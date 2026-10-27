@@ -1,7 +1,7 @@
 // Dados compartilhados entre os domínios do mock: esta máquina e os três pares.
 // Os ids seguem o contrato (peer_id = 64 hex; short = 8 hex em dois grupos de 4).
 
-import { cenario, estado, plataforma } from "./nucleo.js";
+import { agenteDePe, cenario, estado, plataforma } from "./nucleo.js";
 
 const AGORA = Date.now();
 const MIN = 60_000;
@@ -75,6 +75,7 @@ estado.agente = cenario === "erro" ? "failed" : cenario === "sem-perfil" ? "stop
 estado.erroAgente = cenario === "erro" ? "Não foi possível abrir a porta 47800: já está em uso." : null;
 estado.pausado = false;
 estado.telaTravada = false;
+estado.modulos = { clipboard: true, input: plataforma === "linux" };
 estado.dispositivos = dispositivosPadrao();
 
 const CAPACIDADES_INPUT = plataforma === "linux";
@@ -103,6 +104,6 @@ export function features() {
 }
 
 export function malha() {
-  const conectados = estado.dispositivos.filter((d) => d.state === "connected").length;
+  const conectados = agenteDePe() ? estado.dispositivos.filter((d) => d.state === "connected").length : 0;
   return { connected: conectados, total: estado.dispositivos.length };
 }
