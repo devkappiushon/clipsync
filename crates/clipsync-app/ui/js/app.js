@@ -1,71 +1,28 @@
+// Casca da janela: rotas por hash, barra lateral e eventos globais.
+// Cada tela é um módulo em js/telas/<nome>.js com `export default function montar(ctx)`,
+// que devolve { no, desmontar? } (ou uma promessa disso).
+
 import { api } from "./api.js";
+import { estadoErro } from "./areas.js";
 import { comCarregamento, selo } from "./componentes.js";
+import { h } from "./dom.js";
+import { aplicarAparencia, assinar, atualizarApp, iniciarEventos, obterApp, observarApp } from "./estado.js";
 import { icone } from "./icones.js";
 
 const ROTAS = [
-  {
-    caminho: "onboarding/1",
-    titulo: "Esta máquina",
-    descricao: "O nome serve só para você reconhecer a máquina. A identidade é a chave criptográfica.",
-    lateral: false,
-  },
-  {
-    caminho: "onboarding/2",
-    titulo: "O que sincronizar",
-    descricao: "Escolha o que o ClipSync pode sincronizar. Nada é transmitido antes de você concluir.",
-    lateral: false,
-  },
-  {
-    caminho: "onboarding/3",
-    titulo: "Teste",
-    descricao: "Rode um teste com conteúdo sintético para ver o que funciona nesta máquina.",
-    lateral: false,
-  },
-  {
-    caminho: "dispositivos",
-    titulo: "Dispositivos",
-    descricao: "Quem pode enviar, quem pode receber e quem pode controlar esta máquina.",
-    lateral: true,
-    nav: "dispositivos",
-  },
-  {
-    caminho: "pareamento",
-    titulo: "Pareamento",
-    descricao: "Confirme o mesmo código nas duas máquinas. O código vem da conexão, não da rede.",
-    lateral: true,
-    nav: "dispositivos",
-  },
-  {
-    caminho: "layout",
-    titulo: "Layout de telas",
-    descricao: "Ligue um trecho de borda de um monitor à borda de um monitor de outra máquina.",
-    lateral: true,
-    nav: "layout",
-  },
-  {
-    caminho: "clipboard",
-    titulo: "Clipboard",
-    descricao: "Texto copiado aqui vai aos pares autorizados. O que chega fica na caixa até você decidir.",
-    lateral: true,
-    nav: "clipboard",
-  },
-  {
-    caminho: "diagnostico",
-    titulo: "Diagnóstico",
-    descricao: "O que o sistema oferece, o que o ClipSync está usando e por que algo foi bloqueado.",
-    lateral: true,
-    nav: "diagnostico",
-  },
-  {
-    caminho: "preferencias",
-    titulo: "Preferências",
-    descricao: "Atalhos, inicialização, notificações e aparência.",
-    lateral: true,
-    nav: "preferencias",
-  },
+  { caminho: "onboarding/1", tela: "onboarding", passo: 1, titulo: "Esta máquina", lateral: false },
+  { caminho: "onboarding/2", tela: "onboarding", passo: 2, titulo: "O que sincronizar", lateral: false },
+  { caminho: "onboarding/3", tela: "onboarding", passo: 3, titulo: "Teste", lateral: false },
+  { caminho: "dispositivos", tela: "dispositivos", titulo: "Dispositivos", lateral: true, nav: "dispositivos" },
+  { caminho: "pareamento", tela: "pareamento", titulo: "Pareamento", lateral: true, nav: "dispositivos" },
+  { caminho: "layout", tela: "layout", titulo: "Layout de telas", lateral: true, nav: "layout" },
+  { caminho: "clipboard", tela: "clipboard", titulo: "Clipboard", lateral: true, nav: "clipboard" },
+  { caminho: "diagnostico", tela: "diagnostico", titulo: "Diagnóstico", lateral: true, nav: "diagnostico" },
+  { caminho: "preferencias", tela: "preferencias", titulo: "Preferências", lateral: true, nav: "preferencias" },
 ];
 
 const ROTA_INICIAL = "dispositivos";
+const ROTA_PRIMEIRO_USO = "onboarding/1";
 
 const el = {
   app: document.getElementById("app"),
@@ -78,34 +35,17 @@ const el = {
   pausarRotulo: document.getElementById("pausar-rotulo"),
 };
 
-let estadoGeral = null;
+let desmontarAtual = null;
+let geracao = 0;
 let primeiraRota = true;
 
-function criarCabecalho(rota) {
-  const cabecalho = document.createElement("header");
-  cabecalho.className = "cabecalho";
+const ir = (caminho) => {
+  location.hash = `#/${caminho}`;
+};
 
-  const texto = document.createElement("div");
-  texto.className = "cabecalho__texto";
-
-  const titulo = document.createElement("h1");
-  titulo.id = "titulo-pagina";
-  titulo.tabIndex = -1;
-  titulo.textContent = rota.titulo;
-
-  const descricao = document.createElement("p");
-  descricao.textContent = rota.descricao;
-
-  texto.append(titulo, descricao);
-  cabecalho.append(texto);
-  return cabecalho;
-}
-
-function renderizarRota(rota) {
-  const pagina = document.createElement("div");
-  pagina.className = "pagina";
-  pagina.append(criarCabecalho(rota));
-  el.conteudo.replaceChildren(pagina);
+function rotaDoHash() {
+  const caminho = location.hash.replace(/^#\/?/, "");
+  return ROTAS.find((r) => r.caminho === caminho) ?? null;
 }
 
 function marcarMenu(rota) {
@@ -115,47 +55,71 @@ function marcarMenu(rota) {
   }
 }
 
-function rotaDoHash() {
-  const caminho = location.hash.replace(/^#\/?/, "");
-  return ROTAS.find((r) => r.caminho === caminho) ?? null;
-}
-
-function navegar() {
+async function navegar() {
   const rota = rotaDoHash();
   if (!rota) {
     location.replace(`#/${ROTA_INICIAL}`);
     return;
   }
+  const app = obterApp();
+  if (app && !app.initialized && rota.lateral) {
+    location.replace(`#/${ROTA_PRIMEIRO_USO}`);
+    return;
+  }
+
+  const minha = ++geracao;
+  desmontarAtual?.();
+  desmontarAtual = null;
+
   el.app.dataset.lateral = rota.lateral ? "visivel" : "oculta";
   document.title = `${rota.titulo} · ClipSync`;
   marcarMenu(rota);
-  renderizarRota(rota);
+
+  const pagina = h("div", { class: "pagina" });
+  el.conteudo.replaceChildren(pagina);
   el.conteudo.scrollTop = 0;
-  if (!primeiraRota) document.getElementById("titulo-pagina").focus();
+
+  try {
+    const modulo = await import(`./telas/${rota.tela}.js`);
+    const tela = await modulo.default({ rota, ir, assinar });
+    if (minha !== geracao) {
+      tela.desmontar?.();
+      return;
+    }
+    desmontarAtual = tela.desmontar ?? null;
+    pagina.append(tela.no);
+  } catch (erro) {
+    if (minha !== geracao) return;
+    console.error(`falha ao montar a tela ${rota.tela}`, erro);
+    pagina.append(estadoErro(erro, navegar));
+  }
+
+  if (!primeiraRota) document.getElementById("titulo-pagina")?.focus();
   primeiraRota = false;
 }
 
-function pintarRodape() {
-  if (!estadoGeral) return;
-  const { maquina, malha, pausado } = estadoGeral;
-  el.maquinaNome.textContent = maquina.nome;
-  el.maquinaImpressao.textContent = maquina.impressao;
+function pintarRodape(app) {
+  el.maquinaNome.textContent = app.device?.name ?? "Sem perfil";
+  el.maquinaImpressao.textContent = app.device?.short ?? "";
 
-  el.malha.replaceChildren(
-    pausado ? selo("aviso", "Pausada") : selo("ok", `${malha.conectados} de ${malha.total} conectados`),
-  );
+  let estado;
+  if (app.agent === "failed") estado = selo("erro", "Agente com falha");
+  else if (app.agent === "stopped") estado = selo("neutro", "Agente parado");
+  else if (app.paused) estado = selo("aviso", "Pausada");
+  else estado = selo("ok", `${app.mesh.connected} de ${app.mesh.total} conectados`);
+  el.malha.replaceChildren(estado);
 
-  el.pausar.disabled = false;
-  el.pausar.setAttribute("aria-pressed", String(pausado));
+  el.pausar.disabled = app.agent === "stopped" || app.agent === "failed";
+  el.pausar.setAttribute("aria-pressed", String(app.paused));
   el.pausar.querySelector(".icone")?.remove();
-  el.pausar.prepend(icone(pausado ? "retomar" : "pausa"));
-  el.pausarRotulo.textContent = pausado ? "Retomar tudo" : "Pausar tudo";
+  el.pausar.prepend(icone(app.paused ? "retomar" : "pausa"));
+  el.pausarRotulo.textContent = app.paused ? "Retomar tudo" : "Pausar tudo";
 }
 
 function alternarPausa() {
   return comCarregamento(el.pausar, async () => {
-    estadoGeral = await api.pausarTudo(!estadoGeral.pausado);
-    pintarRodape();
+    await api.pauseSet({ paused: !obterApp().paused });
+    await atualizarApp();
   });
 }
 
@@ -165,14 +129,18 @@ async function iniciar() {
     evento.preventDefault();
     el.conteudo.focus();
   });
+  observarApp(pintarRodape);
   window.addEventListener("hashchange", navegar);
-  navegar();
+
   try {
-    estadoGeral = await api.estadoGeral();
-    pintarRodape();
+    const app = await atualizarApp();
+    if (app.initialized) aplicarAparencia((await api.prefsGet()).appearance);
+    await iniciarEventos();
   } catch (erro) {
-    console.error("falha ao ler o estado geral", erro);
+    console.error("falha ao ler o estado inicial", erro);
+    el.malha.replaceChildren(selo("erro", "Sem resposta do agente"));
   }
+  navegar();
 }
 
 iniciar();

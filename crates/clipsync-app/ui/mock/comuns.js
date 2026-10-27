@@ -1,0 +1,42 @@
+// Comandos comuns (barra lateral e bandeja): app_state, agent_start, agent_stop, pause_set.
+
+import { EU, features, malha } from "./dados.js";
+import { emitir, erro, estado, plataforma, registrar } from "./nucleo.js";
+
+registrar({
+  app_state: () => ({
+    initialized: estado.inicializado,
+    profile_dir: plataforma === "windows" ? "C:\\Users\\joao\\AppData\\Local\\clipsync" : "/home/joao/.config/clipsync",
+    device: estado.inicializado ? EU : null,
+    agent: estado.agente,
+    agent_error: estado.erroAgente,
+    paused: estado.pausado,
+    screen_locked: estado.telaTravada,
+    mesh: malha(),
+    modules: { clipboard: true, input: plataforma === "linux" },
+    input_supported: plataforma === "linux",
+    version: "0.2.0",
+    platform: plataforma,
+    features: features(),
+  }),
+
+  agent_start: () => {
+    if (!estado.inicializado) throw erro("not_initialized", "Esta máquina ainda não foi configurada.");
+    estado.agente = "in_app";
+    estado.erroAgente = null;
+    emitir("agent_state", { agent: "in_app", error: null });
+    return { agent: "in_app" };
+  },
+
+  agent_stop: () => {
+    estado.agente = "stopped";
+    emitir("agent_state", { agent: "stopped", error: null });
+    return { agent: "stopped" };
+  },
+
+  pause_set: ({ paused }) => {
+    estado.pausado = paused === true;
+    emitir("pause_changed", { paused: estado.pausado });
+    return { paused: estado.pausado };
+  },
+});

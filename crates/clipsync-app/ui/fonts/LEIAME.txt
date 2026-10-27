@@ -1,5 +1,0 @@
-Fontes locais do ClipSync, todas sob a SIL Open Font License 1.1.
-
-InterVariable.woff2       Inter 4.1, github.com/rsms/inter (licença: OFL-Inter.txt)
-Geist-Variable.woff2      Geist, github.com/vercel/geist-font (licença: OFL-Geist.txt)
-GeistMono-Variable.woff2  Geist Mono, github.com/vercel/geist-font (licença: OFL-Geist.txt)

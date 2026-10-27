@@ -323,3 +323,49 @@ h1:focus {
 body > .conteudo {
   height: 100dvh;
 }
+
+[hidden] {
+  display: none !important;
+}
+
+/* Blocos de tela compartilhados */
+
+.kv {
+  display: grid;
+  grid-template-columns: minmax(120px, 200px) minmax(0, 1fr);
+  gap: var(--s-2) var(--s-4);
+  margin: 0;
+}
+
+.kv dt {
+  color: var(--muted);
+}
+
+.kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.nota {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.area {
+  min-width: 0;
+}
+
+.estado {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-2);
+  padding: var(--s-5);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--raio);
+}
+
+.estado--erro {
+  border-style: solid;
+  border-color: var(--err);
+}

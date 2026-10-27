@@ -344,7 +344,15 @@ kbd {
   transition: background var(--dur) var(--ease);
 }
 
-.segmentado__opcao input:hover:not(:checked) + span {
+.segmentado__opcao input:disabled {
+  cursor: not-allowed;
+}
+
+.segmentado__opcao input:disabled + span {
+  opacity: 0.55;
+}
+
+.segmentado__opcao input:hover:not(:checked):not(:disabled) + span {
   background: var(--panel-hover);
 }
 
@@ -422,6 +430,15 @@ kbd {
   background: var(--panel);
   color: var(--text);
   box-shadow: var(--elev);
+}
+
+.dialogo--largo {
+  width: min(720px, calc(100vw - 2 * var(--s-3)));
+}
+
+.dialogo__erro {
+  color: var(--err);
+  font-size: var(--fs-sm);
 }
 
 .dialogo::backdrop {

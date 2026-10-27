@@ -49,7 +49,7 @@ export function cartao({ titulo, acoes, plano = false, filhos = [] }) {
   return h("section", { class: `cartao${plano ? " cartao--plano" : ""}` }, cabecalho, filhos);
 }
 
-/** Interruptor com rótulo e descrição. aoMudar(marcado) pode ser assíncrono; se falhar, volta ao valor anterior. */
+/** Interruptor com rótulo e descrição. aoMudar(marcado) pode ser assíncrono; se lançar, o interruptor volta ao valor anterior (quem chamou mostra o erro). */
 export function interruptor({ rotulo, descricao, marcado = false, desabilitado = false, aoMudar }) {
   const id = novoId("interruptor");
   const idDescricao = `${id}-d`;
@@ -69,8 +69,7 @@ export function interruptor({ rotulo, descricao, marcado = false, desabilitado =
     entrada.setAttribute("aria-busy", "true");
     try {
       await aoMudar(valor);
-    } catch (erro) {
-      console.error("falha ao mudar o interruptor", erro);
+    } catch {
       entrada.checked = !valor;
     } finally {
       entrada.disabled = desabilitado;
@@ -113,7 +112,7 @@ export function campo({ rotulo, valor = "", tipo = "texto", opcoes = [], ajuda, 
   return no;
 }
 
-/** Seletor segmentado: grupo de opções exclusivas, navegável por setas. */
+/** Seletor segmentado: grupo de opções exclusivas, navegável por setas. Opção com `desabilitada: true` fica visível e inerte. */
 export function segmentado({ rotulo, opcoes, valor, aoMudar }) {
   const nome = novoId("segmentado");
   const grupo = h(
@@ -123,7 +122,7 @@ export function segmentado({ rotulo, opcoes, valor, aoMudar }) {
       h(
         "label",
         { class: "segmentado__opcao" },
-        h("input", { type: "radio", name: nome, value: o.valor, checked: o.valor === valor, onChange: () => aoMudar?.(o.valor) }),
+        h("input", { type: "radio", name: nome, value: o.valor, checked: o.valor === valor, disabled: o.desabilitada === true, onChange: () => aoMudar?.(o.valor) }),
         h("span", null, o.rotulo),
       ),
     ),
@@ -196,10 +195,12 @@ export function esqueleto({ linhas = 3, largura = "100%" } = {}) {
 /**
  * Abre um diálogo modal. Resolve com o `valor` da ação clicada, ou null se fechar com Esc.
  * acoes: [{ rotulo, valor, variante?, foco?, desabilitado?, aoClicar? }], na ordem de leitura (cancelar primeiro).
+ * Se aoClicar lançar, o diálogo continua aberto e mostra a `message` do erro.
  * Devolve { promessa, dialogo }, para o chamador poder habilitar ou desabilitar ações.
  */
-export function abrirDialogo({ titulo, conteudo, acoes }) {
+export function abrirDialogo({ titulo, conteudo, acoes, largo = false }) {
   const idTitulo = novoId("dialogo-titulo");
+  const areaErro = h("p", { class: "dialogo__erro", role: "alert", hidden: true });
   let ocupado = false;
 
   const botoes = acoes.map((a) =>
@@ -210,11 +211,14 @@ export function abrirDialogo({ titulo, conteudo, acoes }) {
       autofocus: a.foco ? "" : null,
       aoClicar: async () => {
         ocupado = true;
+        areaErro.hidden = true;
         try {
           if (a.aoClicar) await a.aoClicar();
         } catch (erro) {
           ocupado = false;
-          throw erro;
+          areaErro.textContent = typeof erro?.message === "string" && erro.message ? erro.message : "Não foi possível concluir. Tente de novo.";
+          areaErro.hidden = false;
+          return;
         }
         ocupado = false;
         dialogo.close(a.valor);
@@ -224,8 +228,8 @@ export function abrirDialogo({ titulo, conteudo, acoes }) {
 
   const dialogo = h(
     "dialog",
-    { class: "dialogo", "aria-labelledby": idTitulo },
-    h("div", { class: "dialogo__corpo" }, h("h2", { id: idTitulo }, titulo), conteudo),
+    { class: `dialogo${largo ? " dialogo--largo" : ""}`, "aria-labelledby": idTitulo },
+    h("div", { class: "dialogo__corpo" }, h("h2", { id: idTitulo }, titulo), conteudo, areaErro),
     h("div", { class: "dialogo__acoes" }, botoes),
   );
   dialogo.botoes = botoes;
