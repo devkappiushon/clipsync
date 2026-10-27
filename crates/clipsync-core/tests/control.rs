@@ -134,6 +134,24 @@ fn is_pipe_name(s: &str) -> bool {
         .is_some_and(|h| h.len() == 32 && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
 }
 
+/// Opens `name` the way `request` does. While a just-accepted client holds the only free instance and the
+/// server task has not run yet to create the next one, Windows answers ERROR_PIPE_BUSY (231): retry. On a
+/// current-thread runtime that lasts until this task yields, so the retry must sleep, not spin.
+#[cfg(windows)]
+async fn open_raw(name: &str) -> tokio::net::windows::named_pipe::NamedPipeClient {
+    use tokio::net::windows::named_pipe::ClientOptions;
+    for _ in 0..200 {
+        match ClientOptions::new().open(name) {
+            Ok(client) => return client,
+            Err(e) if e.raw_os_error() == Some(231) => {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            Err(e) => panic!("open {name}: {e}"),
+        }
+    }
+    panic!("{name} still busy after 2 s");
+}
+
 /// Starts an agent and waits until it publishes a name other than `previous`.
 #[cfg(windows)]
 async fn spawn_agent(
@@ -167,7 +185,6 @@ async fn spawn_agent(
 #[cfg(windows)]
 #[tokio::test]
 async fn pipe_name_is_drawn_per_serve_published_and_removed() {
-    use tokio::net::windows::named_pipe::ClientOptions;
     let tmp = tempfile::tempdir().unwrap();
     let p = Profile::resolve(Some(tmp.path().to_owned())).unwrap();
     assert_eq!(p.socket_path().file_name().unwrap(), "agent.pipe");
@@ -199,8 +216,10 @@ async fn pipe_name_is_drawn_per_serve_published_and_removed() {
         Err(CoreError::AgentAlreadyRunning)
     ));
     assert_eq!(published(&p).as_deref(), Some(first.as_str()));
-    // an oversized frame is refused before allocation, and the server keeps working
-    let mut raw = ClientOptions::new().open(&first).unwrap();
+    // an oversized frame is refused before allocation, and the server keeps working. The probe of the
+    // refused serve above took the free instance without yielding: the server creates the next one only
+    // when it runs, hence the retry.
+    let mut raw = open_raw(&first).await;
     raw.write_all(&u32::MAX.to_be_bytes()).await.unwrap();
     drop(raw);
     assert!(matches!(
