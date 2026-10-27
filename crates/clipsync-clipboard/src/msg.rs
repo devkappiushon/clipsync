@@ -1,5 +1,7 @@
 //! User-facing text (pt-BR). Code, identifiers and comments stay in English.
 pub const NO_DISPLAY: &str = "a ponte de clipboard exige XWayland ativo (DISPLAY)";
+pub const X11_ONLY_LINUX: &str = "o adaptador x11 só existe no Linux; use adapter = \"auto\"";
+pub const NO_ADAPTER: &str = "não há adaptador de clipboard para este sistema";
 pub const BRIDGE_ITEM: &str = "ponte XWayland (DISPLAY)";
 pub const WATCH_HEADER: &str = "observação: eventos (XFixes via XWayland)";
 pub const NOTHING_TO_DO: &str = "nada a fazer: use --watch <duração> e/ou --write";

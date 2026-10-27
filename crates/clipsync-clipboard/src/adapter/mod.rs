@@ -3,9 +3,17 @@ use std::fmt;
 use std::time::Duration;
 
 mod fake;
+#[cfg(any(windows, test))]
+mod poll;
+#[cfg(windows)]
+mod win;
+#[cfg(target_os = "linux")]
 mod x11;
 
 pub use fake::{FakeClipboard, FakeClipboardHandle};
+#[cfg(windows)]
+pub use win::WinClipboard;
+#[cfg(target_os = "linux")]
 pub use x11::X11Clipboard;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,7 +62,7 @@ pub enum ClipError {
 }
 
 pub trait ClipboardAdapter: Send + 'static {
-    /// "fake" | "x11-xfixes"
+    /// "fake" | "x11-xfixes" | "win-poll"
     fn name(&self) -> &'static str;
     fn watch_mode(&self) -> WatchMode;
     /// Blocks up to `timeout`. `Some(event)` for every SetSelectionOwner of CLIPBOARD, including the

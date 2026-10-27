@@ -8,7 +8,6 @@ publish.workspace = true
 [dependencies]
 clipsync-proto = { path = "../clipsync-proto" }
 arboard.workspace = true
-x11rb.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
@@ -20,6 +19,9 @@ toml.workspace = true
 sha2.workspace = true
 hex.workspace = true
 clap.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

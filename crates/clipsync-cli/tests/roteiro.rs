@@ -1,5 +1,6 @@
 //! Roteiros do usuário como testes: init, pair, mesh, pause (contrato §9 S1/S4) e clip (§9 I).
 //! Cada teste sobe processos `clipsync` de verdade, em perfis temporários, com adaptadores falsos.
+#![cfg(unix)] // spawns real processes and reads Unix file modes
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // helpers outside #[test] fns
 
 use std::io::{BufRead, BufReader, Write};

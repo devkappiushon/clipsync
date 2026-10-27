@@ -33,9 +33,11 @@ fn parse_modules(list: &str) -> Result<ModuleSet, Fail> {
 }
 
 fn default_name() -> String {
-    std::fs::read_to_string("/proc/sys/kernel/hostname")
-        .ok()
-        .map(|h| h.trim().to_owned())
+    #[cfg(windows)]
+    let host = std::env::var("COMPUTERNAME").ok();
+    #[cfg(not(windows))]
+    let host = std::fs::read_to_string("/proc/sys/kernel/hostname").ok();
+    host.map(|h| h.trim().to_owned())
         .filter(|h| !h.is_empty())
         .unwrap_or_else(|| "clipsync".to_owned())
 }
@@ -61,9 +63,9 @@ pub fn run<R: BufRead, W: Write>(
     };
     let modules = match modules_arg {
         Some(m) => m,
-        // input is on by default; the clipboard question defaults to NO
+        // input is on by default where an adapter exists (Linux); the clipboard question defaults to NO
         None => ModuleSet {
-            input: true,
+            input: cfg!(target_os = "linux"),
             clipboard: ui.yes_no(msg::ASK_CLIPBOARD, false)?,
         },
     };

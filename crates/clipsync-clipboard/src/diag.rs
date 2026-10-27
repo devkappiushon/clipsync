@@ -1,9 +1,15 @@
-//! `diagnose()`: what the XWayland clipboard bridge needs, and whether the compositor offers data-control.
+//! `diagnose()`: Linux checks what the XWayland clipboard bridge needs and whether the compositor
+//! offers data-control; Windows reports the arboard polling adapter.
+#[cfg(target_os = "linux")]
 use crate::adapter::{ClipError, X11Clipboard};
+#[cfg(target_os = "linux")]
 use crate::msg;
 use clipsync_proto::{DiagItem, DiagStatus};
+#[cfg(target_os = "linux")]
 use std::io::{Read, Write};
+#[cfg(target_os = "linux")]
 use std::os::unix::net::UnixStream;
+#[cfg(target_os = "linux")]
 use std::path::PathBuf;
 
 const AREA: &str = "clipboard";
@@ -29,6 +35,37 @@ pub async fn diagnose() -> Vec<DiagItem> {
         })
 }
 
+#[cfg(windows)]
+fn diagnose_blocking() -> Vec<DiagItem> {
+    use crate::adapter::WinClipboard;
+    let adapter = match WinClipboard::new() {
+        Ok(_) => item(
+            "adaptador",
+            DiagStatus::Ok,
+            "arboard (Windows, polling 250 ms)",
+        ),
+        Err(e) => item("adaptador", DiagStatus::Error, e.to_string()),
+    };
+    vec![
+        adapter,
+        item(
+            "classificação",
+            DiagStatus::Warn,
+            "experimental: só texto, mudanças detectadas por polling",
+        ),
+    ]
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn diagnose_blocking() -> Vec<DiagItem> {
+    vec![item(
+        "adaptador",
+        DiagStatus::Missing,
+        "sem adaptador de clipboard para este sistema",
+    )]
+}
+
+#[cfg(target_os = "linux")]
 fn diagnose_blocking() -> Vec<DiagItem> {
     let mut out = Vec::new();
     match X11Clipboard::new() {
@@ -65,6 +102,7 @@ fn diagnose_blocking() -> Vec<DiagItem> {
     out
 }
 
+#[cfg(target_os = "linux")]
 fn data_control_item() -> DiagItem {
     const NAME: &str = "data-control (Wayland)";
     match wayland_globals() {
@@ -94,6 +132,7 @@ fn data_control_item() -> DiagItem {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Lists the interfaces of the Wayland registry (get_registry + sync over the raw socket; std only).
 fn wayland_globals() -> Result<Vec<String>, String> {
     let name =

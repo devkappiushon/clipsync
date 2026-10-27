@@ -97,7 +97,11 @@ enum PairSide {
 
 #[derive(Subcommand)]
 enum ProbeKind {
+    #[cfg(target_os = "linux")]
     Clipboard(clipsync_clipboard::probe::ProbeArgs),
+    /// Sem prova de clipboard fora do Linux; o comando existe só para dar a mensagem
+    #[cfg(not(target_os = "linux"))]
+    Clipboard,
     Input(clipsync_input::probe::ProbeArgs),
 }
 
@@ -125,9 +129,12 @@ async fn diagnose() -> Result<(), Fail> {
 
 async fn probe(profile: &Profile, what: ProbeKind) -> Result<(), Fail> {
     match what {
+        #[cfg(target_os = "linux")]
         ProbeKind::Clipboard(args) => clipsync_clipboard::probe::run(args)
             .await
             .map_err(|e| Fail::error(e.to_string())),
+        #[cfg(not(target_os = "linux"))]
+        ProbeKind::Clipboard => Err(Fail::refused(msg::PROBE_CLIPBOARD_LINUX_ONLY)),
         ProbeKind::Input(args) if args.loopback => {
             let to = args
                 .to
@@ -135,9 +142,12 @@ async fn probe(profile: &Profile, what: ProbeKind) -> Result<(), Fail> {
                 .ok_or_else(|| Fail::error(msg::PROBE_PEER_REQUIRED))?;
             cmds::loopback(profile, to, args.seconds).await
         }
-        ProbeKind::Input(args) => clipsync_input::probe::run(args)
-            .await
-            .map_err(|e| Fail::error(e.to_string())),
+        ProbeKind::Input(args) => clipsync_input::probe::run(args).await.map_err(|e| {
+            match e.downcast_ref::<clipsync_input::probe::Unavailable>() {
+                Some(unavailable) => Fail::refused(unavailable.to_string()),
+                None => Fail::error(e.to_string()),
+            }
+        }),
     }
 }
 

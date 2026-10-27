@@ -163,3 +163,9 @@ pub const PROBE_PEER_REQUIRED: &str = "--loopback exige --to PAR";
 pub fn diag_line(status: &str, area: &str, name: &str, detail: &str) -> String {
     format!("[{status}] {area} · {name}: {detail}")
 }
+
+#[cfg(not(target_os = "linux"))]
+pub const PROBE_CLIPBOARD_LINUX_ONLY: &str =
+    "a prova de clipboard só existe no Linux; use `clipsync diagnose`";
+/// `run` on a system without an input adapter: the module stays off, the rest runs.
+pub const INPUT_UNAVAILABLE: &str = "input (teclado e mouse): indisponível nesta versão neste sistema; o agente segue com os demais módulos";

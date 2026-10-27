@@ -17,7 +17,9 @@ pub async fn run(profile: &Profile) -> Result<(), Fail> {
             .map_err(module_err)?;
         modules.push(clipsync_clipboard::build(c, &profile.dir).map_err(module_err)?);
     }
-    if cfg.modules.input {
+    if cfg.modules.input && !cfg!(target_os = "linux") {
+        println!("{}", msg::INPUT_UNAVAILABLE);
+    } else if cfg.modules.input {
         let c = clipsync_input::InputConfig::from_table(cfg.input.as_ref()).map_err(module_err)?;
         modules.push(clipsync_input::build(c, &profile.dir).map_err(module_err)?);
     }
