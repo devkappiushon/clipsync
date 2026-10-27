@@ -1,6 +1,6 @@
 # workboard · ClipSync MVP de hoje
 
-**Estado: MVP de 2026-10-27 FECHADO.** S0 a S4 e I passam no warden (Argus). Segurança liberada, com 0 bloqueantes (`docs/seguranca.md`). **S5 (Windows e release): código entregue, e a segurança LIBEROU** (Sentinel 10777b4: 0 BLOCKER, 3 MÉDIO, 8 BAIXO). Faltam o CI verde nos dois runners e o release v0.1.0, que dependem do push do usuário. Pendências consolidadas e próxima fatia no fim deste arquivo.
+**Estado: MVP de 2026-10-27 FECHADO.** S0 a S4 e I passam no warden (Argus). Segurança liberada, com 0 bloqueantes (`docs/seguranca.md`). **S5 (Windows e release): código entregue, e a segurança LIBEROU** (Sentinel 10777b4: 0 BLOCKER, 3 MÉDIO, 8 BAIXO). **Release v0.1.0 publicado** em 2026-10-27, a partir de c04de08. **CI ainda não verde no Windows:** 1 teste com corrida em `tests/control.rs`, que o Rivet está corrigindo. Pendências consolidadas e próxima fatia no fim deste arquivo.
 
 Contrato: `docs/contrato.md` (v1.13). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Git: até a S4 só o Maestro commitava; na S5 cada builder commita os próprios arquivos na main local, sem push (contrato §11 regra 12). Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
 
@@ -92,8 +92,19 @@ Verificação local: `export PATH=$HOME/.cargo/bin:$PATH`, depois `cargo clippy 
   - passo tag = versão;
   - YAML válido.
 
-  O job Windows do CI roda clippy `-D warnings` e `test --workspace --locked`. Os itens 8 (CI verde) e 10 (release) esperam o push do usuário.
+  O job Windows do CI roda clippy `-D warnings` e `test --workspace --locked`. Resultado dos itens 8 e 10: ver "Resultado do push" abaixo.
 - **Sentinel · segurança da S5:** LIBERADO para a tag v0.1.0 em 10777b4 (`docs/seguranca.md`, seção S5). 0 BLOCKER, 3 MÉDIO e 8 BAIXO. O S5-02 já foi corrigido em b81b08b; os demais estão em "Pendências pós-MVP → S5".
+- **Resultado do push (2026-10-27, commit c04de08, relato do Maestro):**
+  - **Critério C, release: PASSA.**
+    - Workflow `release` run 40573132036 verde. O release v0.1.0 traz os dois artefatos e o `SHA256SUMS`.
+    - `clipsync-v0.1.0-linux-x86_64.tar.gz`: 3.988.409 bytes. O binário tem 8,3 MB (strip + LTO) e roda neste notebook: `clipsync --version` dá `clipsync 0.1.0`.
+    - `clipsync-v0.1.0-windows-x86_64.zip`: 2.672.545 bytes. O `clipsync.exe` tem 6.089.216 bytes, PE32+ x86-64.
+    - `sha256sum -c SHA256SUMS` deu OK nos dois: tar.gz `6d641b52…` e zip `03acc283…`.
+  - **Critério B, CI nos dois runners: NÃO PASSA ainda.**
+    - CI run 40573127883 no mesmo commit. O job Linux ficou verde.
+    - No job Windows, clippy e build ficaram verdes, e 46 testes passaram. Falhou 1: `tests/control.rs::pipe_name_is_drawn_per_serve_published_and_removed`, com `ERROR_PIPE_BUSY` ao abrir o pipe cru logo depois da sonda. É uma corrida no teste, e o Rivet está corrigindo.
+    - O binário publicado não é afetado: o código é o mesmo, e a falha está no teste. O critério B só passa com o job Windows verde num commit novo.
+  - O tag publicou com o job Windows do CI vermelho. É o caso que o S5-08 descreve: o ruleset de tag `v*` deve exigir CI verde antes de publicar.
 - **Licença (v1.12, decisão do Maestro):** a 0.1.0 sai num repositório privado, sem LICENSE; o README segue com "a definir". A licença passa a ser pré-condição do primeiro release público (pendência 1). Push e tag são só do usuário.
 
 ## Telas (Figma)
@@ -196,7 +207,7 @@ Commits 0e76039, f54c995, 8daf2f5 e 3c2bad0. A implementação (Tauri) segue dep
    - S5-10: actions fixadas por tag móvel, e `dtolnay/rust-toolchain@master` no CI. Correção: fixar por SHA.
    - S5-11: o `SHA256SUMS` não prova a origem. Correção: **attestations** (`actions/attest-build-provenance`) sobre os artefatos e o `SHA256SUMS`.
 4. **Prova em Windows real:**
-   - pelo CI: o job Windows verde depois do push;
+   - pelo CI: o job Windows já rodou (run 40573127883: clippy e build verdes, 46 testes ok, 1 falha de corrida em `pipe_name_is_drawn_per_serve_published_and_removed`, com o Rivet corrigindo). Falta ficar verde;
    - numa máquina do usuário: o roteiro de 10 minutos com duas contas do Sentinel (`docs/seguranca.md`, "Como confirmar em Windows"), que confirma ou derruba o S5-01 e o S5-04, mais o item 3 das provas pendentes abaixo.
 
 ### Qualidade
