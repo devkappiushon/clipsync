@@ -34,7 +34,7 @@ pub fn blocked_too_large(bytes: usize, max: usize) -> String {
 pub fn adapter_read_failed(detail: &str) -> String {
     format!("leitura do clipboard falhou: {detail}")
 }
-pub const NO_PEER_REACHED: &str = "nenhum par alcançado (desconectado ou sem permissão de envio)";
+pub const NO_TARGET: &str = "nenhum par autorizado a receber (ou par desconhecido)";
 pub const EMPTY_TEXT: &str = "texto vazio não é enviado";
 pub const TOO_LARGE: &str = "texto acima do limite configurado";
 pub const UNSUPPORTED_COMMAND: &str = "comando não suportado pelo módulo clipboard";

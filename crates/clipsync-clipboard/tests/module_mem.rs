@@ -333,3 +333,94 @@ fn i_debug_never_shows_content() {
     };
     assert!(!format!("{item:?}").contains("segredo-xyz"));
 }
+
+async fn clip_sent(c: &Clip, text: &str, to: Option<PeerId>) -> Vec<SendOutcome> {
+    let cmd = ModuleCommand::ClipSend {
+        text: text.into(),
+        to,
+    };
+    match command(c, cmd).await {
+        ModuleReply::ClipSent(v) => v,
+        other => panic!("expected ClipSent, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn j_clipsend_lists_every_target_and_no_ack_is_unreachable() {
+    let hub = MemHub::new();
+    let a = spawn_clip(&hub, "a", ClipMode::Auto).await;
+    let _silent = hub.add_node("silent", BOTH); // authorized, but nobody acks
+    let b = spawn_clip(&hub, "b", ClipMode::Auto).await;
+    let off = hub.add_node("off", BOTH); // no clipboard_out toward it: not a target for `None`
+    let silent_id = _silent.id;
+    hub.link(a.id, silent_id, ALL, ALL);
+    hub.link(a.id, b.id, ALL, ALL);
+    hub.link(
+        a.id,
+        off.id,
+        PeerPerms {
+            clipboard_out: false,
+            ..ALL
+        },
+        ALL,
+    );
+    let out = clip_sent(&a, "para todos", None).await;
+    let state_of = |n: &str| out.iter().find(|o| o.peer == n).map(|o| o.state);
+    assert_eq!(out.len(), 2, "off is not a target");
+    assert_eq!(state_of("b"), Some(DeliveryState::Applied));
+    assert_eq!(state_of("silent"), Some(DeliveryState::Unreachable));
+    // an explicit peer without permission is listed with the refusal
+    let out = clip_sent(&a, "só ele", Some(off.id)).await;
+    assert_eq!(
+        out[0].state,
+        DeliveryState::Rejected(RejectReason::NotAuthorized)
+    );
+    // rule 12: explicit sends never touch the local clipboard
+    assert_eq!((a.fake.writes(), a.fake.contents()), (0, None));
+    // no target at all, or an unknown --to: Error
+    let stranger = PeerId([0xEE; 32]);
+    assert!(matches!(
+        command(
+            &a,
+            ModuleCommand::ClipSend {
+                text: "x".into(),
+                to: Some(stranger)
+            }
+        )
+        .await,
+        ModuleReply::Error(_)
+    ));
+}
+
+#[tokio::test]
+async fn k_ttl_counts_from_local_receipt_and_drops_the_text() {
+    let hub = MemHub::new();
+    let mut a = hub.add_node("a", BOTH);
+    let b = spawn_clip(&hub, "b", ClipMode::Manual).await;
+    hub.link(a.id, b.id, ALL, ALL);
+    // ttl 0 expires on arrival
+    let mut zero = offer(1, "zero-ttl-texto");
+    zero.ttl_ms = 0;
+    send_offer(&a, b.id, zero).await;
+    assert_eq!(next_ack(&mut a).await.state, DeliveryState::Expired);
+    // a short ttl: fine on arrival, Expired (and without preview) once older than the ttl
+    let mut short = offer(2, "ttl-curto-texto");
+    short.ttl_ms = 800;
+    send_offer(&a, b.id, short).await;
+    assert_eq!(next_ack(&mut a).await.state, DeliveryState::InInbox);
+    let ModuleReply::ClipInbox(items) = command(&b, ModuleCommand::ClipInbox).await else {
+        panic!("inbox")
+    };
+    assert_eq!(items[0].state, DeliveryState::InInbox);
+    assert_eq!(items[0].preview, "ttl-curto-texto");
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let ModuleReply::ClipInbox(items) = command(&b, ModuleCommand::ClipInbox).await else {
+        panic!("inbox")
+    };
+    assert!(
+        items
+            .iter()
+            .all(|i| i.state == DeliveryState::Expired && i.preview.is_empty())
+    );
+    assert_eq!(items[0].bytes, "ttl-curto-texto".len());
+}

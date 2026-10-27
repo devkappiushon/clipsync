@@ -17,6 +17,7 @@ use tokio::sync::{mpsc, oneshot};
 const ACK_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(50);
 const READ_RETRIES: usize = 3;
+const INBOX_SWEEP: Duration = Duration::from_secs(5);
 
 // ---- adapter thread (rule 11) ----
 
@@ -144,26 +145,25 @@ fn now_unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn send_error_state(e: &SendError) -> Option<DeliveryState> {
+fn send_error_state(e: &SendError) -> DeliveryState {
     match e {
-        SendError::NotAuthorized => Some(DeliveryState::Rejected(RejectReason::NotAuthorized)),
+        SendError::NotAuthorized => DeliveryState::Rejected(RejectReason::NotAuthorized),
         SendError::RemoteModuleDisabled | SendError::LocalModuleDisabled => {
-            Some(DeliveryState::Rejected(RejectReason::ModuleDisabled))
+            DeliveryState::Rejected(RejectReason::ModuleDisabled)
         }
-        SendError::Paused => Some(DeliveryState::Rejected(RejectReason::Paused)),
-        SendError::TooLarge => Some(DeliveryState::Rejected(RejectReason::TooLarge)),
-        // No wire verdict exists for these; the caller reports them as "not reached".
-        SendError::NotConnected | SendError::Transport(_) => None,
+        SendError::Paused => DeliveryState::Rejected(RejectReason::Paused),
+        SendError::TooLarge => DeliveryState::Rejected(RejectReason::TooLarge),
+        SendError::NotConnected | SendError::Transport(_) => DeliveryState::Unreachable,
     }
 }
 
-/// Sends one offer and waits up to ACK_TIMEOUT for the final state. `None` = not reached.
+/// Sends one offer and waits up to ACK_TIMEOUT for the final state. No Ack in time = `Unreachable`.
 async fn send_offer(
     host: Arc<dyn ModuleHost>,
     pending: PendingAcks,
     peer: PeerInfo,
     offer: ClipOffer,
-) -> Option<SendOutcome> {
+) -> SendOutcome {
     let key = (offer.id, peer.id);
     let (tx, rx) = oneshot::channel();
     lock(&pending).insert(key, tx);
@@ -176,19 +176,26 @@ async fn send_offer(
                 .await
                 .ok()
                 .and_then(Result::ok)
-                .unwrap_or(DeliveryState::Received);
-            Some(SendOutcome {
+                .unwrap_or(DeliveryState::Unreachable);
+            SendOutcome {
                 peer: peer.name,
                 state,
-            })
+            }
         }
-        Err(e) => send_error_state(&e).map(|state| SendOutcome {
+        Err(e) => SendOutcome {
             peer: peer.name,
-            state,
-        }),
+            state: send_error_state(&e),
+        },
     };
     lock(&pending).remove(&key);
     out
+}
+
+/// Inbox item plus the local monotonic receive time that the ttl counts from (rule 6).
+struct InboxEntry {
+    item: InboxItem,
+    received: Instant,
+    ttl: Duration,
 }
 
 // ---- the module ----
@@ -245,7 +252,7 @@ struct State {
     lamport_max: u64,
     /// Highest (lamport, origin) applied or copied locally.
     last: Option<(u64, PeerId)>,
-    inbox: VecDeque<InboxItem>,
+    inbox: VecDeque<InboxEntry>,
     pending: PendingAcks,
     status: Arc<Mutex<Status>>,
 }
@@ -297,8 +304,11 @@ impl State {
         mut rx: mpsc::Receiver<ModuleInput>,
         mut ev_rx: mpsc::Receiver<AdapterEvent>,
     ) -> Result<(), ModuleError> {
+        let mut sweep = tokio::time::interval(INBOX_SWEEP);
+        sweep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
+                _ = sweep.tick() => self.expire_inbox(),
                 input = rx.recv() => match input {
                     None | Some(ModuleInput::Shutdown) => return Ok(()),
                     Some(i) => self.on_input(i).await,
@@ -501,16 +511,37 @@ impl State {
     }
 
     fn push_inbox(&mut self, o: &ClipOffer, from: String, state: DeliveryState) {
-        self.inbox.push_front(InboxItem {
-            id: o.id,
-            from,
-            received_unix_ms: now_unix_ms(),
-            mime: o.mime.clone(),
-            bytes: o.text.len(),
-            preview: o.text.chars().take(200).collect(),
-            state,
+        let expired = state == DeliveryState::Expired;
+        self.inbox.push_front(InboxEntry {
+            item: InboxItem {
+                id: o.id,
+                from,
+                received_unix_ms: now_unix_ms(),
+                mime: o.mime.clone(),
+                bytes: o.text.len(),
+                // an expired item never keeps its text in memory
+                preview: if expired {
+                    String::new()
+                } else {
+                    o.text.chars().take(200).collect()
+                },
+                state,
+            },
+            received: Instant::now(),
+            ttl: Duration::from_millis(u64::from(o.ttl_ms.min(CLIP_TTL_MS))),
         });
         self.inbox.truncate(MAX_INBOX_ITEMS);
+    }
+
+    /// Rule 6: an item older than its ttl (local monotonic clock) becomes Expired and drops its text.
+    fn expire_inbox(&mut self) {
+        let now = Instant::now();
+        for e in &mut self.inbox {
+            if e.item.state != DeliveryState::Expired && now.duration_since(e.received) > e.ttl {
+                e.item.state = DeliveryState::Expired;
+                e.item.preview = String::new();
+            }
+        }
     }
 
     async fn ack(&self, to: PeerId, id: EventId, state: DeliveryState) {
@@ -544,7 +575,10 @@ impl State {
                 }));
             }
             ModuleCommand::ClipInbox => {
-                let _ = reply.send(ModuleReply::ClipInbox(self.inbox.iter().cloned().collect()));
+                self.expire_inbox();
+                let _ = reply.send(ModuleReply::ClipInbox(
+                    self.inbox.iter().map(|e| e.item.clone()).collect(),
+                ));
             }
             ModuleCommand::ClipSend { text, to } => self.clip_send(text, to, reply),
             ModuleCommand::InputLoopback { .. } => {
@@ -564,28 +598,37 @@ impl State {
         }
         // An explicit send is an origin event: it advances the clock but is not a local copy.
         let offer = self.new_offer(text);
+        // `Some` = exactly that peer (an unknown one is an error); `None` = every peer we may send to.
         let peers: Vec<PeerInfo> = self
             .host
             .peers()
             .into_iter()
-            .filter(|p| to.is_none_or(|t| t == p.id))
+            .filter(|p| to.map_or(p.perms.clipboard_out, |t| t == p.id))
             .collect();
+        if peers.is_empty() {
+            let _ = reply.send(ModuleReply::Error(msg::NO_TARGET.into()));
+            return;
+        }
         let (host, pending) = (self.host.clone(), self.pending.clone());
         tokio::spawn(async move {
-            let sends = peers
+            let sends: Vec<_> = peers
                 .into_iter()
-                .map(|p| tokio::spawn(send_offer(host.clone(), pending.clone(), p, offer.clone())));
+                .map(|p| {
+                    let name = p.name.clone();
+                    let task =
+                        tokio::spawn(send_offer(host.clone(), pending.clone(), p, offer.clone()));
+                    (name, task)
+                })
+                .collect();
             let mut outcomes = Vec::new();
-            for h in sends {
-                if let Ok(Some(o)) = h.await {
-                    outcomes.push(o);
-                }
+            for (peer, task) in sends {
+                // a send task that died still leaves its peer in the list
+                outcomes.push(task.await.unwrap_or(SendOutcome {
+                    peer,
+                    state: DeliveryState::Unreachable,
+                }));
             }
-            let _ = reply.send(if outcomes.is_empty() {
-                ModuleReply::Error(msg::NO_PEER_REACHED.into())
-            } else {
-                ModuleReply::ClipSent(outcomes)
-            });
+            let _ = reply.send(ModuleReply::ClipSent(outcomes));
         });
     }
 }
