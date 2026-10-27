@@ -7,9 +7,10 @@
 }
 
 .dispositivos__nome {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  white-space: nowrap;
 }
 
 .dispositivos__nome strong {
@@ -20,10 +21,13 @@
   font-size: var(--fs-xs);
 }
 
-.dispositivos__sub {
-  display: block;
-  color: var(--muted);
-  font-size: var(--fs-xs);
+/* Linhas com a altura de uma linha de texto */
+
+.dispositivos .tabela td {
+  padding-top: var(--s-2);
+  padding-bottom: var(--s-2);
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 .dispositivos__passos {

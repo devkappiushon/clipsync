@@ -66,23 +66,12 @@ export default function montar({ ir, assinar }) {
         {
           chave: "name",
           rotulo: "Nome",
-          render: (d) => h("div", { class: "dispositivos__nome" }, h("strong", null, d.name), h("span", { class: "mono muted" }, d.short)),
+          render: (d) => h("span", { class: "dispositivos__nome" }, h("strong", null, d.name), h("span", { class: "mono muted" }, d.short)),
         },
         { chave: "state", rotulo: "Estado", render: (d) => seloDispositivo(d.state) },
         { chave: "addr", rotulo: "Endereço", tipo: "mono", render: (d) => d.addr ?? h("span", { class: "muted" }, "sem endereço") },
         { chave: "clipboard", rotulo: "Clipboard", render: (d) => rotuloClipboard(d.perms) },
-        {
-          chave: "controle",
-          rotulo: "Controle",
-          render: (d) =>
-            h(
-              "div",
-              null,
-              d.perms.input_in ? "controla esta máquina" : "não controla",
-              h("span", { class: "dispositivos__sub" }, `é controlada: ${INDISPONIVEL}`),
-            ),
-        },
-        { chave: "atividade", rotulo: "Última atividade", render: () => indisponivel() },
+        { chave: "controle", rotulo: "Controle", render: (d) => (d.perms.input_in ? "controla" : "não controla") },
       ],
       linhas: devices,
       chaveLinha: (d) => d.peer_id,
@@ -169,7 +158,12 @@ export default function montar({ ir, assinar }) {
           return gravarPermissoes({ input_in: true }, true);
         },
       }),
-      h("p", { class: "nota" }, `É controlada por esta máquina: ${INDISPONIVEL}.`),
+      interruptor({
+        rotulo: "É controlada por esta máquina",
+        descricao: INDISPONIVEL,
+        marcado: false,
+        desabilitado: true,
+      }),
       erroPainel,
     );
 
@@ -223,6 +217,8 @@ export default function montar({ ir, assinar }) {
             h("dd", null, formatarMomento(dispositivo.paired_at)),
             h("dt", null, "Módulos do par"),
             h("dd", null, rotuloModulos(dispositivo.remote_modules)),
+            h("dt", null, "Última atividade"),
+            h("dd", null, indisponivel()),
           ),
           h("h3", null, "Permissões que esta máquina concede"),
           permissoes,
