@@ -13,8 +13,18 @@ export function h(tag, props, ...filhos) {
     else if (PROPRIEDADES.has(chave)) no[chave] = valor;
     else no.setAttribute(chave, valor === true ? "" : valor);
   }
-  no.append(...filhos.flat(Infinity).filter((f) => f != null && f !== false));
+  no.append(...limpar(filhos));
   return no;
+}
+
+/** Tira null, undefined e booleanos de uma lista de filhos: condição `x && no` nunca vira texto "false". */
+export function limpar(filhos) {
+  return filhos.flat(Infinity).filter((f) => f != null && typeof f !== "boolean");
+}
+
+/** replaceChildren com a mesma limpeza de h(): use no lugar de no.replaceChildren(...). */
+export function trocar(no, ...filhos) {
+  no.replaceChildren(...limpar(filhos));
 }
 
 let contador = 0;

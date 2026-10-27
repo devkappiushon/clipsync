@@ -1,6 +1,6 @@
 // Peças de página: cabeçalho, região assíncrona (carregando, vazio, erro), avisos e estados.
 
-import { h } from "./dom.js";
+import { h, trocar } from "./dom.js";
 import { botao, esqueleto } from "./componentes.js";
 import { INDISPONIVEL, mensagemDe } from "./formatar.js";
 
@@ -52,14 +52,14 @@ export function area({ buscar, pintar, linhas = 3 }) {
 
   async function recarregar({ silencioso = false } = {}) {
     const minha = ++geracao;
-    if (!silencioso || no.childElementCount === 0) no.replaceChildren(esqueleto({ linhas }));
+    if (!silencioso || no.childElementCount === 0) trocar(no, esqueleto({ linhas }));
     try {
       const dados = await buscar();
       if (minha !== geracao) return;
-      no.replaceChildren(pintar(dados, recarregar));
+      trocar(no, pintar(dados, recarregar));
     } catch (erro) {
       if (minha !== geracao) return;
-      no.replaceChildren(estadoErro(erro, () => recarregar()));
+      trocar(no, estadoErro(erro, () => recarregar()));
     }
   }
 

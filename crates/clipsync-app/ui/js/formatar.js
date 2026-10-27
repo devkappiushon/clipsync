@@ -69,3 +69,34 @@ export function seloDiagnostico(status) {
   const [tom, texto] = ESTADOS_DIAGNOSTICO[status] ?? ["neutro", status];
   return selo(tom, texto);
 }
+
+const ESTADOS_ITEM = {
+  received: ["acento", "recebido"],
+  applied: ["ok", "aplicado"],
+  in_inbox: ["acento", "na caixa"],
+  rejected: ["aviso", "recusado"],
+  expired: ["neutro", "expirado"],
+  unreachable: ["erro", "não entregue"],
+};
+
+export function seloItemCaixa(state) {
+  const [tom, texto] = ESTADOS_ITEM[state] ?? ["neutro", state];
+  return selo(tom, texto);
+}
+
+const CLASSIFICACOES = {
+  validated: ["ok", "plataforma validada"],
+  experimental: ["aviso", "plataforma experimental"],
+  unavailable: ["erro", "plataforma indisponível"],
+  test: ["neutro", "adaptador de teste"],
+};
+
+export function seloClassificacao(classification) {
+  const [tom, texto] = CLASSIFICACOES[classification] ?? ["neutro", classification];
+  return selo(tom, texto);
+}
+
+export function formatarMinutos(ms) {
+  const minutos = Math.round(ms / 60_000);
+  return `${minutos} ${minutos === 1 ? "minuto" : "minutos"}`;
+}

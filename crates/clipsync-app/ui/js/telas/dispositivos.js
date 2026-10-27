@@ -4,7 +4,7 @@
 import { api } from "../api.js";
 import { area, aviso, cabecalho, estadoVazio, indisponivel } from "../areas.js";
 import { botao, cartao, confirmar, interruptor, tabela } from "../componentes.js";
-import { h } from "../dom.js";
+import { h, trocar } from "../dom.js";
 import { obterApp, recurso } from "../estado.js";
 import { INDISPONIVEL, formatarMomento, mensagemDe, seloDispositivo } from "../formatar.js";
 
@@ -95,7 +95,7 @@ export default function montar({ ir, assinar }) {
 
   function pintarPainel(dispositivo) {
     if (!dispositivo) {
-      painel.replaceChildren();
+      trocar(painel);
       return;
     }
     const app = obterApp();
@@ -195,7 +195,7 @@ export default function montar({ ir, assinar }) {
       }),
     );
 
-    painel.replaceChildren(
+    trocar(painel, 
       cartao({
         filhos: [
           h(

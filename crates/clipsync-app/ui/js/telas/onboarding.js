@@ -4,7 +4,7 @@
 import { api } from "../api.js";
 import { aviso, cabecalho, estadoErro } from "../areas.js";
 import { botao, campo, cartao, confirmar, esqueleto, interruptor } from "../componentes.js";
-import { h } from "../dom.js";
+import { h, trocar } from "../dom.js";
 import { atualizarApp, obterApp } from "../estado.js";
 import { INDISPONIVEL, mensagemDe, seloTeste } from "../formatar.js";
 
@@ -70,12 +70,12 @@ export default async function montar({ rota, ir }) {
   return { no };
 
   async function passo1() {
-    corpo.replaceChildren(esqueleto({ linhas: 3 }));
+    trocar(corpo, esqueleto({ linhas: 3 }));
     let inicio;
     try {
       inicio = await carregarInicio();
     } catch (erro) {
-      corpo.replaceChildren(estadoErro(erro, passo1));
+      trocar(corpo, estadoErro(erro, passo1));
       return;
     }
     dados.nome ??= inicio.default_name;
@@ -100,7 +100,7 @@ export default async function montar({ rota, ir }) {
           continuar.click();
         }
       });
-      areaCampo.replaceChildren(c);
+      trocar(areaCampo, c);
       if (erro) c.controle.focus();
     };
     pintarCampo();
@@ -121,7 +121,7 @@ export default async function montar({ rota, ir }) {
       },
     });
 
-    corpo.replaceChildren(
+    trocar(corpo, 
       inicio.already_initialized &&
         aviso(
           "aviso",
@@ -158,7 +158,7 @@ export default async function montar({ rota, ir }) {
       variante: "primario",
       icone: "avancar",
       aoClicar: async () => {
-        erroCriar.replaceChildren();
+        trocar(erroCriar);
         const pedido = { name: dados.nome, modules: { ...modulos }, port: PORTA_PADRAO, recreate: false };
         try {
           try {
@@ -175,7 +175,7 @@ export default async function montar({ rota, ir }) {
             if (!ok) return;
           }
         } catch (erro) {
-          erroCriar.replaceChildren(aviso("erro", h("p", null, mensagemDe(erro))));
+          trocar(erroCriar, aviso("erro", h("p", null, mensagemDe(erro))));
           return;
         }
         dados.resultados = null;
@@ -187,7 +187,7 @@ export default async function montar({ rota, ir }) {
     const atualizar = () => {
       const nenhum = !modulos.input && !modulos.clipboard;
       criar.disabled = nenhum;
-      avisoVazio.replaceChildren(nenhum ? aviso("aviso", h("p", null, "Com os dois desligados, esta máquina não envia nem recebe nada. Ligue pelo menos um.")) : "");
+      trocar(avisoVazio, nenhum ? aviso("aviso", h("p", null, "Com os dois desligados, esta máquina não envia nem recebe nada. Ligue pelo menos um.")) : "");
     };
 
     const cartaoModulo = ({ rotulo, descricao, permissao, chave, desabilitado = false, motivo }) =>
@@ -207,7 +207,7 @@ export default async function montar({ rota, ir }) {
         ],
       });
 
-    corpo.replaceChildren(
+    trocar(corpo, 
       h(
         "div",
         { class: "onboarding__modulos" },
@@ -237,10 +237,10 @@ export default async function montar({ rota, ir }) {
     const areaResultados = h("div", { class: "pilha" });
     const pintarResultados = () => {
       if (!dados.resultados) {
-        areaResultados.replaceChildren();
+        trocar(areaResultados);
         return;
       }
-      areaResultados.replaceChildren(
+      trocar(areaResultados, 
         h(
           "ul",
           { class: "onboarding__resultados", "aria-label": "Resultado por módulo" },
@@ -258,7 +258,7 @@ export default async function montar({ rota, ir }) {
     pintarResultados();
 
     const erroTeste = h("div");
-    corpo.replaceChildren(
+    trocar(corpo, 
       cartao({
         filhos: [
           h("p", null, "O teste escreve um texto sintético no clipboard e, com teclado e mouse ligados, move o cursor em loopback nesta máquina."),
@@ -271,11 +271,11 @@ export default async function montar({ rota, ir }) {
               variante: "primario",
               icone: "verificar",
               aoClicar: async () => {
-                erroTeste.replaceChildren();
+                trocar(erroTeste);
                 try {
                   dados.resultados = (await api.onboardingSelfTest()).results;
                 } catch (erro) {
-                  erroTeste.replaceChildren(aviso("erro", h("p", null, mensagemDe(erro))));
+                  trocar(erroTeste, aviso("erro", h("p", null, mensagemDe(erro))));
                   return;
                 }
                 pintarResultados();

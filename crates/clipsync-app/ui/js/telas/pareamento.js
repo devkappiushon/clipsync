@@ -4,7 +4,7 @@
 import { api } from "../api.js";
 import { aviso, cabecalho, estadoErro } from "../areas.js";
 import { botao, campo, cartao, confirmar, esqueleto, interruptor, segmentado, selo } from "../componentes.js";
-import { h } from "../dom.js";
+import { h, trocar } from "../dom.js";
 import { recurso } from "../estado.js";
 import { INDISPONIVEL, mensagemDe } from "../formatar.js";
 
@@ -73,12 +73,12 @@ export default function montar({ ir, assinar }) {
   }
 
   async function carregar() {
-    corpo.replaceChildren(esqueleto({ linhas: 4 }));
+    trocar(corpo, esqueleto({ linhas: 4 }));
     try {
       estado = await api.pairState();
       if (estado.step === "permissions") disponiveis = disponiveisDoEstado();
     } catch (erro) {
-      corpo.replaceChildren(estadoErro(erro, carregar));
+      trocar(corpo, estadoErro(erro, carregar));
       return;
     }
     pintar();
@@ -387,7 +387,7 @@ export default function montar({ ir, assinar }) {
     else if (estado.step === "permissions") filhos = painelPermissoes();
     else if (estado.step === "waiting_peer") filhos = painelAguardandoPar();
     else filhos = painelOcioso();
-    corpo.replaceChildren(cartao({ filhos: [erroGeral && aviso("erro", h("p", null, erroGeral)), ...filhos] }));
+    trocar(corpo, cartao({ filhos: [erroGeral && aviso("erro", h("p", null, erroGeral)), ...filhos] }));
   }
 
   const cancelarEventos = [

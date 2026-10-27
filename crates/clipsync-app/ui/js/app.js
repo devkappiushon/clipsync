@@ -5,7 +5,7 @@
 import { api } from "./api.js";
 import { aviso, estadoErro } from "./areas.js";
 import { botao, comCarregamento, selo } from "./componentes.js";
-import { h } from "./dom.js";
+import { h, trocar } from "./dom.js";
 import { aplicarAparencia, assinar, atualizarApp, iniciarEventos, obterApp, observarApp } from "./estado.js";
 import { mensagemDe } from "./formatar.js";
 import { icone } from "./icones.js";
@@ -79,7 +79,7 @@ async function navegar() {
   marcarMenu(rota);
 
   const pagina = h("div", { class: "pagina" });
-  el.tela.replaceChildren(pagina);
+  trocar(el.tela, pagina);
   el.conteudo.scrollTop = 0;
 
   try {
@@ -110,7 +110,7 @@ function pintarRodape(app) {
   else if (app.agent === "stopped") estado = selo("neutro", "Agente parado");
   else if (app.paused) estado = selo("aviso", "Pausada");
   else estado = selo("ok", `${app.mesh.connected} de ${app.mesh.total} conectados`);
-  el.malha.replaceChildren(estado);
+  trocar(el.malha, estado);
 
   el.pausar.disabled = app.agent === "stopped" || app.agent === "failed";
   el.pausar.setAttribute("aria-pressed", String(app.paused));
@@ -124,14 +124,14 @@ function pintarAvisoAgente(app) {
   const mostrar = app.initialized && (app.agent === "stopped" || app.agent === "failed");
   el.avisoAgente.hidden = !mostrar;
   if (!mostrar) {
-    el.avisoAgente.replaceChildren();
+    trocar(el.avisoAgente);
     return;
   }
   const texto =
     app.agent === "failed"
       ? `O agente parou com erro: ${app.agent_error ?? "causa desconhecida"}`
       : "O agente está parado. Nada é enviado nem recebido até você iniciá-lo.";
-  el.avisoAgente.replaceChildren(
+  trocar(el.avisoAgente, 
     aviso(
       app.agent === "failed" ? "erro" : "aviso",
       h("p", null, texto),
@@ -183,7 +183,7 @@ async function iniciar() {
     await iniciarEventos();
   } catch (erro) {
     console.error("falha ao ler o estado inicial", erro);
-    el.malha.replaceChildren(selo("erro", "Sem resposta do agente"));
+    trocar(el.malha, selo("erro", "Sem resposta do agente"));
   }
   navegar();
 }
