@@ -1,18 +1,30 @@
-//! Local control socket: client side (`request`) plus the framing both sides share.
+//! Local control channel: client side (`request`), server side (`serve`) plus the framing both sides share.
 //! Frame = u32 big-endian length + JSON body, at most `MAX_FRAME_BYTES`; one request, one response, close.
+//! Unix: socket `DIR/agent.sock` (0600). Windows: named pipe `\\.\pipe\clipsync-<16 hex>` derived from
+//! the profile directory (`pipe_name`); same frames on both.
 use crate::CoreError;
 use crate::profile::Profile;
 use clipsync_proto::{ControlRequest, ControlResponse, MAX_FRAME_BYTES};
 use serde::{Serialize, de::DeserializeOwned};
 use std::future::Future;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient, ServerOptions};
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+/// Win32 ERROR_PIPE_BUSY: every instance of the pipe is serving someone; retry until CONNECT_TIMEOUT.
+#[cfg(windows)]
+const ERROR_PIPE_BUSY: i32 = 231;
+#[cfg(windows)]
+const PIPE_BUSY_RETRY: Duration = Duration::from_millis(20);
 /// Long enough for `probe input --loopback --seconds N` and a `ClipSend` that waits for acks.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -57,19 +69,9 @@ pub async fn write_message<T: Serialize, W: AsyncWrite + Unpin>(
 
 /// Sends `req` to the agent of profile `p`. `CoreError::AgentNotRunning` when nobody listens on the socket.
 pub async fn request(p: &Profile, req: ControlRequest) -> Result<ControlResponse, CoreError> {
-    let connect = tokio::time::timeout(CONNECT_TIMEOUT, UnixStream::connect(p.socket_path()));
-    let mut stream = match connect.await {
+    let mut stream = match tokio::time::timeout(CONNECT_TIMEOUT, connect(&p.socket_path())).await {
         Err(_) => return Err(CoreError::AgentNotRunning),
-        Ok(Ok(s)) => s,
-        Ok(Err(e))
-            if matches!(
-                e.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
-            ) =>
-        {
-            return Err(CoreError::AgentNotRunning);
-        }
-        Ok(Err(e)) => return Err(e.into()),
+        Ok(s) => s?,
     };
     let exchange = async {
         write_message(&mut stream, &req, MAX_FRAME_BYTES).await?;
@@ -94,8 +96,73 @@ pub trait ControlHandler: Send + Sync + 'static {
 /// Time a client has to deliver its request once connected.
 const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Nobody listening on the socket: the agent is not running.
+#[cfg(unix)]
+fn is_absent(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+    )
+}
+
+#[cfg(unix)]
+async fn connect(socket: &Path) -> Result<UnixStream, CoreError> {
+    match UnixStream::connect(socket).await {
+        Ok(s) => Ok(s),
+        Err(e) if is_absent(&e) => Err(CoreError::AgentNotRunning),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// A busy pipe has a live agent behind it: wait for a free instance (the caller bounds the wait).
+/// Known gap: a pipe created first by another local user would be accepted here; checking the server's
+/// owner needs Win32 calls (unsafe or a new dependency), pending a decision.
+#[cfg(windows)]
+async fn connect(socket: &Path) -> Result<NamedPipeClient, CoreError> {
+    let name = pipe_name(socket);
+    loop {
+        match ClientOptions::new().open(&name) {
+            Ok(c) => return Ok(c),
+            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
+                tokio::time::sleep(PIPE_BUSY_RETRY).await;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(CoreError::AgentNotRunning);
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+}
+
+/// True when an agent answers on the control channel of `socket`'s profile.
+#[cfg(unix)]
+pub(crate) async fn agent_alive(socket: &Path) -> bool {
+    socket.exists() && UnixStream::connect(socket).await.is_ok()
+}
+
+/// True when an agent answers on the control channel of `socket`'s profile.
+#[cfg(windows)]
+pub(crate) async fn agent_alive(socket: &Path) -> bool {
+    match ClientOptions::new().open(pipe_name(socket)) {
+        Ok(_) => true,
+        Err(e) => e.raw_os_error() == Some(ERROR_PIPE_BUSY),
+    }
+}
+
+/// `\\.\pipe\clipsync-<16 hex>`: the first 8 bytes of SHA-256 over the profile directory (canonical
+/// when it exists), so the agent and the CLI of one profile meet on one name and two profiles never share it.
+#[cfg(any(windows, test))]
+fn pipe_name(socket: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    let dir = socket.parent().unwrap_or(socket);
+    let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let digest: [u8; 32] = Sha256::digest(dir.as_os_str().as_encoded_bytes()).into();
+    format!(r"\\.\pipe\clipsync-{}", hex::encode(&digest[..8]))
+}
+
 /// Serves the control socket until `shutdown` completes, then removes the socket file.
 /// A live agent already on `socket` gives `AgentAlreadyRunning`; a stale file is replaced.
+#[cfg(unix)]
 pub async fn serve(
     socket: &Path,
     handler: Arc<dyn ControlHandler>,
@@ -106,14 +173,7 @@ pub async fn serve(
     if socket.exists() {
         match UnixStream::connect(socket).await {
             Ok(_) => return Err(CoreError::AgentAlreadyRunning),
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
-                ) =>
-            {
-                std::fs::remove_file(socket)?;
-            }
+            Err(e) if is_absent(&e) => std::fs::remove_file(socket)?,
             Err(e) => return Err(e.into()),
         }
     }
@@ -135,7 +195,58 @@ pub async fn serve(
     Ok(())
 }
 
-async fn serve_one(mut stream: UnixStream, handler: Arc<dyn ControlHandler>) {
+/// Serves the profile's named pipe until `shutdown` completes. `first_pipe_instance` makes the name a lock:
+/// another agent on this profile already owns it, so creation fails and we give `AgentAlreadyRunning`.
+/// Access: remote clients are refused; the default pipe DACL grants write only to the owner, SYSTEM and
+/// Administrators (Everyone may open it read-only, which cannot send a request). Nothing to clean up on exit:
+/// the pipe disappears with its last handle.
+#[cfg(windows)]
+pub async fn serve(
+    socket: &Path,
+    handler: Arc<dyn ControlHandler>,
+    shutdown: impl Future<Output = ()> + Send,
+) -> Result<(), CoreError> {
+    let name = pipe_name(socket);
+    let mut server = ServerOptions::new()
+        .first_pipe_instance(true)
+        .reject_remote_clients(true)
+        .create(&name)
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::PermissionDenied => CoreError::AgentAlreadyRunning,
+            _ => e.into(),
+        })?;
+    let next_instance = || {
+        ServerOptions::new()
+            .reject_remote_clients(true)
+            .create(&name)
+    };
+    let mut tasks = tokio::task::JoinSet::new();
+    tokio::pin!(shutdown);
+    loop {
+        tokio::select! {
+            () = &mut shutdown => break,
+            connected = server.connect() => match connected {
+                // The next instance exists before this one is handed off: clients see "busy", never "absent".
+                Ok(()) => {
+                    let client = std::mem::replace(&mut server, next_instance()?);
+                    tasks.spawn(serve_one(client, handler.clone()));
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "control pipe connect failed");
+                    server = next_instance()?;
+                }
+            },
+            Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
+        }
+    }
+    tasks.abort_all();
+    Ok(())
+}
+
+async fn serve_one<S: AsyncRead + AsyncWrite + Unpin>(
+    mut stream: S,
+    handler: Arc<dyn ControlHandler>,
+) {
     let req = match tokio::time::timeout(
         REQUEST_READ_TIMEOUT,
         read_message::<ControlRequest, _>(&mut stream, MAX_FRAME_BYTES),
@@ -161,6 +272,7 @@ async fn serve_one(mut stream: UnixStream, handler: Arc<dyn ControlHandler>) {
 
 /// Binds under a temporary name, restricts it to 0600, then links it to `socket`: the final name never
 /// exists with a wider mode, and `hard_link` fails if another agent got there first.
+#[cfg(unix)]
 fn bind_private(socket: &Path) -> Result<UnixListener, CoreError> {
     let tmp = socket.with_extension(format!("tmp-{}", std::process::id()));
     let _ = std::fs::remove_file(&tmp);
@@ -174,5 +286,21 @@ fn bind_private(socket: &Path) -> Result<UnixListener, CoreError> {
             Err(CoreError::AgentAlreadyRunning)
         }
         Err(e) => Err(e.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pipe_name;
+    use std::path::Path;
+
+    #[test]
+    fn pipe_name_is_stable_per_profile_and_distinct_across_profiles() {
+        let a = pipe_name(Path::new("/nonexistent/profile-a/agent.sock"));
+        assert_eq!(a, pipe_name(Path::new("/nonexistent/profile-a/agent.sock")));
+        assert_ne!(a, pipe_name(Path::new("/nonexistent/profile-b/agent.sock")));
+        let hash = a.strip_prefix(r"\\.\pipe\clipsync-").unwrap_or_default();
+        assert_eq!(hash.len(), 16, "{a}");
+        assert!(hash.bytes().all(|b| b.is_ascii_hexdigit()), "{a}");
     }
 }

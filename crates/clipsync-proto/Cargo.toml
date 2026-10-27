@@ -18,8 +18,11 @@ async-trait.workspace = true
 tokio.workspace = true
 rand.workspace = true
 hex.workspace = true
-rustix.workspace = true
 sha2.workspace = true
+
+# mono_us lê o CLOCK_MONOTONIC do sistema (comparável entre processos); no Windows usa Instant.
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
 
 # Os testes de integração usam o MemHub.
 [dev-dependencies]

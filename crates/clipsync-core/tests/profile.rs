@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // helpers outside #[test] fns
 use clipsync_core::{CoreError, InitOptions, PeerEntry, Peers, Profile, State};
 use clipsync_proto::{ModuleSet, PeerId};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 fn opts(clipboard: bool, fake: bool) -> InitOptions {
@@ -15,6 +16,7 @@ fn opts(clipboard: bool, fake: bool) -> InitOptions {
     }
 }
 
+#[cfg(unix)]
 fn mode(p: &std::path::Path) -> u32 {
     std::fs::metadata(p).unwrap().permissions().mode() & 0o777
 }
@@ -24,9 +26,12 @@ fn profile_init_creates_private_profile_and_reloads_same_identity() {
     let tmp = tempfile::tempdir().unwrap();
     let p = Profile::resolve(Some(tmp.path().join("a"))).unwrap();
     let id = p.init(opts(false, false)).unwrap();
-    assert_eq!(mode(&p.dir), 0o700);
-    assert_eq!(mode(&p.dir.join("identity.key.pem")), 0o600);
-    assert_eq!(mode(&p.dir.join("config.toml")), 0o600);
+    #[cfg(unix)]
+    {
+        assert_eq!(mode(&p.dir), 0o700);
+        assert_eq!(mode(&p.dir.join("identity.key.pem")), 0o600);
+        assert_eq!(mode(&p.dir.join("config.toml")), 0o600);
+    }
     assert_eq!(p.load_identity().unwrap().id(), id.id());
     let cfg = p.load_config().unwrap();
     assert_eq!((cfg.device_name.as_str(), cfg.version), ("notebook-a", 1));
@@ -90,12 +95,15 @@ fn profile_key_with_loose_mode_is_refused_and_missing_profile_says_so() {
     let p = Profile::resolve(Some(tmp.path().join("a"))).unwrap();
     assert!(p.load_config().is_err() && !p.is_initialized());
     p.init(opts(false, false)).unwrap();
-    std::fs::set_permissions(
-        p.dir.join("identity.key.pem"),
-        std::fs::Permissions::from_mode(0o644),
-    )
-    .unwrap();
-    assert!(matches!(p.load_identity(), Err(CoreError::Identity(_))));
+    #[cfg(unix)]
+    {
+        std::fs::set_permissions(
+            p.dir.join("identity.key.pem"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        assert!(matches!(p.load_identity(), Err(CoreError::Identity(_))));
+    }
 }
 
 #[test]
@@ -119,6 +127,7 @@ fn profile_reinit_gets_a_new_identity_but_keeps_peers() {
     let second = p.init(opts(false, false)).unwrap();
     assert_ne!(first.id(), second.id());
     assert_eq!(p.load_peers().unwrap(), peers);
+    #[cfg(unix)]
     assert_eq!(mode(&p.peers_path()), 0o600);
 }
 

@@ -8,6 +8,7 @@ use std::fmt;
 use std::fs;
 use std::io::Write;
 use std::net::SocketAddr;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -281,16 +282,17 @@ fn valid_name(name: &str) -> Result<(), CoreError> {
         .map_err(|e| CoreError::Config(format!("device_name inválido: {e}")))
 }
 
-/// Writes `data` to `path` through a private temp file and an atomic rename; mode 0600.
+/// Writes `data` to `path` through a private temp file and an atomic rename; mode 0600 on Unix (on Windows
+/// the file inherits the ACL of the profile directory, see `Profile::init`).
 fn write_private(path: &Path, data: &[u8]) -> Result<(), CoreError> {
     let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
     let _ = fs::remove_file(&tmp);
     let res = (|| {
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&tmp)?;
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        opts.mode(0o600);
+        let mut f = opts.open(&tmp)?;
         f.write_all(data)?;
         f.sync_all()?;
         fs::rename(&tmp, path)
@@ -312,6 +314,11 @@ fn xdg_default() -> Result<PathBuf, CoreError> {
     if let Some(x) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
         return Ok(PathBuf::from(x).join("clipsync"));
     }
+    // Windows has no HOME by default; %APPDATA% sits inside the user profile and inherits its ACL.
+    #[cfg(windows)]
+    if let Some(a) = std::env::var_os("APPDATA").filter(|v| !v.is_empty()) {
+        return Ok(PathBuf::from(a).join("clipsync"));
+    }
     let home = std::env::var_os("HOME")
         .filter(|v| !v.is_empty())
         .ok_or_else(|| CoreError::Config("HOME indefinido".into()))?;
@@ -332,7 +339,8 @@ fn module_table(fake: bool, keys: &[(&str, &str)]) -> toml::Table {
 }
 
 impl Profile {
-    /// `--profile` argument, else `$CLIPSYNC_PROFILE`, else `$XDG_CONFIG_HOME/clipsync`, else `~/.config/clipsync`.
+    /// `--profile` argument, else `$CLIPSYNC_PROFILE`, else `$XDG_CONFIG_HOME/clipsync`, else (Windows)
+    /// `%APPDATA%\clipsync`, else `~/.config/clipsync`.
     pub fn resolve(arg: Option<PathBuf>) -> Result<Self, CoreError> {
         let dir = match arg {
             Some(p) => p,
@@ -373,11 +381,15 @@ impl Profile {
                 "pelo menos um módulo precisa estar ligado".into(),
             ));
         }
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&self.dir)
+        let mut dir = fs::DirBuilder::new();
+        dir.recursive(true);
+        #[cfg(unix)]
+        dir.mode(0o700);
+        dir.create(&self.dir)
             .map_err(|e| io_ctx(format!("criando {}", self.dir.display()), e))?;
+        // Windows has no mode bits: the directory (and the key in it) inherits the ACL of the user
+        // profile, which already keeps other users out.
+        #[cfg(unix)]
         fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700))
             .map_err(|e| io_ctx("permissões do perfil", e))?;
 
@@ -452,15 +464,19 @@ impl Profile {
     pub fn load_identity(&self) -> Result<Identity, CoreError> {
         self.load_config()?; // also proves the profile exists
         let key_path = self.dir.join(KEY_FILE);
-        let mode = fs::metadata(&key_path)
-            .map_err(|e| io_ctx("chave privada", e))?
-            .permissions()
-            .mode()
-            & 0o777;
-        if mode & 0o077 != 0 {
-            return Err(CoreError::Identity(format!(
-                "{KEY_FILE} com modo {mode:o}: deve ser 600"
-            )));
+        // Windows: no mode to check; the key is guarded by the ACL of the user profile (see `init`).
+        #[cfg(unix)]
+        {
+            let mode = fs::metadata(&key_path)
+                .map_err(|e| io_ctx("chave privada", e))?
+                .permissions()
+                .mode()
+                & 0o777;
+            if mode & 0o077 != 0 {
+                return Err(CoreError::Identity(format!(
+                    "{KEY_FILE} com modo {mode:o}: deve ser 600"
+                )));
+            }
         }
         Identity::from_pem(
             &read_text(&self.dir.join(CERT_FILE))?,

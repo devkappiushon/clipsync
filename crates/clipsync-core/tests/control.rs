@@ -1,3 +1,6 @@
+// Unix socket semantics (0600 mode, stale file, raw UnixStream). The Windows pipe has only the
+// pipe_name unit test here: there is no Windows runner yet.
+#![cfg(unix)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // helpers outside #[test] fns
 use clipsync_core::control::{self, ControlHandler};
 use clipsync_core::{CoreError, Profile};

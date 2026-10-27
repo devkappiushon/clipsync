@@ -20,7 +20,6 @@ tracing.workspace = true
 sha2.workspace = true
 hex.workspace = true
 rand.workspace = true
-rustix.workspace = true
 time.workspace = true
 
 [dev-dependencies]

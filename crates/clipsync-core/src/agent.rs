@@ -40,7 +40,7 @@ pub async fn run(
     let state = p.load_state()?;
     // Fail before binding the QUIC port if another agent owns this profile.
     let socket = p.socket_path();
-    if socket.exists() && tokio::net::UnixStream::connect(&socket).await.is_ok() {
+    if control::agent_alive(&socket).await {
         return Err(CoreError::AgentAlreadyRunning);
     }
 

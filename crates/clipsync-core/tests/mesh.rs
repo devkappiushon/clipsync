@@ -520,6 +520,7 @@ async fn stream_and_datagram_control_frame_over_limit_is_reset() {
 
 /// S1-08: pause fails closed. With state.toml impossible to write, Pause still pauses (the
 /// response is an error that says so) and the agent stays paused.
+#[cfg(unix)] // a read-only profile dir needs mode bits
 #[tokio::test(flavor = "multi_thread")]
 async fn pause_fails_closed_when_state_cannot_be_saved() {
     use std::os::unix::fs::PermissionsExt;
