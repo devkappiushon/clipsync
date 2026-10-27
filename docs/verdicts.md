@@ -3363,6 +3363,391 @@ efb77392e4f269ddbf8c160439e8362cea1ac073a93b97b5454b1a1e79d85143  crates/clipsyn
 
 Evidência completa: `/home/kappxs/.cache/clipsync-verdict/argus-c1ed65d-final-68hp_drk` — meta.json, results.json (stdout/stderr/código/duração de cada comando), before.json, after.json, release-binary.json e toolchain.txt.
 
+### S5 · Windows e release · b66df03 · Falha
+
+Revisão de Argus em 2026-10-27, iniciada às 16:39:50 -03:00. Contrato v1.12, §9 S5 e §11. Base: `b66df034996e20e4d1ce2a369a8dcb629d098c41`, HEAD no início da revisão, exportado com `git archive` para `/home/kappxs/.cache/clipsync-verdict/src`. O checkout estava limpo na exportação; avançou durante a revisão. Os **103 arquivos do export permaneceram idênticos** entre início e fim. Nenhuma fonte foi editada.
+
+**Resultado histórico:** gates automáticos verdes, mas três divergências de contrato encontradas nesta base, descritas abaixo. O Maestro informou correções e uma decisão de contrato durante a consolidação; o adendo de 707c780 registra a reavaliação. Não estender este resultado aos commits posteriores.
+
+Ambiente dos comandos: `PATH="$HOME/.cargo/bin:$PATH"`, `CARGO_TARGET_DIR="$HOME/.cache/clipsync-verdict/target"`, `TMPDIR="$HOME/.cache/clipsync-verdict/tmp"`; cwd no export. Fonte e target fora de `/tmp`. O compilador falso e os perfis `/tmp/cs-a`/`cs-b` usam os caminhos explicitamente pedidos pelo Maestro.
+
+#### 1–4 e 7 · comandos e saídas reais resumidas
+
+```text
+$ cargo fmt --all -- --check
+[sem saída]
+[exit 0; 0.143 s]
+```
+
+```text
+$ cargo clippy --workspace --all-targets --locked -- -D warnings
+    Checking clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.51s
+[exit 0; 2.568 s]
+```
+
+```text
+$ cargo test --workspace --locked
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 44.22s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.17s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.22s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+test portal_loopback ... ignored, requer sessão gráfica
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[soma dos resultados acima: 129 aprovados; 0 falhos; 1 ignorado de portal; roteiro da CLI 8/8]
+[exit 0; 71.248 s]
+```
+
+```text
+$ CC_x86_64_pc_windows_gnu=/tmp/claude-1000/-home-kappxs-Documentos-ANTIGOS-clipsync--maestri-roles-83bcaab5-84f6-0d02-2adf-b22d1f6ccdd4/a5cf313a-cd0b-4663-9fe4-e4e809ac819a/scratchpad/wincc/cc AR_x86_64_pc_windows_gnu=/usr/bin/ar cargo check --workspace --locked --target x86_64-pc-windows-gnu
+    Checking clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.56s
+[exit 0; 10.608 s]
+```
+
+```text
+$ CC_x86_64_pc_windows_gnu=/tmp/claude-1000/-home-kappxs-Documentos-ANTIGOS-clipsync--maestri-roles-83bcaab5-84f6-0d02-2adf-b22d1f6ccdd4/a5cf313a-cd0b-4663-9fe4-e4e809ac819a/scratchpad/wincc/cc AR_x86_64_pc_windows_gnu=/usr/bin/ar cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
+    Checking clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.46s
+[exit 0; 2.516 s]
+```
+
+```text
+$ cargo build --release -p clipsync-cli --locked
+   Compiling clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Finished `release` profile [optimized] target(s) in 1m 43s
+[exit 0; 103.499 s]
+```
+
+O stub de CC fornecido apenas cria arquivos de objeto vazios. Check/clippy Windows verificam Rust e cfg, sem linkar, executar testes Windows ou validar a criptografia C do ring. Não produzem um `.exe` utilizável.
+
+Binário Linux em `/home/kappxs/.cache/clipsync-verdict/target/release/clipsync`: **8.754.744 bytes (8,35 MiB)**. `file` identificou ELF x86-64 PIE, dinamicamente ligado, **stripped**; `--version` imprimiu `clipsync 0.1.0`. SHA-256: `24711e20543df5b37e1d0bcce2911ad33a6ac60186705f1d24b41499b9c562b2`. Perfil lido do Cargo.toml: `lto = true`, `codegen-units = 1`, `strip = true`, `opt-level = 3`. Este build local em Ubuntu 26.04 não prova a glibc mínima do artefato que será gerado em ubuntu-24.04.
+
+#### 5 · grafos por plataforma
+
+```text
+$ cargo tree --target x86_64-pc-windows-gnu -e normal | grep -c -E "ashpd|reis|x11rb|rustix"
+0
+[cargo exit 0; grep exit 1, esperado: nenhuma ocorrência]
+$ cargo tree --target x86_64-unknown-linux-gnu -e normal | grep -c -E "x11rb"
+3
+[cargo exit 0; grep exit 0]
+$ grep -rn unsafe_code crates
+[sem saída; exit 1: nenhum crate afrouxa o lint]
+```
+
+#### 6 · release.yml e ci.yml
+
+YAML dos dois arquivos válido. Leitura e execução local do trecho que confere a tag:
+
+```text
+release_actions: actions/checkout@v7, actions/upload-artifact@v4, actions/download-artifact@v4
+only_actions: true
+no_cache_actions: true
+linux_runner: ubuntu-24.04
+windows_target: x86_64-pc-windows-msvc
+windows_RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C target-feature=+crt-static' || '' }}
+release_build: cargo build --release -p clipsync-cli --locked --target ${{ matrix.target }}
+TAG=v0.1.0: exit 0; sem saída
+TAG=v0.0.0-argus-invalid: exit 1
+tag v0.0.0-argus-invalid difere da versão 0.1.0 do Cargo.toml
+$ grep -c rust-cache .github/workflows/release.yml
+0
+[exit 1, esperado: nenhuma ocorrência]
+windows_ci_runner: windows-latest
+windows_ci_commands:
+  cargo clippy --workspace --all-targets --locked -- -D warnings
+  cargo build --release -p clipsync-cli --locked
+  cargo test --workspace --locked
+```
+
+Referências no export: `release.yml:21` fixa Ubuntu, `:43` confere versão, `:59` define CRT estática, `:62`/`:74` empacotam binário + README, `:106` produz SHA256SUMS; `ci.yml:41` define o job Windows. Trigger `v*`, nenhuma action de cache no release, e todos os `uses` são `actions/*`. Conferência estática aprovada; não houve push, tag ou publicação, nem consulta conclusiva de CI deste hash.
+
+#### 8 · roteiro do README com o binário release
+
+Dois perfis novos `/tmp/cs-a` e `/tmp/cs-b`, portas **47900/47901**, `--fake-adapters`. Pareamento real por loopback; comparei os códigos antes de confirmar `s` nos dois lados. Foram usados exclusivamente textos sintéticos. Abaixo, saídas reais resumidas dos comandos (o executável em todos eles foi o release acima):
+
+```text
+$ clipsync --version
+clipsync 0.1.0
+[exit 0]
+```
+
+```text
+$ clipsync init --profile /tmp/cs-a --name notebook-a --modules input,clipboard --port 47900 --fake-adapters
+Perfil criado em /tmp/cs-a
+  dispositivo: notebook-a
+  id: afb6-dd35-c0e8-253e
+  escuta: 0.0.0.0:47900
+  input: ligado · clipboard: ligado
+  adaptadores: falsos (apenas teste)
+Nada foi transmitido.
+Próximo passo: `clipsync pair host` neste computador e `clipsync pair join ENDEREÇO` no outro.
+[exit 0]
+```
+
+```text
+$ clipsync init --profile /tmp/cs-b --name notebook-b --modules input,clipboard --port 47901 --fake-adapters
+Perfil criado em /tmp/cs-b
+  dispositivo: notebook-b
+  id: e4a9-1244-e066-58d2
+  escuta: 0.0.0.0:47901
+  input: ligado · clipboard: ligado
+  adaptadores: falsos (apenas teste)
+Nada foi transmitido.
+Próximo passo: `clipsync pair host` neste computador e `clipsync pair join ENDEREÇO` no outro.
+[exit 0]
+```
+
+```text
+$ clipsync pair host --profile /tmp/cs-a --port 0 --timeout 45s --allow clipboard-in,clipboard-out,input-in
+Aguardando em 0.0.0.0:48064 (expira em 45 s)
+Par: notebook-b (id e4a9-1244-e066-58d2) · módulos: clipboard, input
+Código: 377 566
+O código acima é o mesmo no outro computador? [s/N] Pareado com notebook-b (id e4a9-1244-e066-58d2). Permissões concedidas por você: clipboard-in, clipboard-out, input-in
+[exit 0]
+```
+
+```text
+$ clipsync pair join --profile /tmp/cs-b 127.0.0.1:48064 --allow clipboard-in,clipboard-out
+Par: notebook-a (id afb6-dd35-c0e8-253e) · módulos: clipboard, input
+Código: 377 566
+O código acima é o mesmo no outro computador? [s/N] Pareado com notebook-a (id afb6-dd35-c0e8-253e). Permissões concedidas por você: clipboard-in, clipboard-out
+[exit 0]
+```
+
+```text
+$ clipsync status --profile /tmp/cs-a
+notebook-a · id afb6-dd35-c0e8-253e · escuta 0.0.0.0:47900 · ativo
+Pares:
+  notebook-b (e4a9-1244-e066-58d2) · conectado · 127.0.0.1:47901 · módulos do par: clipboard, input · permissões: clipboard-in, clipboard-out, input-in
+Módulos:
+  clipboard: ligado · adaptador fake · último evento: nenhum · último bloqueio: nenhum
+  input: ligado · adaptador fake+fake · último evento: nenhum · último bloqueio: nenhum
+[exit 0]
+```
+
+```text
+$ clipsync status --profile /tmp/cs-b
+notebook-b · id e4a9-1244-e066-58d2 · escuta 0.0.0.0:47901 · ativo
+Pares:
+  notebook-a (afb6-dd35-c0e8-253e) · conectado · 127.0.0.1:47900 · módulos do par: clipboard, input · permissões: clipboard-in, clipboard-out
+Módulos:
+  clipboard: ligado · adaptador fake · último evento: nenhum · último bloqueio: nenhum
+  input: ligado · adaptador fake+fake · último evento: nenhum · último bloqueio: nenhum
+[exit 0]
+```
+
+```text
+$ clipsync send --stdin --profile /tmp/cs-a
+[stdin sintético: olá ção]
+notebook-b: aplicado
+[exit 0]
+```
+
+```text
+$ clipsync inbox --profile /tmp/cs-b
+57adeaf7 · de notebook-a · 19:44:46 UTC · bytes=10 · aplicado · olá ção
+[exit 0]
+```
+
+```text
+$ clipsync pause --profile /tmp/cs-b
+pausado: nada é enviado nem aplicado até `clipsync resume`
+[exit 0]
+```
+
+```text
+$ clipsync send --stdin --profile /tmp/cs-a
+[stdin sintético: argus-durante-pausa]
+notebook-b: recusado: pausado
+[exit 3]
+```
+
+```text
+$ clipsync resume --profile /tmp/cs-b
+retomado: o que foi copiado durante a pausa não será enviado
+[exit 0]
+```
+
+```text
+$ clipsync inbox --profile /tmp/cs-b
+57adeaf7 · de notebook-a · 19:44:46 UTC · bytes=10 · aplicado · olá ção
+[exit 0]
+```
+
+```text
+$ clipsync probe input --loopback --to notebook-b --seconds 10 --profile /tmp/cs-a
+erro: a barreira não foi ativada no tempo do teste
+[exit 1]
+```
+
+```text
+$ clipsync diagnose --profile /tmp/cs-a
+[ok] sistema · sistema operacional: Ubuntu 26.04.1 LTS
+[ok] sistema · sessão gráfica: wayland · ubuntu:GNOME
+[ok] sistema · DISPLAY / XWayland: DISPLAY=:0; servidor X11 respondendo no socket
+[ok] sistema · Input Leap: em execução (Flatpak): só detectado; o ClipSync não o altera e as duas ferramentas podem competir pelo mesmo mouse e teclado
+[aviso] sistema · Barrier: não detectado
+[ok] clipboard · ponte XWayland (DISPLAY): DISPLAY definido; conexão X11 aberta
+[ok] clipboard · XFixes: SelectionNotify do CLIPBOARD disponível
+[aviso] clipboard · data-control (Wayland): ausente (zwlr/ext_data_control): observação só pela ponte XWayland
+[ok] input · portal InputCapture: versão 1
+[ok] input · portal RemoteDesktop: versão 2; dispositivos BitFlags<DeviceType>(0b111, Keyboard | Pointer | Touchscreen)
+[ok] input · monitores: eDP-1
+[aviso] input · Input Leap / Barrier: em execução: input-leapc; podem disputar a captura
+[exit 0]
+```
+
+```text
+$ clipsync run --profile /tmp/cs-b
+Agente de notebook-b no ar, escutando em 0.0.0.0:47901 · módulos: clipboard, input. Ctrl-C encerra.
+agente encerrado
+[exit 0]
+```
+
+```text
+$ clipsync status --profile /tmp/cs-a
+notebook-a · id afb6-dd35-c0e8-253e · escuta 0.0.0.0:47900 · ativo
+Pares:
+  notebook-b (e4a9-1244-e066-58d2) · conectado · 127.0.0.1:47901 · módulos do par: input · permissões: clipboard-in, clipboard-out, input-in
+Módulos:
+  clipboard: ligado · adaptador fake · último evento: nenhum · último bloqueio: notebook-b: recusado
+  input: ligado · adaptador fake+fake · último evento: nenhum · último bloqueio: a barreira não foi ativada no tempo do teste
+[exit 0]
+```
+
+```text
+$ clipsync send --stdin --profile /tmp/cs-a
+[stdin sintético: argus-modulo-desligado]
+notebook-b: recusado: módulo clipboard desligado em notebook-b
+[exit 3]
+```
+
+```text
+$ clipsync run --profile /tmp/cs-b
+Agente de notebook-b no ar, escutando em 0.0.0.0:47901 · módulos: input. Ctrl-C encerra.
+agente encerrado
+[exit 0]
+```
+
+```text
+$ clipsync run --profile /tmp/cs-a
+Agente de notebook-a no ar, escutando em 0.0.0.0:47900 · módulos: clipboard, input. Ctrl-C encerra.
+agente encerrado
+[exit 0]
+```
+
+Passaram inicialização, pareamento com código igual, ambos os agentes conectados, envio de UTF-8 (10 bytes incluindo a quebra de linha usada pelo executor), inbox, pausa com recusa de envio, retomada sem reaplicar o envio recusado, diagnóstico e recusa com clipboard desligado no destino. Os agentes foram encerrados com saída 0.
+
+**Roteiro parcialmente executado:** `probe clipboard --watch/--write` e `probe input --capture/--emulate` usam os adaptadores reais, mesmo nos perfis fake, e dependem de interação gráfica; ficaram pendentes. O loopback com o fake expirou sem ativação da barreira (exit 1); não valida o item gráfico nem demonstra regressão nele. A pergunta sobre disponibilidade do usuário para os passos gráficos não recebeu resposta durante esta execução. O teste automático `loopback_counts_every_event_and_orders_percentiles` passou no workspace, sem substituir o teste gráfico. Não declarar o roteiro completo aprovado.
+
+Após o roteiro, mover os perfis por `rename` entre tmpfs e home retornou EXDEV no executor de evidência. Isso ocorreu depois de todos os processos encerrarem com exit 0; a limpeza foi concluída com `shutil.move`, sem repetir nem alterar resultados da aplicação. Perfis arquivados em `roteiro-profiles` junto à evidência, sem publicar chaves; `/tmp/cs-a` e `/tmp/cs-b` liberados.
+
+#### Divergências encontradas em b66df03
+
+1. **S5-1 · P2 · CLI aceita configuração sem módulo disponível.** `crates/clipsync-cli/src/init.rs:65` mantém `input = true` quando fornecido por `--modules input` fora do Linux; apenas o ramo interativo usa `cfg!(target_os = "linux")`. `crates/clipsync-cli/src/agent.rs:20` omite input fora do Linux e `:37` chama o core mesmo com o vetor vazio, sem sair 1 como exigido em §11.8. O teste puro por plataforma exigido em §9 S5.7 está ausente. Reprodução auxiliar no Linux, fora dos fontes, chamou o core real com config input=true e vetor vazio: `configured_input=true provided_modules=0 control_responded=true enabled_modules=Some(0) agent_stayed_alive=true shutdown_result=Ok(())` (1 teste aprovado que constata o defeito, exit 0). É leitura do caminho não-Linux somada à reprodução do core, não execução de um binário Windows.
+2. **S5-2 · P2 na versão do contrato revisada · probe indisponível sai 3, embora §11.7 diga 1.** `crates/clipsync-cli/src/main.rs:147` converte `Unavailable` em `Fail::refused`, que define 3 em `fail.rs:18`; `crates/clipsync-input/src/probe.rs:46`/`:51` retornam esse erro fora do Linux. **Encerrado por decisão explícita do Maestro durante a revisão:** 3 = recusado é o comportamento desejado, consistente com probe clipboard fora do Linux; Keel atualizará o contrato. Não é bloqueio do adendo.
+3. **S5-3 · P2 · README não identifica o clipboard Windows como experimental.** `README.md:33` diz `sim (só texto)`, sem polling de 250 ms e sem aviso de teste em máquina real pendente, exigidos em §11.6/§11.11. O diagnóstico já contém o aviso em `crates/clipsync-clipboard/src/diag.rs:54`. Separadamente, `grep -n experimental crates/clipsync-clipboard/src/msg.rs` retornou sem saída/exit 1: a localização literal prevista em §9 S5.5 diverge, embora o aviso exista em diag.rs.
+
+Limites: execução e linkedição Windows reais, testes de named pipe/mesh no runner Windows, artefatos publicados e verificação dos SHA256SUMS baixados permanecem sem prova nesta revisão local. O `.exe` real depende do CI e depois da prova M em máquina Windows. Os passos gráficos locais seguem pendentes.
+
+Evidência integral local: `/home/kappxs/.cache/clipsync-verdict/argus-s5-3hmvsylg` (`gates.json`, `trees.json`, `static.json`, `binary.json`, `roteiro-release.json`, reproduções e hashes before/after). SHA-256 do archive: `093886f0e0d2e4a1f75d9686eb072b8ccb91e8b22f23290e56c482c4c703bde2`.
+
+### S5 · adendo · 707c780 · Passa
+
+Argus, 2026-10-27. **Passa no escopo solicitado para o adendo:** fmt, clippy Linux/Windows com stub, testes do workspace e leitura das recusas/aviso experimental. Novo export limpo de `707c780d8ba123dd216a5efb04614d8b53bbcfb7` via `git archive`, em `~/.cache/clipsync-verdict/src`; target em `~/.cache/clipsync-verdict/target`, PATH com `$HOME/.cargo/bin`. Os 103 arquivos do export não mudaram durante os gates. Nenhuma fonte foi editada. Esta reavaliação não prova execução no Windows.
+
+Saídas reais resumidas:
+
+```text
+$ cargo fmt --all -- --check
+[sem saída]
+[exit 0; 0.156 s]
+```
+
+```text
+$ cargo clippy --workspace --all-targets --locked -- -D warnings
+    Checking clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.87s
+[exit 0; 2.936 s]
+```
+
+```text
+$ CC_x86_64_pc_windows_gnu=/tmp/claude-1000/-home-kappxs-Documentos-ANTIGOS-clipsync--maestri-roles-83bcaab5-84f6-0d02-2adf-b22d1f6ccdd4/a5cf313a-cd0b-4663-9fe4-e4e809ac819a/scratchpad/wincc/cc AR_x86_64_pc_windows_gnu=/usr/bin/ar cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
+    Checking clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.30s
+[exit 0; 2.370 s]
+```
+
+```text
+$ cargo test --workspace --locked
+test agent::tests::plan_for_this_platform_matches_its_support ... ok
+test agent::tests::plan_with_input_support_builds_what_is_enabled ... ok
+test agent::tests::plan_without_input_support_and_clipboard_off_is_an_error ... ok
+test agent::tests::plan_without_input_support_skips_input_and_keeps_clipboard ... ok
+test init::tests::init_with_input_support_accepts_input_alone_but_not_nothing ... ok
+test init::tests::init_without_input_support_accepts_clipboard ... ok
+test init::tests::init_without_input_support_refuses_clipboard_off ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 44.87s
+[demais suítes: 118 aprovados; 0 falhos; 1 ignorado]
+test portal_loopback ... ignored, requer sessão gráfica
+[soma de todas as suítes: 136 aprovados; 0 falhos; 1 ignorado; roteiro CLI 8/8]
+[exit 0; 72.203 s]
+```
+
+```text
+$ grep -n experimental README.md
+32:3. Em máquina com mais de um usuário (compartilhada, RDP), o Windows ainda é experimental. Pare o agente com Ctrl+C; se fechar a janela, rode `clipsync run` de novo antes de usar `clipsync send`.
+35:6. O clipboard do Windows é experimental: polling de 250 ms, só texto, ainda não testado em máquina real.
+43:| Teclado e mouse | experimental | ainda não disponível |
+[exit 0]
+```
+
+```text
+$ grep -n -E 'RUN_NO_MODULE|INIT_NO_USABLE_MODULE|check_usable\(modules|let plan = plan' crates/clipsync-cli/src/agent.rs crates/clipsync-cli/src/init.rs
+crates/clipsync-cli/src/agent.rs:29:        Err(Fail::error(msg::RUN_NO_MODULE))
+crates/clipsync-cli/src/agent.rs:39:    let plan = plan(cfg.modules, INPUT_SUPPORTED)?;
+crates/clipsync-cli/src/agent.rs:86:        assert_eq!((e.code, e.message.as_str()), (1, msg::RUN_NO_MODULE));
+crates/clipsync-cli/src/init.rs:41:        Err(Fail::refused(msg::INIT_NO_USABLE_MODULE))
+crates/clipsync-cli/src/init.rs:82:    check_usable(modules, INPUT_SUPPORTED)?;
+crates/clipsync-cli/src/init.rs:116:                (3, msg::INIT_NO_USABLE_MODULE)
+[exit 0]
+```
+
+- **S5-1:** `run` calcula o plano antes de construir módulos; input indisponível com clipboard desligado resulta em erro/1. Com clipboard ligado, omite input e imprime o aviso. `init` verifica disponibilidade antes de gravar o perfil e recusa configuração sem módulo utilizável com código 3. Funções puras recebem `input_supported`; os sete testes novos passaram. O default interativo de input é falso fora do Linux.
+- **S5-2:** encerrado por decisão explícita do Maestro: probe indisponível retorna **3 = recusado**, igual ao probe clipboard fora do Linux. O contrato exportado ainda diz 1 em `docs/contrato.md:835`; Keel atualizará o texto. Não exigir alteração de código para voltar a 1.
+- **S5-3:** aviso explícito em `README.md:35`: experimental, polling de 250 ms, só texto e ausência de teste em máquina real, junto dos seis avisos de segurança. A tabela `README.md:42` ainda resume `sim (só texto)`; harmonizar sua redação com o aviso. O diagnóstico continua com o texto em `diag.rs`, divergindo do grep literal em `msg.rs`. Essas diferenças editoriais ficam registradas; o aviso e os gates pedidos neste adendo passaram.
+
+**Roteiro reaproveitado:** comparação SHA-256 confirma **zero mudanças em `crates/clipsync-core/`**, em Cargo.toml/Cargo.lock e no roteiro da CLI entre b66df03 e 707c780. Por instrução do Maestro, não repeti o roteiro release: cite-se a evidência de b66df03 acima para pareamento, conexão, send/inbox, pausa/retomada, diagnóstico e módulo desligado. O roteiro automático **8/8** foi reexecutado em 707c780 dentro do workspace. Os probes gráficos e o loopback real continuam pendentes; a expiração do loopback fake não foi tratada como aprovação gráfica.
+
+O release de **8.754.744 bytes** pertence a **b66df03**, não a um rebuild de 707c780. `.exe`, linkedição/CRT real, named pipe e testes Windows dependem do CI; prova M em máquina Windows e verificação dos artefatos publicados seguem pendentes. Nenhum push/tag/release foi feito por Argus.
+
+Evidência integral: `/home/kappxs/.cache/clipsync-verdict/argus-s5-adendo-p2qa07qp` (`meta.json`, `gates.json`, `reads.json`, hashes before/after). SHA-256 do archive: `8cd4518ad46272f92250ac4b070cbe0880e378ac75c8b073e058c19fee644119`.
+
 ## Findings
 
 ### Pendências pós-MVP aceitas pelo Maestro
