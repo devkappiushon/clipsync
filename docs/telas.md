@@ -47,6 +47,8 @@ Criado em 2026-10-27 pelo MCP do Figma, a partir desta especificação:
 - Variáveis: coleções "Cor claro" e "Cor escuro" com os mesmos 16 nomes (fundo, borda, texto, acento, estado) e "Espaço" (4 a 40, raio 8). O plano Starter permite só um modo por coleção, por isso duas coleções em vez de dois modos.
 - Fontes: Inter no corpo, Geist nos títulos, Geist Mono em código, ids e valores.
 
-Conferido com captura: 01b, 03, 05, 06 e 07. As telas 02 e 04 foram refeitas depois da primeira captura (coluna Nome esmagada; monitor do notebook cortado) e ainda não foram recapturadas. 01a e 01c não foram capturadas.
+Conferido com captura: 01b, 03, 05, 06 e 07 (captura do MCP) e 02 e 04 (portal do Maestri, depois de refeitas: a coluna Nome estava esmagada e o monitor do notebook, cortado). 01a e 01c ainda não foram capturadas.
 
-Pendente no Figma: versão escura dos 9 quadros (script pronto em `docs/telas/figma-escuro.js`) e a recaptura de 01a, 01c, 02 e 04. Parou no limite de chamadas do MCP do Figma no plano Starter.
+Ajustes pequenos pendentes: em 02, o rótulo "É controlada por esta máquina" encosta no interruptor (falta quebrar a linha); em 04, o rótulo "notebook-joao · esta máquina · 1 monitor" passa da borda do canvas (encurtar para "esta máquina").
+
+Pendente no Figma: versão escura dos 9 quadros (script pronto em `docs/telas/figma-escuro.js`) e a captura de 01a e 01c. Parou no limite do MCP do Figma: o plano Starter dá 20 chamadas por mês, todas usadas em 2026-10-27. Caminho sem esperar o mês virar: abrir o arquivo no Figma, rodar o plugin Scripter e colar o script do tema escuro.
