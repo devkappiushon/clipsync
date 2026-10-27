@@ -1,6 +1,15 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# S6: clipsync-app (Tauri) só compila no CI, que tem os headers do WebKitGTK.
+# Os comandos locais sem `-p` ficam nestes crates; o CI chama o app por nome.
+default-members = [
+    "crates/clipsync-proto",
+    "crates/clipsync-core",
+    "crates/clipsync-clipboard",
+    "crates/clipsync-input",
+    "crates/clipsync-cli",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -61,6 +70,11 @@ clap = { version = "=4.6.7", features = ["derive"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 postcard = { version = "=1.1.3", default-features = false, features = ["alloc"] }
 serde_json = "=1.0.154"
+# S6 · interface: Tauri 2 fixado (3.0 ainda é alfa). Sem plugins na 0.2.0.
+tauri = { version = "=2.12.5", features = ["tray-icon"] }
+tauri-build = { version = "=2.7.4", features = [] }
+# Interfaces de rede para o pareamento e o diagnóstico (contrato §12).
+if-addrs = "=0.15.0"
 async-trait = "=0.1.92"
 # Stream/StreamExt existem sem feature; collect/buffered pedem alloc, e ashpd/reis
 # já ligam std no grafo do workspace (união de features).
