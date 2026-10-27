@@ -3,7 +3,6 @@
 use clipsync_input::adapter::{Segment, barrier_segment};
 use clipsync_input::{AdapterChoice, CaptureEvent, InputConfig, TokenStore, Zone};
 use clipsync_proto::{Edge, InputDatagram, InputEvent};
-use std::os::unix::fs::PermissionsExt;
 
 fn zone() -> Zone {
     Zone {
@@ -107,17 +106,21 @@ fn other_edges_and_offsets() {
 }
 
 #[test]
-fn token_file_is_0600_and_roundtrips() {
+fn token_file_roundtrips_and_is_0600_on_unix() {
     let dir = tempfile::tempdir().unwrap();
     let store = TokenStore::new(dir.path());
     assert_eq!(store.load(), None);
     store.save("tok-AbC_123").unwrap();
-    let mode = std::fs::metadata(store.path())
-        .unwrap()
-        .permissions()
-        .mode()
-        & 0o777;
-    assert_eq!(mode, 0o600);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(store.path())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+    }
     assert_eq!(store.load().as_deref(), Some("tok-AbC_123"));
     let text = std::fs::read_to_string(store.path()).unwrap();
     assert!(text.contains("version = 1") && text.contains("remote_desktop"));

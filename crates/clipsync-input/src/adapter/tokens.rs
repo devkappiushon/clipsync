@@ -1,7 +1,6 @@
 //! `DIR/portal-tokens.toml` (mode 0600): the RemoteDesktop `restore_token`.
 use super::InputError;
 use std::io::Write;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 const MAX_TOKEN_BYTES: usize = 256;
@@ -51,16 +50,18 @@ impl TokenStore {
         let body = toml::to_string(&table).map_err(|e| InputError::Other(e.to_string()))?;
         let tmp = self.path.with_extension("toml.tmp");
         let io = |e: std::io::Error| InputError::Other(e.to_string());
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)
-            .map_err(io)?;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+        let mut f = opts.open(&tmp).map_err(io)?;
         f.write_all(body.as_bytes()).map_err(io)?;
         f.sync_all().map_err(io)?;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).map_err(io)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).map_err(io)?;
+        }
         std::fs::rename(&tmp, &self.path).map_err(io)
     }
 

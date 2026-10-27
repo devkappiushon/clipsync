@@ -1,8 +1,9 @@
 //! `clipsync probe input`: portal capture and emulation checks. Never prints keys or key codes.
 use crate::adapter::{
-    BarrierSpec, CaptureAdapter, CaptureEvent, EmulateAdapter, PortalCapture, PortalEmulate,
-    TokenStore, ZoneRef, barrier_segment,
+    BarrierSpec, CaptureAdapter, CaptureEvent, EmulateAdapter, ZoneRef, barrier_segment,
 };
+#[cfg(target_os = "linux")]
+use crate::adapter::{PortalCapture, PortalEmulate, TokenStore};
 use crate::msg;
 use clipsync_proto::{Edge, InputEvent, LoopbackStats, mono_us};
 use std::io::Write;
@@ -42,6 +43,11 @@ fn profile_dir() -> PathBuf {
     )
 }
 
+/// The platform has no capture/emulation adapter; the CLI maps this to exit code 3.
+#[derive(thiserror::Error, Debug)]
+#[error("{}", msg::UNAVAILABLE_ON_PLATFORM)]
+pub struct Unavailable;
+
 pub async fn run(args: ProbeArgs) -> anyhow::Result<()> {
     if args.loopback && !args.capture && !args.emulate {
         anyhow::bail!(msg::LOOPBACK_IS_CLI);
@@ -74,6 +80,17 @@ fn percentile(sorted: &[u64], p: usize) -> u64 {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
+async fn capture(_: u32) -> anyhow::Result<()> {
+    Err(Unavailable.into())
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn emulate(_: bool) -> anyhow::Result<()> {
+    Err(Unavailable.into())
+}
+
+#[cfg(target_os = "linux")]
 async fn capture(seconds: u32) -> anyhow::Result<()> {
     let mut cap = PortalCapture::new();
     let zones = cap.zones().await?;
@@ -171,6 +188,7 @@ async fn capture(seconds: u32) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 async fn emulate(yes: bool) -> anyhow::Result<()> {
     if !yes {
         print!("{}", msg::CONFIRM_EMULATE);

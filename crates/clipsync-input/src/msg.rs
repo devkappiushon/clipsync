@@ -7,6 +7,8 @@ pub const NO_ACTIVATION: &str = "a barreira não foi ativada no tempo do teste";
 pub const NO_STATS: &str = "o destino não respondeu com as estatísticas";
 pub const EMULATOR_FAILED: &str = "o emulador de entrada não iniciou neste dispositivo";
 pub const PORTAL_DENIED: &str = "permissão do portal negada";
+pub const UNAVAILABLE_ON_PLATFORM: &str =
+    "teclado e mouse: indisponível no Windows nesta versão (adaptador Win32 previsto para 2B)";
 pub const NO_ZONE: &str = "nenhum monitor encontrado";
 pub const NOTHING_TO_DO: &str = "nada a fazer: use --capture, --emulate ou --loopback";
 pub const LOOPBACK_IS_CLI: &str =

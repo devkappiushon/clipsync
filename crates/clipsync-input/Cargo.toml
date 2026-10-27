@@ -7,8 +7,6 @@ publish.workspace = true
 
 [dependencies]
 clipsync-proto = { path = "../clipsync-proto" }
-ashpd.workspace = true
-reis.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
@@ -18,6 +16,10 @@ anyhow.workspace = true
 humantime.workspace = true
 clap.workspace = true
 toml.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd.workspace = true
+reis.workspace = true
 futures-util.workspace = true
 
 [dev-dependencies]

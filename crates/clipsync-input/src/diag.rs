@@ -59,6 +59,12 @@ pub async fn diagnose() -> Vec<DiagItem> {
             )),
         }
     }
+    #[cfg(not(target_os = "linux"))]
+    out.push(item(
+        "teclado e mouse",
+        DiagStatus::Missing,
+        crate::msg::UNAVAILABLE_ON_PLATFORM,
+    ));
     let outputs = crate::adapter::outputs::connected_outputs();
     out.push(item(
         "monitores",

@@ -43,13 +43,9 @@ fn portal_emulate(dir: &Path) -> Result<Box<dyn EmulateAdapter>, ModuleError> {
 }
 #[cfg(not(target_os = "linux"))]
 fn portal_capture() -> Result<Box<dyn CaptureAdapter>, ModuleError> {
-    Err(ModuleError::Adapter(
-        "sem adaptador de captura nesta plataforma".into(),
-    ))
+    Err(ModuleError::Adapter(msg::UNAVAILABLE_ON_PLATFORM.into()))
 }
 #[cfg(not(target_os = "linux"))]
 fn portal_emulate(_: &Path) -> Result<Box<dyn EmulateAdapter>, ModuleError> {
-    Err(ModuleError::Adapter(
-        "sem adaptador de emulação nesta plataforma".into(),
-    ))
+    Err(ModuleError::Adapter(msg::UNAVAILABLE_ON_PLATFORM.into()))
 }
