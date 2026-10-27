@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.6, Keel, 2026-10-27)
+# Contrato · ClipSync MVP de hoje (v1.7, Keel, 2026-10-27)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -6,6 +6,7 @@ v1.3: `DeliveryState::Unreachable` novo (§4, Rivet); ClipSent lista TODO par al
 v1.4: `CloseCode::ALL` (§4, já entregue pelo Rivet); spike input 2 do Vector no §8 (regras 7 a 11): barreira em x = largura da zona, Enter por movimento relativo, restore_token do RemoteDesktop em `DIR/portal-tokens.toml`, proibido `supported_capabilities()`, P4c automatizado com retry; §3 ganha `portal-tokens.toml`; §9 S3 ganha itens 6 e 7.
 v1.5: dep `futures-util =0.3.34` (§1, pedido do Vector).
 v1.6: posse dividida (Maestro): core/{profile,control,diag}.rs e o crate cli inteiro passam ao Flux; o Rivet fica com core/{lib,tls,pairing,transport,agent,msg}.rs. Tipos: Identity/Config/InitOptions/Peers/PeerEntry/State/Profile em profile.rs (Flux); PairOutcome/PairPrompt/PairDecision em pairing.rs (Rivet); CoreError único em lib.rs (Rivet). Keel acrescentou: `tls::pin_of` como fonte única do pino, `CoreError::AgentAlreadyRunning`, `ControlHandler`/`control::serve`. `pairing::host` ganha `on_listen`. Dep `quinn-proto =0.11.19` (Rivet troca o reason do CONNECTION_CLOSE). §9: S1 dividido; nova S4 (Flux); I passa ao Flux.
+v1.7 (decisão do Maestro): hoje o Rivet NÃO embrulha `quinn::crypto`. Em falha de handshake, o reason do CONNECTION_CLOSE é a string CONSTANTE do rustls para os erros fixos que o PinVerifier devolve (`ApplicationVerificationFailure` para par desconhecido ou chave trocada, `UnknownIssuer` para X.509 inválido), sem Debug de cert nem erro interno. A regra 9 continua integral para Bye e closes de aplicação. O embrulho via quinn-proto fica pendente para depois do MVP. §5 itens 3 e 6, §9 S1 itens 3c e 5d ajustados.
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -399,7 +400,7 @@ Posse por arquivo (decisão do Maestro):
 **Primeira entrega do Rivet, antes de seguir na cripto (até 15 min):**
 1. `lib.rs` declara `pub mod {tls, pairing, transport, agent, msg, profile, control, diag};` e o `CoreError` completo abaixo.
 2. `tls::pin_of`.
-3. `Cargo.toml` do core ganha `serde_json`, `async-trait` e `quinn-proto` (todos `workspace = true`).
+3. `Cargo.toml` do core ganha `serde_json` e `async-trait` (`workspace = true`). quinn-proto NÃO entra hoje (v1.7).
 
 Sem isso o Flux não compila os arquivos dele.
 
@@ -502,7 +503,7 @@ pub async fn join(p: &Profile, addr: SocketAddr,
 /// Lê config, identidade, peers e state via Profile; serve o controle via control::serve com um ControlHandler próprio.
 pub async fn run(p: &Profile, modules: Vec<Box<dyn Module>>, shutdown: impl Future<Output = ()> + Send) -> Result<(), CoreError>;
 ```
-6. **quinn-proto (v1.6):** o quinn manda o `e.to_string()` do rustls no CONNECTION_CLOSE quando o handshake falha. Por isso o Rivet embrulha `quinn::crypto::{ServerConfig, ClientConfig, Session}` para trocar esse reason por `CloseCode::reason()` (regras 1, 6 e 9 abaixo). O teste tls_ (c) prova isso.
+6. **Reason em falha de handshake (v1.7, substitui o embrulho da v1.6):** o quinn manda o `e.to_string()` do rustls no CONNECTION_CLOSE quando o handshake falha. Hoje o PinVerifier só devolve erros FIXOS do rustls: `ApplicationVerificationFailure` (par desconhecido, chave trocada) e `UnknownIssuer` (X.509 inválido). Nunca `CertificateError::Other` com texto próprio, Debug, pino ou bytes de cert. O reason no fio fica uma string constante do rustls. O motivo detalhado vai só para o log local de quem recusou. **Pendente pós-MVP:** embrulhar `quinn::crypto::{ServerConfig, ClientConfig, Session}` via quinn-proto para o reason virar `CloseCode::reason()`.
 
 Regras de transporte (implementação livre dentro delas):
 1. Identidade: ECDSA P-256 (rcgen; ADR 0003), PeerId = SHA-256(SPKI DER). **Um verificador único** (`core::tls::PinVerifier`) implementa `ClientCertVerifier` e `ServerCertVerifier`: valida o X.509 com o próprio cert como âncora (autoassinado), verifica a assinatura TLS 1.3 real com o provider ring, e o pino é SHA-256 do SPKI. Modo malha: pino precisa estar em peers.toml. Modo pareamento (ALPN_PAIR): aceita qualquer pino, mas exige posse da chave. Cert de cliente obrigatório nos dois modos (TLS mútuo).
@@ -662,9 +663,9 @@ Todos os comandos rodam de `/home/kappxs/Documentos/ANTIGOS/clipsync` com `sourc
 ### S1 · Rivet (base: cripto e rede; dividido em v1.6)
 1. Proto: `cargo test -p clipsync-proto` verde com: frame acima do máx recusado ANTES de alocar; datagrama > 1200 bytes recusado; validate recusa float NaN, pos 1.5, 33 eventos, nome de 65 bytes; Debug redigido de ClipOffer, InputEvent::Key, ControlRequest; tabela de authorize_* (módulo desligado -> ModuleDisabled, sem perm -> NotAuthorized, pausado -> Paused, Ack passa pausado); MemHub entrega e recusa com as mesmas regras.
 2. Pareamento seguro: `cargo test -p clipsync-core pairing_` verde com: (a) Reveal com nB que não bate com o Commit -> PairFailed, nada gravado, host encerra; (b) segunda conexão durante a tentativa recusada; (c) após uma falha, a mesma janela não aceita nova tentativa; (d) o código depende de nA e nB (mesma sessão TLS, nonces diferentes = código diferente).
-3. TLS: `cargo test -p clipsync-core tls_` verde com: (a) **contador do PinVerifier sobe nas DUAS conexões** ao conectar, desconectar e reconectar (prova de retomada desligada); (b) cliente com cert desconhecido: servidor nunca marca Connected nem entrega PeerUp, mesmo com `connect()` do cliente tendo retornado Ok; (c) reason de todo CONNECTION_CLOSE recebido pertence ao conjunto de `CloseCode::reason()` (nenhum texto de rustls).
+3. TLS: `cargo test -p clipsync-core tls_` verde com: (a) **contador do PinVerifier sobe nas DUAS conexões** ao conectar, desconectar e reconectar (prova de retomada desligada); (b) cliente com cert desconhecido: servidor nunca marca Connected nem entrega PeerUp, mesmo com `connect()` do cliente tendo retornado Ok; (c) reason de todo Bye e close de APLICAÇÃO pertence a `CloseCode::reason()`. Em falha de HANDSHAKE (par desconhecido, chave trocada, X.509 inválido), o reason recebido é uma das strings constantes do rustls para ApplicationVerificationFailure ou UnknownIssuer: não contém o hex do pino, nem `Other(`, nem texto do verificador (v1.7).
 4. P2 canal: teste `stream_and_datagram` verde: no mesmo Connection, um frame em fluxo uni e um datagrama chegam ao outro lado; frame de controle de 64 KiB + 1 recusado com RESET antes de alocar. Medição registrada no workboard (spike: datagrama 64 B p95 < 100 µs; fluxo 1 KiB p95 < 80 µs); passa se p95 < 1 ms nos dois. Se `tshark` ou `tcpdump` existir sem sudo, captura em lo sem o texto sintético em claro; senão registrar "não verificado".
-5. Malha no core, sem cli: `cargo test -p clipsync-core mesh_` verde com dois `agent::run` no mesmo processo, perfis em tempdir, sem MemHub (QUIC real em 127.0.0.1). Os casos: (a) Connected e PeerUp só depois do Hello nos dois sentidos; (b) uma terceira identidade desconhecida é recusada e nunca chega a Connected; (c) derrubar e subir B reconecta, com o PinVerifier rodando de novo; (d) B com identidade nova no mesmo addr vira PeerState::Blocked e o reason recebido é `key-changed`.
+5. Malha no core, sem cli: `cargo test -p clipsync-core mesh_` verde com dois `agent::run` no mesmo processo, perfis em tempdir, sem MemHub (QUIC real em 127.0.0.1). Os casos: (a) Connected e PeerUp só depois do Hello nos dois sentidos; (b) uma terceira identidade desconhecida é recusada e nunca chega a Connected; (c) derrubar e subir B reconecta, com o PinVerifier rodando de novo; (d) B com identidade nova no mesmo addr: A decide localmente pelo próprio verificador e marca B como PeerState::Blocked{"chave do par mudou; repareie"}; o reason que chega a B é a string constante do rustls (v1.7), sem pino.
 6. Comportamento que os testes do cli (S4 itens 3 e 4) exercitam: se falharem na camada de pairing ou agent, o conserto é do Rivet.
 7. `cargo clippy --workspace --all-targets -- -D warnings` e `cargo fmt --all --check` verdes.
 

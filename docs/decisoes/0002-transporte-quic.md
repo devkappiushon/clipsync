@@ -41,5 +41,6 @@ TLS sobre TCP para o clipboard + UDP separado para a entrada. Seriam duas pilhas
 ## Consequências
 
 - Sem 0-RTT: toda reconexão faz o handshake completo, ~1,6 ms em loopback.
+- **Exceção aceita no MVP (contrato v1.7):** em falha de handshake, o reason do CONNECTION_CLOSE ainda é o texto do rustls. Para ele não vazar nada, o PinVerifier devolve só erros fixos (`ApplicationVerificationFailure`, `UnknownIssuer`), e o reason fica uma string constante, sem pino nem Debug. Trocar esse texto por `CloseCode::reason()` exige embrulhar `quinn::crypto` via quinn-proto: pendente para depois do MVP.
 - O datagrama limita a rajada de entrada a 32 eventos. Acima disso, a rajada vai em vários datagramas.
 - Não verificado ainda: migração de conexão com troca real de IP; ausência de texto em claro numa captura (tshark ou tcpdump); se o CONNECTION_CLOSE de recusa sai em pacote Initial visível na rede; latência em Wi-Fi (o loopback não representa a rede real).

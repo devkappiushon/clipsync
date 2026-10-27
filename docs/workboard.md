@@ -1,6 +1,6 @@
 # workboard · ClipSync MVP de hoje
 
-Contrato: `docs/contrato.md` (v1.6). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Ninguém roda git. Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
+Contrato: `docs/contrato.md` (v1.7). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Ninguém roda git. Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
 
 ## Ordem
 1. S0 Bolt fecha primeiro (esqueleto compila). Só então S1, S2, S3 começam a editar seus crates.
@@ -17,7 +17,7 @@ Estado: entregue (commit 79be293) · veredito do Argus pendente
 
 ## S1 · Rivet · base
 Posse (v1.6): `crates/clipsync-proto/**`; no core: `Cargo.toml`, `src/{lib,tls,pairing,transport,agent,msg}.rs`, `tests/{smoke,tls,pairing,mesh}.rs`.
-PRIMEIRO (até 15 min, destrava o Flux): lib.rs com todos os `pub mod` e o `CoreError` da §5; `tls::pin_of`; deps serde_json, async-trait e quinn-proto no Cargo.toml do core.
+PRIMEIRO (até 15 min, destrava o Flux): lib.rs com todos os `pub mod` e o `CoreError` da §5; `tls::pin_of`; deps serde_json e async-trait no Cargo.toml do core (quinn-proto não entra hoje, v1.7).
 Ordem interna: (1) proto + MemHub + authorize_* + CloseCode + PairMsg; avisar "proto pronto" aqui. (2) perfil, config, identidade, peers. (3) PinVerifier, retomada TLS desligada, pareamento com compromisso nB/nA. (4) malha QUIC, Hello nos dois sentidos, agente, socket de controle, CLI. (5) diag de sistema.
 Pronto: §9 S1 itens 1 a 7 (renumerados na v1.6).
 Estado: em andamento (core) · proto: ENTREGUE (40 testes; extra `CloseCode::ALL`; `DeliveryState::Unreachable` no commit 1c6ba06)
@@ -60,6 +60,8 @@ Estado: bloqueado por S1, S3 e S4
 - 2026-10-27 · Keel · Corrigido: licença e regra da recópia seguem PENDENTES. O "MIT, aceito a recópia" que vi na tela do Maestro era a pergunta dele ao usuário, não resposta.
 - 2026-10-27 · Maestro + Keel · Contrato v1.6, mudança de posse para fechar o MVP hoje (motivo do Maestro: 40 min depois do S0, core e cli tinham 25 linhas, e o Rivet está no caminho crítico da cripto). Flux recebe core/{profile,control,diag}.rs e o crate cli inteiro (nova fatia S4, mais a integração I). Rivet fica com core/{lib,tls,pairing,transport,agent,msg}.rs. Tipos: Identity, Config, InitOptions, Peers, PeerEntry, State e Profile em profile.rs (Flux); PairOutcome, PairPrompt e PairDecision em pairing.rs (Rivet); CoreError único em lib.rs (Rivet). Dep quinn-proto =0.11.19 aprovada (Rivet troca o reason do CONNECTION_CLOSE). `pairing::host` ganha `on_listen`.
 - 2026-10-27 · Keel · Furos da divisão, fechados na §5: (a) `tls::pin_of` é a fonte única do pino, e `Identity::id()` chama essa função; (b) `CoreError::AgentAlreadyRunning`, que faltava para o control::serve; (c) `ControlHandler` + `control::serve` em control.rs (Flux), e o agente só implementa o handler; (d) core não imprime nada, confirm roda em spawn_blocking; (e) o cert usa a chamada do spike (SAN "clipsync") e não leva o nome do dispositivo; (f) S1 ganha teste de malha no core (mesh_) para não depender do cli.
+- 2026-10-27 · Maestro · Contrato v1.7: hoje o Rivet NÃO embrulha quinn::crypto. O PinVerifier devolve só erros fixos do rustls (ApplicationVerificationFailure para par desconhecido ou chave trocada, UnknownIssuer para X.509 inválido), então o reason do CONNECTION_CLOSE em falha de handshake é uma string constante do rustls, sem Debug de cert nem erro interno. A regra 9 continua integral para Bye e closes de aplicação. Motivo: caminho crítico (tls, transport, pairing e agent ainda eram placeholders às 13h). Contrato §5 item 6, §9 S1 itens 3c e 5d ajustados; quinn-proto fora do Cargo.toml do core hoje.
+- PENDENTE · pós-MVP · Embrulhar `quinn::crypto::{ServerConfig, ClientConfig, Session}` via quinn-proto =0.11.19 para o reason de falha de handshake virar `CloseCode::reason()` (ADR 0002).
 - PENDENTE · usuário · **Licença** a decidir antes do primeiro commit público. Sugestão do Keel: MIT (ou MIT/Apache-2.0 dual, padrão do ecossistema Rust). GPL-3 só se copiarmos código do Lan Mouse, o que o contrato evita.
 - PROVISÓRIO · Keel · Chave privada em `identity.key.pem` com modo 0600 no perfil, até existir o cofre da plataforma (Secret Service, CNG, Keychain).
 - PENDENTE · usuário · "Conteúdo inalterado não é cópia nova" (contrato §7 regra 3): copiar o mesmo texto duas vezes seguidas não reenvia. Protege contra a tomada de posse do Mutter, que reenviaria conteúdo velho por cima de cópia nova do par. Reenvio forçado: `clipsync send`. Aguarda confirmação do usuário.
