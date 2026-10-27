@@ -2,7 +2,7 @@
 
 ## Verificações planejadas
 
-Responsável: Argus · warden. Estado em 2026-10-27: **planejado; nenhum comando de validação do scaffold executado nesta publicação**. Fonte de verdade: [contrato.md](contrato.md), v1 de Keel, em especial §§1–9; posse e ordem em [workboard.md](workboard.md). Adaptação do roteiro anterior `verificacoes-planejadas.md` aos cinco crates e à CLI efetiva do contrato. Estes comandos são planos, não saídas observadas nem aprovação.
+Responsável: Argus · warden. Plano publicado em 2026-10-27 antes da execução; **resultados reais posteriores estão em Verdicts**. Fonte de verdade: [contrato.md](contrato.md), v1 de Keel, em especial §§1–9; posse e ordem em [workboard.md](workboard.md). Adaptação do roteiro anterior `verificacoes-planejadas.md` aos cinco crates e à CLI efetiva do contrato. Estes comandos são planos, não saídas observadas nem aprovação.
 
 Argus só altera este relatório; não edita código, não roda git e não inicia servidores ou agentes persistentes. Os testes automatizados podem iniciar processos filhos e devem encerrá-los. Itens **M** são executados pelo Maestro/usuário em sessão gráfica, conforme §9; Argus registra a evidência recebida, distinguindo-a da observação própria. Se houver interface web, a URL vem do Maestro e a validação usa exclusivamente o portal do Maestri; nunca Playwright. O contrato atual é uma CLI, sem Tauri ou servidor web exigido.
 
@@ -18,11 +18,12 @@ Argus só altera este relatório; não edita código, não roda git e não inici
 
 ### Preparação comum
 
-Todos os blocos são executados na raiz, após carregar o ambiente Cargo:
+Atualização operacional do Maestro: julgar somente o export limpo informado, atualmente `e611a88`; fontes em `~/.cache/clipsync-verdict/src`, cache em `~/.cache/clipsync-verdict/target`. Não executar gates na árvore compartilhada em edição nem no export antigo de /tmp. Todos os blocos abaixo usam a raiz do export, após carregar o ambiente Cargo:
 
 ```sh
-cd /home/kappxs/Documentos/ANTIGOS/clipsync
+cd /home/kappxs/.cache/clipsync-verdict/src
 source ~/.cargo/env
+export CARGO_TARGET_DIR="$HOME/.cache/clipsync-verdict/target"
 date --iso-8601=seconds
 sha256sum docs/contrato.md docs/workboard.md
 rustc --version
@@ -32,7 +33,7 @@ cargo metadata --locked --no-deps --format-version 1
 cargo test --workspace -- --list
 ```
 
-Conferir `clipsync-proto`, `clipsync-core`, `clipsync-cli`, `clipsync-clipboard` e `clipsync-input`, binário `clipsync`, Rust 1.99.1 e os testes existentes. Não executar cedo: esta preparação acompanha a revisão enviada pelo Maestro. Usar `target/` compartilhado nos gates normais; não mudar configuração versionada de target-dir. Os comandos da §9 abaixo são mantidos sem acrescentar `--locked`; o inventário e a prova fria adicional verificam também o lockfile.
+Conferir `clipsync-proto`, `clipsync-core`, `clipsync-cli`, `clipsync-clipboard` e `clipsync-input`, binário `clipsync`, Rust 1.99.1 e os testes existentes. Não executar cedo: esta preparação acompanha a revisão enviada pelo Maestro. Usar o cache de validação indicado pelo Maestro nos gates normais; não mudar configuração versionada de target-dir. Os comandos da §9 abaixo são mantidos sem acrescentar `--locked`; o inventário e a prova fria adicional verificam também o lockfile.
 
 ### S0 · Bolt · §9, itens 1–7
 
@@ -67,8 +68,8 @@ Prova adicional de instalação e build com artefatos novos, quando S0 estiver e
 ```sh
 (
   source ~/.cargo/env
-  export CARGO_TARGET_DIR="$(mktemp -d /tmp/clipsync-argus-target.XXXXXX)"
-  CLIPSYNC_INSTALL_DIR="$(mktemp -d /tmp/clipsync-argus-install.XXXXXX)"
+  export CARGO_TARGET_DIR="$(mktemp -d "$HOME/.cache/clipsync-argus-target.XXXXXX")"
+  CLIPSYNC_INSTALL_DIR="$(mktemp -d "$HOME/.cache/clipsync-argus-install.XXXXXX")"
   cargo fetch --locked
   cargo build --workspace --all-targets --locked
   cargo install --locked --path crates/clipsync-cli --root "$CLIPSYNC_INSTALL_DIR"
@@ -280,7 +281,7 @@ Limitações e requisitos ainda não comprovados: ...
 Publicar achados detalhados em `## Findings` e comunicar o veredito ao Maestro por `maestri ask`. Repetir teste só por mudança, falha ou lacuna de evidência. Nenhuma fatia está aprovada por esta publicação do plano.
 
 ## Verdicts
-### S0 · 2026-10-27 12:04:33–12:04:36 -03:00 · Não passa no checkout atual
+### S0 · histórico 2026-10-27 12:04:33–12:04:36 -03:00 · Não passa no checkout atual (substituído pela reemissão abaixo)
 
 Solicitação: revisar os sete critérios da §9 S0; commit informado pelo Maestro: `79be293`. **Não consultei git e não certifiquei o conteúdo desse commit.** A evidência abaixo é do checkout compartilhado, que já contém implementação de S1/S2. As falhas localizadas nesses crates não são atribuídas ao trabalho do Bolt sem comparação com uma cópia estável de S0.
 
@@ -572,8 +573,504 @@ fe701bf856be6c9f91bc7283d3f372bb810b8b61c3f21e384c03e15e49e2c70b  crates/clipsyn
 Logs integrais e inventários: `/tmp/clipsync-argus-s0-miuoxq64/{results,before,after}.json`. Resultados pertinentes estão transcritos acima para não depender só de arquivos temporários. Não houve instalação fria adicional, início de servidor, validação gráfica ou execução do vertical slice; o pedido desta revisão foi os sete gates S0, e test/clippy/fmt já impedem aprovação. Reconferir esses gates numa base S0 estável ou após os donos concluírem as alterações que bloqueiam o workspace.
 
 
+### S0 · reemissão 2026-10-27T12:20:54-03:00 · Passa
+
+Base local: export limpo **e611a88**, informado pelo Maestro, em `/home/kappxs/.cache/clipsync-verdict/src`; `CARGO_TARGET_DIR=/home/kappxs/.cache/clipsync-verdict/target`, `source ~/.cargo/env` antes de cada comando. Execução 12:15:05–12:16:07 -03:00. Todos os arquivos inventariados permaneceram idênticos antes/depois e na conferência posterior. Nenhum git foi executado; o hash de commit é a identificação fornecida pelo Maestro, os SHA-256 abaixo são a evidência local.
+
+**Este veredito substitui o “não passa no checkout atual” das 12:04 para a fatia S0.** Aquela observação continua no histórico, mas era da árvore compartilhada em edição. A rodada intermediária em /tmp foi descartada como base de aprovação: houve troca de export e cota de disco; os comandos foram repetidos no novo caminho com sucesso.
+
+| Critério S0 | Evidência e resultado |
+|---|---|
+| 1 · toolchain | Passa: 1.99.1, rustfmt/clippy. |
+| 2 · build/crates | Passa: build=0; cinco crates, todos herdando lints. |
+| 3 · testes | Passa: no export atual, 55 aprovados, zero falhos/ignorados; quatro smoke e testes funcionais de proto. Os cinco smoke da entrega S0 foram conferidos no log do CI de 79be293. |
+| 4 · clippy/fmt | Passa: ambos 0 no export e no CI de S0. |
+| 5 · lints | Passa: unsafe_code forbid, seis lints Clippy deny e três exceções para testes; manifestos lidos/parseados. |
+| 6 · CI | Passa: YAML válido localmente; ubuntu-latest e três gates declarados; execução GitHub success no commit S0 exato. |
+| 7 · dependências | Passa: 25 versões exatas com =; ring presente; aws-lc-sys/aws-lc-rs ausentes pelo erro esperado; nenhuma duplicação de x11rb reportada. |
+
+A aprovação cobre o scaffold S0; não aprova o comportamento das outras fatias nem os probes gráficos.
+
+#### Evidência externa do commit S0
+
+Consultas somente de leitura, todas exit 0:
+
+```sh
+gh run view 40526929698
+gh run view 40526929698 --repo devkappiushon/clipsync --json headSha,jobs,conclusion,url,createdAt,updatedAt
+gh run view 40526929698 --repo devkappiushon/clipsync --log
+```
+
+[CI 40526929698](https://github.com/devkappiushon/clipsync/actions/runs/40526929698): `headSha=79be29397b926a837857eeb852e247f7b6235882`, `conclusion=success`. Job `122268918983`, `fmt + clippy + test`, todos os steps `cargo fmt`, `cargo clippy` e `cargo test` com `conclusion=success`; completou `2026-10-27T15:04:46Z`. O log informa `Image: ubuntu-26.04` e cinco ocorrências de `test smoke ... ok`, cada uma seguida de `1 passed; 0 failed; 0 ignored`. Saída resumida literal de `gh run view`:
+
+```text
+✓ main ci · 40526929698
+✓ fmt + clippy + test in 2m45s (ID 122268918983)
+```
+
+#### Sete critérios, comandos e saídas locais reais
+
+Comando: `cat rust-toolchain.toml`. Início: `2026-10-27T12:15:05.287951-03:00`. Exit code: **0**.
+
+stdout:
+
+```text
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
+```
+
+Comando: `rustup show active-toolchain`. Início: `2026-10-27T12:15:05.292622-03:00`. Exit code: **0**.
+
+stdout:
+
+```text
+1.99.1-x86_64-unknown-linux-gnu (overridden by '/home/kappxs/.cache/clipsync-verdict/src/rust-toolchain.toml')
+```
+
+Comando: `cargo build --workspace`. Início: `2026-10-27T12:15:05.313777-03:00`. Exit code: **0**.
+
+Trecho final literal de stderr (logs de compilação completos no results.json):
+
+```text
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 20.38s
+```
+
+Comando: `cargo test --workspace`. Início: `2026-10-27T12:15:25.731855-03:00`. Exit code: **0**.
+
+stdout integral:
+
+```text
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 11 tests
+test i_debug_never_shows_content ... ok
+test h_manual_mode_only_fills_the_inbox ... ok
+test c_old_lamport_after_new_is_stale_and_goes_to_inbox ... ok
+test f_remote_module_disabled_is_reported ... ok
+test b_duplicate_event_id_applies_once_and_acks_duplicate ... ok
+test d_x_y_x_makes_three_offers_x_x_makes_one ... ok
+test k_ttl_counts_from_local_receipt_and_drops_the_text ... ok
+test a_mesh_one_copy_two_offers_no_reoffer ... ok
+test e_own_write_echo_takeover_and_empty_do_not_offer ... ok
+test g_paused_neither_sends_nor_applies_and_resume_does_not_resend ... ok
+test j_clipsend_lists_every_target_and_no_ack_is_unreachable ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.01s
+
+
+running 1 test
+test smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+test inbound_datagram_table ... ok
+test inbound_table ... ok
+test outbound_datagram_table ... ok
+test outbound_table ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 7 tests
+test event_ids_are_random ... ok
+test module_set ... ok
+test mono_us_is_monotonic ... ok
+test peer_id_from_hex_errors ... ok
+test peer_id_hex_roundtrip_and_short_form ... ok
+test reject_reasons_have_portuguese_text ... ok
+test peer_id_is_sha256_of_spki ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 7 tests
+test delivers_authorized_offer ... ok
+test datagrams_follow_the_same_rules ... ok
+test inbound_refusal_becomes_rejected_at_sender ... ok
+test link_delivers_peer_up_with_grants_and_remote_modules ... ok
+test outbound_rules_return_errors ... ok
+test paused_destination_rejects_offer_but_ack_passes ... ok
+test invalid_or_oversized_message_is_not_sent ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 5 tests
+test control_request_debug_hides_clip_send_text ... ok
+test clip_offer_debug_hides_text ... ok
+test key_and_button_debug_hide_code ... ok
+test inbox_item_debug_hides_preview ... ok
+test control_messages_roundtrip_as_json ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 17 tests
+test close_codes_are_stable_short_tokens ... ok
+test datagram_over_1200_bytes_is_refused ... ok
+test encode_refuses_body_over_max ... ok
+test datagram_with_32_events_fits_and_roundtrips ... ok
+test control_frame_of_64k_plus_one_is_refused ... ok
+test garbage_and_trailing_bytes_are_decode_errors ... ok
+test every_frame_variant_roundtrips ... ok
+test module_msg_kind ... ok
+test unreachable_never_goes_on_the_wire ... ok
+test validate_device_name_bounds ... ok
+test validate_hello_min_version ... ok
+test validate_refuses_33_events ... ok
+test oversized_frame_is_refused_before_allocating ... ok
+test validate_refuses_nan_and_infinite_floats ... ok
+test validate_refuses_pos_outside_unit_range ... ok
+test write_then_read_over_a_duplex ... ok
+test validate_clip_offer_mime_and_size ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+```
+
+Trechos literais de stderr que identificam executáveis e conclusão:
+
+```text
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.98s
+     Running unittests src/main.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync-be9f8c6ccda39f75)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-ed14c5d2789ba84f)
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_clipboard-baed76060361b842)
+     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-c494c8daf81d2787)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-85906dbb9d313bfa)
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-92d4afbd93db2a46)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-6d4b6b899601d3c6)
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_input-e5c8f10e63c27e5a)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-6f0702f4c653dfde)
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_proto-0c66604f71ca982e)
+     Running tests/authorize.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/authorize-e391bd3d15518a60)
+     Running tests/ids.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/ids-dc4409c0c4cc9425)
+     Running tests/memhub.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/memhub-08e08ec1e88b0447)
+     Running tests/redact.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/redact-b33032db01aafc8d)
+     Running tests/wire.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/wire-bc8f4451e647d888)
+   Doc-tests clipsync_clipboard
+   Doc-tests clipsync_core
+   Doc-tests clipsync_input
+   Doc-tests clipsync_proto
+```
+
+Comando: `cargo clippy --workspace --all-targets -- -D warnings`. Início: `2026-10-27T12:15:36.966694-03:00`. Exit code: **0**.
+
+Trecho final literal de stderr (logs de compilação completos no results.json):
+
+```text
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.36s
+```
+
+Comando: `cargo fmt --all --check`. Início: `2026-10-27T12:15:50.385755-03:00`. Exit code: **0**.
+
+stdout/stderr vazios.
+
+Comando: `grep -n 'unwrap_used\|unsafe_code' Cargo.toml`. Início: `2026-10-27T12:15:50.464478-03:00`. Exit code: **0**.
+
+stdout:
+
+```text
+13:unsafe_code = "forbid"
+16:unwrap_used = "deny"
+```
+
+Comando: `cat clippy.toml`. Início: `2026-10-27T12:15:50.467965-03:00`. Exit code: **0**.
+
+stdout:
+
+```text
+# Testes podem usar unwrap/expect/panic; produção, não (§2.4 do contrato).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+```
+
+Comando: `python3 -c "import yaml,sys;yaml.safe_load(open('.github/workflows/ci.yml'))"`. Início: `2026-10-27T12:15:50.472712-03:00`. Exit code: **0**.
+
+stdout/stderr vazios.
+
+Comando: `cargo tree -i ring`. Início: `2026-10-27T12:15:50.503830-03:00`. Exit code: **0**.
+
+stdout:
+
+```text
+ring v0.17.14
+├── quinn-proto v0.11.19
+│   └── quinn v0.11.12
+│       └── clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
+│           └── clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+├── rcgen v0.14.10
+│   └── clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core) (*)
+├── rustls v0.23.46
+│   ├── clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core) (*)
+│   ├── quinn v0.11.12 (*)
+│   └── quinn-proto v0.11.19 (*)
+└── rustls-webpki v0.103.16
+    └── rustls v0.23.46 (*)
+```
+
+Comando: `cargo tree -i aws-lc-sys`. Início: `2026-10-27T12:15:50.605001-03:00`. Exit code: **101**.
+
+stderr:
+
+```text
+error: package ID specification `aws-lc-sys` did not match any packages
+```
+
+Comando: `cargo tree -i aws-lc-rs`. Início: `2026-10-27T12:15:50.691132-03:00`. Exit code: **101**.
+
+stderr:
+
+```text
+error: package ID specification `aws-lc-rs` did not match any packages
+```
+
+Comando: `cargo tree -d -i x11rb`. Início: `2026-10-27T12:15:50.774377-03:00`. Exit code: **0**.
+
+stderr:
+
+```text
+warning: nothing to print.
+
+To find dependencies that require specific target platforms, try to use option `--target all` first, and then narrow your search scope accordingly.
+```
+
+#### Hashes da base local
+
+```text
+5db5a0b6e04351b370ccbde3f9dc9b5fd48bc24eb337bfbda7c94ced319a9720  Cargo.toml
+18fb92a17a34a262de222fedc3343dbe81be50f61b51a8fda1f22b139a3d2fdf  Cargo.lock
+b9c8d2d59f6f46474c0cfa0b8b77bea21d94fc73a30ad93d5bf6385c422197d2  rust-toolchain.toml
+7e1ef5bd22265ce84691bfc66ba1e4bdf1f077ca570be5d130c1ee41eb69f2ab  clippy.toml
+a17fc31e789ac923ae55a5b2e620b7f561bb62d53fa6bebc968e07353d68e69c  rustfmt.toml
+23e47e9f8427f5dba0a7989c5eb40b6d9df69c8ad918cf69dffebefc1236db66  .github/workflows/ci.yml
+512b073c27ebfb1579bb83f4a2226bf24f78cce86e422b3f4915fb40255ae009  docs/contrato.md
+```
+
+Logs integrais e inventários: `/home/kappxs/.cache/clipsync-verdict/argus-e611a88-3609dhci/{meta,results,before,after}.json`.
+
+### S2 · v1.3 · 2026-10-27T12:20:54-03:00 · Não passa
+
+Base: export **e611a88** em `/home/kappxs/.cache/clipsync-verdict/src`, cache em `/home/kappxs/.cache/clipsync-verdict/target`. O módulo e os testes de clipboard têm os mesmos hashes da entrega final 18a461c; contrato v1.3 desta base, incluindo regra 6 de TTL e regra 9 de Unreachable. A leitura parcial anterior foi substituída por esta revisão da versão final. Nenhuma fonte do projeto/export foi editada.
+
+**Itens automáticos:** `cargo test -p clipsync-clipboard` = 12 aprovados (11 funcionais + 1 smoke), 0 falhos, 0 ignorados; Clippy com `-D warnings` = 0; fmt do crate = 0. **Veredito de comportamento: não passa**, pelos dois casos adicionais reproduzidos abaixo. **Itens 2–4: pendentes**, conforme ordem do Maestro, até o CLI/manual; não executei probes nem declarei clipboard gráfico validado.
+
+#### Comandos pedidos e saídas reais
+
+Comando: `cargo test -p clipsync-clipboard`. Início: `2026-10-27T12:15:50.866368-03:00`. Exit code: **0**.
+
+stdout integral:
+
+```text
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 11 tests
+test i_debug_never_shows_content ... ok
+test h_manual_mode_only_fills_the_inbox ... ok
+test c_old_lamport_after_new_is_stale_and_goes_to_inbox ... ok
+test f_remote_module_disabled_is_reported ... ok
+test b_duplicate_event_id_applies_once_and_acks_duplicate ... ok
+test d_x_y_x_makes_three_offers_x_x_makes_one ... ok
+test k_ttl_counts_from_local_receipt_and_drops_the_text ... ok
+test a_mesh_one_copy_two_offers_no_reoffer ... ok
+test e_own_write_echo_takeover_and_empty_do_not_offer ... ok
+test g_paused_neither_sends_nor_applies_and_resume_does_not_resend ... ok
+test j_clipsend_lists_every_target_and_no_ack_is_unreachable ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.01s
+
+
+running 1 test
+test smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+```
+
+Trechos literais de stderr que identificam executáveis e conclusão:
+
+```text
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.75s
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_clipboard-d5b415483d8ba192)
+     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-a2a6cec29a2a4f52)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-034f1adebe3f47bd)
+   Doc-tests clipsync_clipboard
+```
+
+Comando: `cargo clippy -p clipsync-clipboard --all-targets -- -D warnings`. Início: `2026-10-27T12:16:03.712556-03:00`. Exit code: **0**.
+
+Trecho final literal de stderr (logs de compilação completos no results.json):
+
+```text
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.15s
+```
+
+Comando: `cargo fmt -p clipsync-clipboard --check`. Início: `2026-10-27T12:16:06.922770-03:00`. Exit code: **0**.
+
+stdout/stderr vazios.
+
+#### Leitura de contrato e caminhos efetivos
+
+| Checagem | Evidência observada |
+|---|---|
+| Debug redigido | `clipsync-proto/src/clip.rs:30` usa ByteLen para text; `clipsync-clipboard/src/adapter/mod.rs:31` imprime só tamanho; `clipsync-proto/src/control.rs:147` usa Redacted para preview. Testes `i_debug_never_shows_content`, `clip_offer_debug_hides_text` e `inbox_item_debug_hides_preview` passaram na execução desta base. |
+| Texto/hash em log | Busca e leitura de adapter, módulo, probe, diag e msg: hashes só em memória; único tracing do módulo em `module.rs:553` tem peer/error e mensagem fixa. Probes imprimem MIME/tamanho/latência/estados, sem texto ou hash. Nenhum vazamento direto encontrado nas fontes revisadas; prova manual de saída real permanece pendente. |
+| Livro de escritas | `ledger.rs:9` define 2 s; register antes de write em `module.rs:480`; poda por Instant em `ledger.rs:35`; eco consultado em `module.rs:379`. Caso oficial de eco/re-escrita/tomada de posse passou. |
+| Dedupe por EventId | Caso simples passou, mas o limite de 1.024 entradas falha: **S2-2** abaixo. |
+| Vazio | `module.rs:376` retorna sem oferta e sem alterar hash quando snap=None; adaptadores fake/X11 convertem vazio em None. Caso oficial de clear/texto vazio passou. |
+| Pausa | Caminhos normais checam estado em `module.rs:285`, `module.rs:387` e `module.rs:453`; teste oficial passou. Uma pausa durante a leitura anterior ao write ainda permite aplicar: **S2-1** abaixo. |
+| Unreachable só local | `proto/clip.rs:64` recusa Ack(Unreachable); encode/decode passam por validate em `proto/wire.rs:210` e `:227`. `unreachable_never_goes_on_the_wire` passou no workspace, incluindo encode recusado, decode de postcard forjado recusado e JSON local preservado. `module.rs:156`, `:179` e `:628` usam Unreachable como resultado local; `j_clipsend_lists_every_target_and_no_ack_is_unreachable` passou. |
+| Expiração da caixa | `module.rs:194` guarda Instant e Duration por item; `:530` marca instante local, `:531` limita TTL a CLIP_TTL_MS; `:537` compara idade monotônica e apaga preview. A varredura é a cada 5 s (`:20`, `:307`, `:311`), e ClipInbox chama expire_inbox antes de devolver (`:578`). created_unix_ms/received_unix_ms ficam para exibição. `k_ttl_counts_from_local_receipt_and_drops_the_text` passou: TTL 0 expira ao chegar; TTL 800 ms chega InInbox e após 1 s fica Expired com preview vazio. |
+
+A verificação de expiração acima comprova o cenário do teste e o mecanismo lido; não mede uma garantia de remoção instantânea entre ticks de varredura. A leitura e os testes não abrangem operação real de XWayland nesta revisão.
+
+#### Duas reproduções adicionais, sem editar fontes
+
+O diagnóstico usa as bibliotecas já compiladas do export. O teste de capacidade inclui o próprio `ledger.rs` do export por `#[path]`, sem copiar/reimplementar seu algoritmo. O teste de pausa usa `build_with_adapter`, `MemHub` e um wrapper de FakeClipboard que bloqueia deterministicamente `read_text` até o host entrar em pausa; ele então libera a leitura, observa Ack/write e encerra o módulo. Nada toca clipboard real ou inicia servidor.
+
+O harness foi fornecido ao rustc por stdin (nenhum .rs do projeto/export criado ou alterado). Texto exato de reprodução e argv preservados em `probe-stdin.txt` e `boundary-results.json` no diretório de evidência abaixo. Compile exit 0; avisos de dead_code pertencem ao ledger incluído parcialmente pelo harness, não aos gates Clippy do projeto.
+
+Comando de compilação reexecutável, com o mesmo stdin:
+
+```sh
+rustc --edition=2024 --test --crate-name argus_s2_boundary - -o /home/kappxs/.cache/clipsync-verdict/argus-e611a88-3609dhci/boundary-tests -L dependency=/home/kappxs/.cache/clipsync-verdict/target/debug/deps --extern clipsync_clipboard=/home/kappxs/.cache/clipsync-verdict/target/debug/deps/libclipsync_clipboard-ad5d540442636c69.rlib --extern clipsync_proto=/home/kappxs/.cache/clipsync-verdict/target/debug/deps/libclipsync_proto-200667442ae0d934.rlib --extern tokio=/home/kappxs/.cache/clipsync-verdict/target/debug/deps/libtokio-f1ce68d902523d30.rlib --extern sha2=/home/kappxs/.cache/clipsync-verdict/target/debug/deps/libsha2-dd923891c50e1b65.rlib < /home/kappxs/.cache/clipsync-verdict/argus-e611a88-3609dhci/probe-stdin.txt
+```
+
+Comando executado:
+
+```sh
+/home/kappxs/.cache/clipsync-verdict/argus-e611a88-3609dhci/boundary-tests --nocapture --test-threads=1
+```
+
+Exit code: **101**. Saída real:
+
+```text
+
+running 2 tests
+test duplicate_at_capacity_must_still_be_duplicate ... capacity=1024 duplicate_accepted_as_new=true
+FAILED
+test pause_during_prewrite_read_must_prevent_write ... paused=true writes=1 ack=Applied
+FAILED
+
+failures:
+
+failures:
+    duplicate_at_capacity_must_still_be_duplicate
+    pause_during_prewrite_read_must_prevent_write
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+
+thread 'duplicate_at_capacity_must_still_be_duplicate' (383554) panicked at <anon>:22:5:
+duplicado ainda dentro do TTL não pode se tornar novo com a tabela cheia
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'pause_during_prewrite_read_must_prevent_write' (383557) panicked at <anon>:72:9:
+assertion `left == right` failed: pausa aconteceu antes de write_text; não pode aplicar
+  left: 1
+ right: 0
+```
+
+Os dois testes verificam requisitos de comportamento; falharam com `duplicate_accepted_as_new=true` e `paused=true writes=1 ack=Applied`. Isso não altera a contagem dos 12 testes oficiais aprovados.
+
+#### Hashes e evidência
+
+```text
+512b073c27ebfb1579bb83f4a2226bf24f78cce86e422b3f4915fb40255ae009  docs/contrato.md
+20abc06d6d42393bef8ba8e0f6ab06dce8667cf7f61bd7a6dd2712c2a80fd401  crates/clipsync-clipboard/src/module.rs
+81fdc2f827f98a9716f600d413064f7d2e352ddcb537394796e7d54881e1df53  crates/clipsync-clipboard/src/ledger.rs
+52c031aad980322750af3a5c62aa8fd7e70325ceff5cf459f7e179a6d020b839  crates/clipsync-clipboard/tests/module_mem.rs
+3d6eaa08715e9c267f8690d8f47768ea0ed3db7f37c5606bd145c4084d8995e1  crates/clipsync-proto/src/clip.rs
+14aa4f0445d1dbf0fb4b082d9d1bb5bb8f2d065f88ecbebf097a4f9d7d180e68  crates/clipsync-proto/src/control.rs
+```
+
+Inventários antes/depois iguais; conferência posterior também sem alterações. Evidência persistente: `/home/kappxs/.cache/clipsync-verdict/argus-e611a88-3609dhci` (results.json, before.json, after.json, boundary-results.json, probe-stdin.txt e boundary-tests).
+
 ## Findings
-### S0 · achados do checkout revisado em 2026-10-27 12:04 -03:00
+
+### S2 v1.3 · e611a88 · achados ativos
+
+1. **S2-1 · P2 · `crates/clipsync-clipboard/src/module.rs:79`** — o worker chama `write_text` após a leitura do clipboard sem reavaliar a pausa. A autorização em `on_offer` (`:453`) ocorre antes de enfileirar Cmd::Write; enquanto o worker lê, o host pode ser pausado. Reproduzido deterministicamente com MemHub/FakeClipboard: bloquear a leitura anterior ao write, `set_paused(true)`, liberar a leitura; resultado **`paused=true writes=1 ack=Applied`**, embora o contrato §7.7/§7.10 exija não aplicar em pausa. O teste existente só pausa antes de enviar a oferta e não cobre essa janela. Impacto: conteúdo remoto ainda altera o clipboard depois da pausa entrar em vigor.
+2. **S2-2 · P2 · `crates/clipsync-clipboard/src/ledger.rs:67`** — `insert_new` remove a entrada mais antiga quando len>=SEEN_EVENTS_CAP antes de conferir se o ID recebido já está no mapa (`:74`). Com 1.024 IDs ainda válidos, repetir o mais antigo o apaga e reinsere como novo. Reproduzido no código exato de SeenEvents, no mesmo Instant (sem expiração): **`capacity=1024 duplicate_accepted_as_new=true`**. Viola §7.5 (repetido deve gerar Ack Duplicate) e deixa o resultado dependente do cache cheio. O caso oficial só cobre duplicado com a tabela praticamente vazia.
+
+Nenhuma correção aplicada. Os itens manuais S2.2–S2.4 continuam pendentes; não são a causa dos dois achados acima.
+
+### S0 · histórico do checkout em edição às 12:04 (encerrado na reemissão do export)
 
 1. **P1 · `crates/clipsync-proto/src/lib.rs:16`** declara `pub mod testing` com feature testing, mas o arquivo `testing.rs`/`testing/mod.rs` estava ausente. A dev-dependency da própria crate em `crates/clipsync-proto/Cargo.toml:26` habilita a feature. `cargo test --workspace` e `cargo clippy --workspace --all-targets -- -D warnings` retornaram 101 com E0583; nenhum smoke foi executado. Bloqueia critérios S0.3/S0.4 e a revisão dos módulos dependentes. Posse atual: Rivet/S1; sem atribuição ao commit S0 informado, que não foi inspecionado.
 2. **P2 · `crates/clipsync-clipboard/src/adapter/fake.rs:2` e demais locais na saída de fmt** divergem de rustfmt (primeiro exemplo: ordenação do import de `mono_us`/`MIME_TEXT_UTF8`). `cargo fmt --all --check` retornou 1 e também informou o módulo testing ausente. Bloqueia S0.4 no checkout compartilhado; diferenças de clipboard pertencem à fatia S2 ainda em trabalho. Não rodei fmt que escreve arquivos.
