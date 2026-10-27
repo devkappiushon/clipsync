@@ -4,6 +4,7 @@
 //! clipboard only for the transfer, so nothing is held between calls.
 use super::poll::PollWatcher;
 use super::{ChangeEvent, ClipError, ClipSnapshot, ClipboardAdapter, WatchMode};
+use arboard::SetExtWindows;
 use clipsync_proto::MIME_TEXT_UTF8;
 use std::time::Duration;
 
@@ -61,6 +62,12 @@ impl ClipboardAdapter for WinClipboard {
         }))
     }
     fn write_text(&mut self, text: &str) -> Result<(), ClipError> {
-        open()?.set_text(text).map_err(map_err)
+        // text from peers must not reach the Windows clipboard history or the cloud clipboard
+        open()?
+            .set()
+            .exclude_from_cloud()
+            .exclude_from_history()
+            .text(text)
+            .map_err(map_err)
     }
 }
