@@ -2806,6 +2806,563 @@ Hashes relevantes:
 
 Evidência completa: `/home/kappxs/.cache/clipsync-verdict/argus-796e46c-bf8p000u` (meta/results/before/after.json). Nenhum fonte foi editado pelo Argus e nenhum comando git foi executado.
 
+### Gates finais do MVP · c1ed65d · Passa
+
+Executado por **Argus** de **2026-10-27T13:08:12.829380-03:00** a **2026-10-27T13:11:25.501762-03:00**, no export informado pelo Maestro como **c1ed65d**: `/home/kappxs/.cache/clipsync-verdict/src`. Ambiente: `source ~/.cargo/env`; `CARGO_TARGET_DIR=/home/kappxs/.cache/clipsync-verdict/target`; toolchain **1.99.1-x86_64-unknown-linux-gnu**, rustc 1.99.1 (58cf8f9c3), cargo 1.99.1 (5f94df478).
+
+**Todos os cinco gates solicitados saíram 0.** Os hashes de todos os arquivos do export são idênticos antes/depois, incluindo Cargo.lock. Não houve falha de espaço/cota nem repetição para esconder uma falha.
+
+| Gate | Resultado | Duração do comando |
+|---|---|---|
+| `cargo test --workspace` | **123 aprovados, 0 falhos, 1 ignorado** (`portal_loopback`, requer sessão gráfica). Inclui o roteiro 8/8. | 72.532 s |
+| `cargo clippy --workspace --all-targets -- -D warnings` | Exit 0; sem warnings. | 2.196 s |
+| `cargo fmt --all --check` | Exit 0; saída vazia. | 0.185 s |
+| `cargo build --release -p clipsync-cli` | Exit 0; binário otimizado gerado. | 68.793 s |
+| `cargo test -p clipsync-cli --test roteiro` | **8/8 aprovados** em execução separada, 0 falhos/ignorados; testes em 43,60 s. | 48.942 s |
+
+Os novos testes de nomes hostis/controles/bidi, socket privado e pausa quando a persistência falha também aparecem aprovados na saída do workspace. Este bloco registra os gates finais; não substitui o relatório da auditoria de segurança.
+
+**Artefato release:** `/home/kappxs/.cache/clipsync-verdict/target/release/clipsync` · **16,396,096 bytes**.
+
+```text
+SHA-256 0670fd6360edeca8ac95ee7999cdbacc71f787a55c22631885a7fbad91841bf1
+```
+
+**Pendência mantida:** input gráfico/§14 item 5 e `portal_loopback` continuam dependentes do usuário; o ignorado não representa aprovação gráfica. Os drifts de ajuda do clap e filtro control_ permanecem pós-MVP por decisão anterior do Maestro. O teste real do socket foi executado dentro do workspace. Nenhum fonte foi editado, nenhum git foi executado e nenhum agente de teste deste cache ficou rodando.
+
+#### Saídas reais dos gates finais
+
+Comando: `cargo test --workspace`; início `2026-10-27T13:08:12.830401-03:00`; exit **0**.
+
+stdout:
+
+```text
+
+running 3 tests
+test text::tests::a_hostile_peer_name_never_reaches_the_delivery_line_raw ... ok
+test pair::tests::hostile_name_is_cleaned_and_the_code_comes_right_before_the_question ... ok
+test text::tests::clean_replaces_controls_c1_and_bidi_and_keeps_text ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 8 tests
+test init_refuses_a_config_with_both_modules_off_and_says_why ... ok
+test clip_send_arrives_in_the_inbox_and_is_refused_when_the_module_is_off ... ok
+test mesh_connects_refuses_strangers_reconnects_and_flags_a_changed_key ... ok
+test pair_shows_the_same_code_and_saves_permissions_on_both_sides ... ok
+test init_creates_profile_files_with_private_modes ... ok
+test pair_declined_on_one_side_saves_nothing_on_either ... ok
+test init_without_a_clipboard_answer_writes_false_and_flags_variant_works ... ok
+test pause_blocks_and_resume_returns_and_state_survives ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 43.78s
+
+
+running 1 test
+test smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test ledger::tests::ids_past_the_ttl_are_forgotten ... ok
+test ledger::tests::full_cap_repeating_the_oldest_id_is_a_duplicate_not_a_new_event ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 12 tests
+test i_debug_never_shows_content ... ok
+test h_manual_mode_only_fills_the_inbox ... ok
+test c_old_lamport_after_new_is_stale_and_goes_to_inbox ... ok
+test f_remote_module_disabled_is_reported ... ok
+test b_duplicate_event_id_applies_once_and_acks_duplicate ... ok
+test d_x_y_x_makes_three_offers_x_x_makes_one ... ok
+test l_pause_between_authorization_and_write_blocks_the_write ... ok
+test k_ttl_counts_from_local_receipt_and_drops_the_text ... ok
+test a_mesh_one_copy_two_offers_no_reoffer ... ok
+test e_own_write_echo_takeover_and_empty_do_not_offer ... ok
+test g_paused_neither_sends_nor_applies_and_resume_does_not_resend ... ok
+test j_clipsend_lists_every_target_and_no_ack_is_unreachable ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.01s
+
+
+running 1 test
+test smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test pairing::tests::pairing_commitment_is_domain_separated ... ok
+test pairing::tests::pairing_save_refuses_a_bad_name ... ok
+test tls::tests::tls_pin_set_replace ... ok
+test tls::tests::tls_changed_server_key_detected_by_dialer ... ok
+test tls::tests::tls_pairing_mode_accepts_any_key_but_mesh_does_not ... ok
+test tls::tests::tls_unknown_client_refused_with_fixed_reason ... ok
+test tls::tests::tls_verifier_runs_on_every_connection_resumption_is_off ... ok
+test pairing::tests::pairing_malicious_peer_name_fails_and_saves_nothing ... ok
+test pairing::tests::pairing_bad_reveal_fails_saves_nothing_and_host_ends ... ok
+test pairing::tests::pairing_declined_on_one_side_saves_nothing ... ok
+test pairing::tests::pairing_code_depends_on_both_nonces ... ok
+test pairing::tests::pairing_happy_path_same_code_and_both_saved ... ok
+test pairing::tests::pairing_window_takes_one_attempt_only ... ok
+test pairing::tests::pairing_after_a_failure_the_window_is_closed ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.10s
+
+
+running 2 tests
+test socket_is_created_private_and_a_live_agent_is_never_unlinked ... ok
+test serve_request_roundtrip_stale_socket_and_cleanup ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test system_diag_reports_os_session_display_and_both_input_tools ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 7 tests
+test stream_and_datagram_control_frame_over_limit_is_reset ... ok
+test pause_fails_closed_when_state_cannot_be_saved ... ok
+test mesh_connects_after_hello_both_ways ... ok
+test stream_and_datagram ... ok
+test mesh_unknown_identity_never_connects ... ok
+test mesh_changed_key_is_blocked_with_constant_reason ... ok
+test mesh_restart_reconnects ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.15s
+
+
+running 12 tests
+test profile_both_modules_off_and_bad_names_are_refused ... ok
+test profile_device_name_with_formatting_characters_is_refused_at_init ... ok
+test profile_identity_id_is_the_single_pin_function ... ok
+test profile_key_with_loose_mode_is_refused_and_missing_profile_says_so ... ok
+test profile_fake_adapters_are_written_to_the_module_tables ... ok
+test profile_state_defaults_to_running_and_roundtrips_pause ... ok
+test profile_peers_file_has_64_hex_ids_and_flat_permissions ... ok
+test profile_peers_upsert_replaces_by_id_or_name_and_rejects_duplicates_on_load ... ok
+test profile_config_with_unknown_key_or_wrong_version_is_an_error ... ok
+test profile_peer_with_a_hostile_name_is_quarantined_and_the_rest_loads ... ok
+test profile_init_creates_private_profile_and_reloads_same_identity ... ok
+test profile_reinit_gets_a_new_identity_but_keeps_peers ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 9 tests
+test loopback_counts_every_event_and_orders_percentiles ... ok
+test rate_limit_drops_the_excess_and_counts_it ... ok
+test destination_without_input_in_refuses_enter_and_never_starts_the_emulator ... ok
+test release_all_only_from_the_session_owner ... ok
+test leave_and_peer_down_release_everything ... ok
+test stats_request_for_foreign_session_gets_no_answer ... ok
+test rate_limit_survives_a_new_enter ... ok
+test paused_destination_drops_datagrams_and_needs_a_new_enter ... ok
+test loopback_without_activation_reports_it ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+
+running 1 test
+test portal_loopback ... ignored, requer sessão gráfica
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 8 tests
+test debug_hides_key_and_button_codes ... ok
+test hash_digits_is_a_zone_index_everything_else_a_name ... ok
+test other_edges_and_offsets ... ok
+test upper_half_of_the_right_edge_is_x_1920_y_0_to_539 ... ok
+test config_defaults_and_barriers ... ok
+test config_rejects_bad_input ... ok
+test token_file_is_0600_and_roundtrips ... ok
+test invalid_token_is_discarded ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+test inbound_datagram_table ... ok
+test outbound_datagram_table ... ok
+test outbound_table ... ok
+test inbound_table ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 7 tests
+test module_set ... ok
+test event_ids_are_random ... ok
+test peer_id_from_hex_errors ... ok
+test peer_id_hex_roundtrip_and_short_form ... ok
+test mono_us_is_monotonic ... ok
+test peer_id_is_sha256_of_spki ... ok
+test reject_reasons_have_portuguese_text ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 7 tests
+test link_delivers_peer_up_with_grants_and_remote_modules ... ok
+test inbound_refusal_becomes_rejected_at_sender ... ok
+test paused_destination_rejects_offer_but_ack_passes ... ok
+test delivers_authorized_offer ... ok
+test datagrams_follow_the_same_rules ... ok
+test outbound_rules_return_errors ... ok
+test invalid_or_oversized_message_is_not_sent ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 5 tests
+test inbox_item_debug_hides_preview ... ok
+test control_request_debug_hides_clip_send_text ... ok
+test clip_offer_debug_hides_text ... ok
+test key_and_button_debug_hide_code ... ok
+test control_messages_roundtrip_as_json ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 18 tests
+test datagram_over_1200_bytes_is_refused ... ok
+test garbage_and_trailing_bytes_are_decode_errors ... ok
+test datagram_with_32_events_fits_and_roundtrips ... ok
+test module_msg_kind ... ok
+test encode_refuses_body_over_max ... ok
+test validate_hello_min_version ... ok
+test validate_device_name_rejects_control_and_bidi ... ok
+test every_frame_variant_roundtrips ... ok
+test validate_refuses_nan_and_infinite_floats ... ok
+test validate_refuses_33_events ... ok
+test validate_refuses_pos_outside_unit_range ... ok
+test validate_device_name_bounds ... ok
+test close_codes_are_stable_short_tokens ... ok
+test unreachable_never_goes_on_the_wire ... ok
+test oversized_frame_is_refused_before_allocating ... ok
+test control_frame_of_64k_plus_one_is_refused ... ok
+test write_then_read_over_a_duplex ... ok
+test validate_clip_offer_mime_and_size ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+```
+
+stderr:
+
+```text
+   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
+   Compiling clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+   Compiling clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+   Compiling clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.64s
+     Running unittests src/main.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync-0967276870f4a82a)
+     Running tests/roteiro.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/roteiro-cd5a0289063c2691)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-c72612d8116dfe30)
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_clipboard-baed76060361b842)
+     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-c494c8daf81d2787)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-85906dbb9d313bfa)
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-e47edfcf9db606a7)
+     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-be77a47c4b2e6213)
+     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-5be713f23f06ba4b)
+     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-74da5007e3e212f2)
+     Running tests/profile.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/profile-49bad18a8c67f2a8)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-fddeda6a0139483a)
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_input-b172c508683df1d7)
+     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-d213bec33e27bc54)
+     Running tests/portal_loopback.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/portal_loopback-b8a062dca1ade761)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-8ffafc657e108765)
+     Running tests/units.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/units-8bfc9ad83c6aad0a)
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_proto-0c66604f71ca982e)
+     Running tests/authorize.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/authorize-e391bd3d15518a60)
+     Running tests/ids.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/ids-dc4409c0c4cc9425)
+     Running tests/memhub.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/memhub-08e08ec1e88b0447)
+     Running tests/redact.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/redact-b33032db01aafc8d)
+     Running tests/wire.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/wire-bc8f4451e647d888)
+   Doc-tests clipsync_clipboard
+   Doc-tests clipsync_core
+   Doc-tests clipsync_input
+   Doc-tests clipsync_proto
+```
+
+Comando: `cargo clippy --workspace --all-targets -- -D warnings`; início `2026-10-27T13:09:25.365969-03:00`; exit **0**.
+
+stderr:
+
+```text
+    Checking clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+    Checking clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
+    Checking clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+    Checking clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+    Checking clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.13s
+```
+
+Comando: `cargo fmt --all --check`; início `2026-10-27T13:09:27.562692-03:00`; exit **0**.
+
+stdout/stderr vazios.
+
+Comando: `cargo build --release -p clipsync-cli`; início `2026-10-27T13:09:27.747954-03:00`; exit **0**.
+
+stderr:
+
+```text
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling libc v0.2.191
+   Compiling cfg-if v1.0.5
+   Compiling serde_core v1.0.229
+   Compiling pin-project-lite v0.2.17
+   Compiling serde v1.0.229
+   Compiling once_cell v1.21.4
+   Compiling winnow v1.0.4
+   Compiling hashbrown v0.17.1
+   Compiling equivalent v1.0.3
+   Compiling rustix v1.1.6
+   Compiling find-msvc-tools v0.1.15
+   Compiling tracing-core v0.1.36
+   Compiling toml_datetime v1.1.2+spec-1.1.0
+   Compiling linux-raw-sys v0.12.1
+   Compiling rand_core v0.10.1
+   Compiling bitflags v2.13.2
+   Compiling shlex v2.0.1
+   Compiling bytes v1.12.1
+   Compiling getrandom v0.4.3
+   Compiling cc v1.10.0
+   Compiling thiserror v2.0.21
+   Compiling indexmap v2.14.2
+   Compiling log v0.4.34
+   Compiling syn v3.0.9
+   Compiling syn v2.0.119
+   Compiling toml_parser v1.1.5+spec-1.1.0
+   Compiling socket2 v0.6.5
+   Compiling errno v0.3.14
+   Compiling mio v1.2.4
+   Compiling signal-hook-registry v1.4.8
+   Compiling typenum v1.20.1
+   Compiling toml_edit v0.25.17+spec-1.1.0
+   Compiling cpufeatures v0.3.1
+   Compiling ring v0.17.14
+   Compiling futures-core v0.3.34
+   Compiling chacha20 v0.10.2
+   Compiling getrandom v0.2.17
+   Compiling hybrid-array v0.4.15
+   Compiling zmij v1.0.23
+   Compiling proc-macro-crate v3.5.0
+   Compiling cfg_aliases v0.2.2
+   Compiling parking v2.2.1
+   Compiling slab v0.4.12
+   Compiling untrusted v0.9.0
+   Compiling zeroize v1.9.1
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling rustls-pki-types v1.15.1
+   Compiling rand v0.10.3
+   Compiling hex v0.4.3
+   Compiling utf8parse v0.2.2
+   Compiling serde_json v1.0.154
+   Compiling const-oid v0.10.2
+   Compiling endi v1.1.1
+   Compiling anstyle-parse v1.0.0
+   Compiling event-listener v5.4.2
+   Compiling memchr v2.8.3
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle-query v1.1.5
+   Compiling anstyle v1.0.14
+   Compiling rustls v0.23.46
+   Compiling smallvec v1.16.4
+   Compiling digest v0.11.3
+   Compiling parking_lot_core v0.9.12
+   Compiling colorchoice v1.0.5
+   Compiling itoa v1.0.18
+   Compiling anstream v1.0.0
+   Compiling sha2 v0.11.1
+   Compiling event-listener-strategy v0.5.4
+   Compiling quinn-udp v0.5.16
+   Compiling serde_spanned v1.1.2
+   Compiling scopeguard v1.2.0
+   Compiling deranged v0.5.9
+   Compiling toml_writer v1.1.3+spec-1.1.0
+   Compiling futures-io v0.3.34
+   Compiling time-core v0.1.9
+   Compiling anyhow v1.0.104
+   Compiling strsim v0.11.1
+   Compiling powerfmt v0.2.1
+   Compiling clap_lex v1.1.1
+   Compiling futures-task v0.3.34
+   Compiling num-conv v0.2.2
+   Compiling subtle v2.6.1
+   Compiling fastrand v2.5.0
+   Compiling heck v0.5.0
+   Compiling futures-lite v2.6.1
+   Compiling time v0.3.55
+   Compiling clap_builder v4.6.7
+   Compiling serde_derive v1.0.229
+   Compiling enumflags2_derive v0.7.12
+   Compiling tracing-attributes v0.1.31
+   Compiling thiserror-impl v2.0.21
+   Compiling tokio-macros v2.7.2
+   Compiling async-trait v0.1.92
+   Compiling futures-macro v0.3.34
+   Compiling tokio v1.54.1
+   Compiling tracing v0.1.44
+   Compiling async-recursion v1.2.0
+   Compiling futures-util v0.3.34
+   Compiling serde_repr v0.1.21
+   Compiling clap_derive v4.6.7
+   Compiling cobs v0.3.0
+   Compiling gethostname v1.1.0
+   Compiling toml v1.1.8+spec-1.1.0
+   Compiling lock_api v0.4.14
+   Compiling async-broadcast v0.7.2
+   Compiling quinn v0.11.12
+   Compiling uuid v1.29.0
+   Compiling ordered-stream v0.2.0
+   Compiling rand_pcg v0.10.2
+   Compiling base64 v0.23.1
+   Compiling x11rb-protocol v0.13.2
+   Compiling tinyvec v1.13.3
+   Compiling regex-syntax v0.8.11
+   Compiling rustc-hash v2.1.3
+   Compiling lru-slab v0.1.3
+   Compiling zvariant_utils v4.2.0
+   Compiling enumflags2 v0.7.12
+   Compiling zcheapstr v1.1.0
+   Compiling postcard v1.1.3
+   Compiling pem v4.0.0
+   Compiling clap v4.6.7
+   Compiling parking_lot v0.12.5
+   Compiling yasna v0.6.0
+   Compiling zvariant_derive v5.15.1
+   Compiling regex-automata v0.4.18
+   Compiling zvariant v5.15.1
+   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling lazy_static v1.5.1
+   Compiling percent-encoding v2.3.2
+   Compiling zbus_names v4.3.5
+   Compiling humantime v2.4.0
+   Compiling zbus_macros v5.19.0
+   Compiling rustls-webpki v0.103.16
+   Compiling x11rb v0.13.2
+   Compiling rcgen v0.14.10
+   Compiling matchers v0.2.0
+   Compiling sharded-slab v0.1.7
+   Compiling zbus v5.19.0
+   Compiling reis v0.7.1
+   Compiling tracing-log v0.2.0
+   Compiling arboard v3.7.0
+   Compiling thread_local v1.1.10
+   Compiling nu-ansi-term v0.50.3
+   Compiling tracing-subscriber v0.3.23
+   Compiling clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+   Compiling quinn-proto v0.11.19
+   Compiling ashpd v0.13.13
+   Compiling clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
+   Compiling clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+   Compiling clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Finished `release` profile [optimized] target(s) in 1m 08s
+```
+
+Comando: `cargo test -p clipsync-cli --test roteiro`; início `2026-10-27T13:10:36.541165-03:00`; exit **0**.
+
+stdout:
+
+```text
+
+running 8 tests
+test clip_send_arrives_in_the_inbox_and_is_refused_when_the_module_is_off ... ok
+test init_creates_profile_files_with_private_modes ... ok
+test init_refuses_a_config_with_both_modules_off_and_says_why ... ok
+test init_without_a_clipboard_answer_writes_false_and_flags_variant_works ... ok
+test mesh_connects_refuses_strangers_reconnects_and_flags_a_changed_key ... ok
+test pair_declined_on_one_side_saves_nothing_on_either ... ok
+test pair_shows_the_same_code_and_saves_permissions_on_both_sides ... ok
+test pause_blocks_and_resume_returns_and_state_survives ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 43.60s
+
+```
+
+stderr:
+
+```text
+   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
+   Compiling clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+   Compiling clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+   Compiling clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.26s
+     Running tests/roteiro.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/roteiro-8bb0db80bf9a908a)
+```
+
+Hashes da base revisada:
+
+```text
+44b4db5574dcab4903fec83c18526c942dfd87d0f3f05ee5d7eae0d3f3286750  Cargo.lock
+fa8d2f618b98da815eb0ed7a3a492ef74a74751abce4bf95a936ebb6078bdf1f  docs/contrato.md
+5be140cb050cd6b56b75d3615af004426842a68d78c928c53eb66518694163d9  crates/clipsync-core/src/agent.rs
+bb63efb2bf50ff0f3269a72ee23026de507137a6f683d20071918f8e22c3eaf9  crates/clipsync-core/src/control.rs
+061a9fc13563c3f65c9bab0320234276040195ce4da352d9ee40a53bfbb58ecd  crates/clipsync-core/src/pairing.rs
+efb77392e4f269ddbf8c160439e8362cea1ac073a93b97b5454b1a1e79d85143  crates/clipsync-core/src/profile.rs
+818cdd5148036aa121b4186ab204473abb36e4f1a991928e290af79ee1f17ca2  crates/clipsync-cli/src/pair.rs
+339a5e258fe03eaa29a511b0f22fd5fe7f31cdd55bd9bcfcae6913863afe70f6  crates/clipsync-cli/src/text.rs
+9e19030ee97cbadb75d624a60c23597f8eb554cd65cf22fd3d832ec8627bb717  crates/clipsync-proto/src/wire.rs
+```
+
+Evidência completa: `/home/kappxs/.cache/clipsync-verdict/argus-c1ed65d-final-68hp_drk` — meta.json, results.json (stdout/stderr/código/duração de cada comando), before.json, after.json, release-binary.json e toolchain.txt.
+
 ## Findings
 
 ### Pendências pós-MVP aceitas pelo Maestro
