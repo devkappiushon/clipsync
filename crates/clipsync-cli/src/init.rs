@@ -1,4 +1,5 @@
 //! `clipsync init`.
+use crate::agent::INPUT_SUPPORTED;
 use crate::fail::Fail;
 use crate::msg;
 use crate::prompt::Prompter;
@@ -30,6 +31,15 @@ fn parse_modules(list: &str) -> Result<ModuleSet, Fail> {
         return Err(Fail::error(msg::NO_MODULE));
     }
     Ok(set)
+}
+
+/// A profile whose every module is unavailable on this platform would never run (contract §11 rule 8).
+fn check_usable(set: ModuleSet, input_supported: bool) -> Result<(), Fail> {
+    if set.clipboard || (set.input && input_supported) {
+        Ok(())
+    } else {
+        Err(Fail::refused(msg::INIT_NO_USABLE_MODULE))
+    }
 }
 
 fn default_name() -> String {
@@ -65,10 +75,11 @@ pub fn run<R: BufRead, W: Write>(
         Some(m) => m,
         // input is on by default where an adapter exists (Linux); the clipboard question defaults to NO
         None => ModuleSet {
-            input: cfg!(target_os = "linux"),
+            input: INPUT_SUPPORTED,
             clipboard: ui.yes_no(msg::ASK_CLIPBOARD, false)?,
         },
     };
+    check_usable(modules, INPUT_SUPPORTED)?;
     let listen = SocketAddr::from((Ipv4Addr::UNSPECIFIED, args.port.unwrap_or(DEFAULT_PORT)));
     let identity = profile.init(InitOptions {
         device_name: name.clone(),
@@ -86,4 +97,36 @@ pub fn run<R: BufRead, W: Write>(
         args.fake_adapters,
     ))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn set(clipboard: bool, input: bool) -> ModuleSet {
+        ModuleSet { clipboard, input }
+    }
+
+    #[test]
+    fn init_without_input_support_refuses_clipboard_off() {
+        for input in [false, true] {
+            let e = check_usable(set(false, input), false).unwrap_err();
+            assert_eq!(
+                (e.code, e.message.as_str()),
+                (3, msg::INIT_NO_USABLE_MODULE)
+            );
+        }
+    }
+
+    #[test]
+    fn init_without_input_support_accepts_clipboard() {
+        assert!(check_usable(set(true, false), false).is_ok());
+        assert!(check_usable(set(true, true), false).is_ok());
+    }
+
+    #[test]
+    fn init_with_input_support_accepts_input_alone_but_not_nothing() {
+        assert!(check_usable(set(false, true), true).is_ok());
+        assert!(check_usable(set(false, false), true).is_err());
+    }
 }

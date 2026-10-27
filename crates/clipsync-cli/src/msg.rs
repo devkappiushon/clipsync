@@ -169,3 +169,5 @@ pub const PROBE_CLIPBOARD_LINUX_ONLY: &str =
     "a prova de clipboard só existe no Linux; use `clipsync diagnose`";
 /// `run` on a system without an input adapter: the module stays off, the rest runs.
 pub const INPUT_UNAVAILABLE: &str = "input (teclado e mouse): indisponível nesta versão neste sistema; o agente segue com os demais módulos";
+pub const RUN_NO_MODULE: &str = "nenhum módulo para ligar neste sistema: o input (teclado e mouse) é indisponível nesta versão e o clipboard está desligado; rode `clipsync init` e ligue o clipboard";
+pub const INIT_NO_USABLE_MODULE: &str = "neste sistema o input (teclado e mouse) é indisponível nesta versão; ligue o clipboard para criar o perfil";
