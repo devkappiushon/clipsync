@@ -1,0 +1,65 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+
+# Convenções §2.4 do contrato: todo crate herda com `[lints] workspace = true`.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+
+# Versões fixadas com `=`. Provedor TLS: ring em todo lugar (aws-lc-sys exige
+# cmake/nasm, ausentes nesta máquina). Nenhuma lib de sistema é necessária.
+# Dep nova entra aqui primeiro (Keel aprova); crates usam `dep.workspace = true`.
+[workspace.dependencies]
+tokio = { version = "=1.54.1", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+    "net",
+    "io-util",
+    "signal",
+] }
+quinn = { version = "=0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "logging"] }
+rcgen = { version = "=0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
+arboard = { version = "=3.7.0", default-features = false }
+x11rb = { version = "=0.13.2", features = ["xfixes"] }
+# remote_desktop referencia screencast::Stream: não compila sem `screencast`.
+ashpd = { version = "=0.13.13", default-features = false, features = [
+    "tokio",
+    "input_capture",
+    "remote_desktop",
+    "screencast",
+] }
+reis = { version = "=0.7.1", default-features = false, features = ["tokio"] }
+clap = { version = "=4.6.7", features = ["derive"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+postcard = { version = "=1.1.3", default-features = false, features = ["alloc"] }
+serde_json = "=1.0.154"
+async-trait = "=0.1.92"
+thiserror = "=2.0.21"
+anyhow = "=1.0.104"
+toml = "=1.1.8"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
+sha2 = "=0.11.1"
+hex = "=0.4.3"
+rand = "=0.10.3"
+rustix = { version = "=1.1.6", features = ["time"] }
+humantime = "=2.4.0"
+time = { version = "=0.3.55", features = ["formatting"] }
+tempfile = "=3.27.0"

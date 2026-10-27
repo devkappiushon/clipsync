@@ -1,0 +1,4 @@
+# Testes podem usar unwrap/expect/panic; produção, não (§2.4 do contrato).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

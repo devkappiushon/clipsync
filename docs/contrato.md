@@ -1,6 +1,7 @@
-# Contrato · ClipSync MVP de hoje (v1.1, Keel, 2026-10-27)
+# Contrato · ClipSync MVP de hoje (v1.2, Keel, 2026-10-27)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
+v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -107,7 +108,7 @@ input_in = false                     # o par pode CONTROLAR meu teclado e mouse 
 `version = 1` · `paused = false`. Pausa sobrevive a reinício.
 
 ## 4. clipsync-proto (Rivet entrega PRIMEIRO, verbatim, antes de qualquer outra coisa)
-Deps: serde, postcard, serde_json, thiserror, async-trait, tokio(sync, io-util), rand, hex, rustix. Feature `testing` liga `MemHub`.
+Deps: serde, postcard, serde_json, thiserror, async-trait, tokio(sync, io-util), rand, hex, rustix, sha2 (todas `workspace = true`). Feature `testing` liga `MemHub`.
 
 ```rust
 // ids.rs
@@ -119,6 +120,8 @@ impl PeerId {
     pub fn from_hex(s: &str) -> Result<Self, IdError>;
     pub fn short(&self) -> String; // "ab12-cd34-ef56-7890" (8 primeiros bytes)
 }
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdError { #[error("invalid hex")] Hex, #[error("invalid length")] Length }
 impl fmt::Display for PeerId {} // = short()
 impl fmt::Debug for PeerId {}   // = short()
 
@@ -206,7 +209,9 @@ pub enum WireError { #[error("frame too large: {len} > {max}")] TooLarge { len: 
                      #[error("decode")] Decode, #[error("invalid: {0}")] Invalid(&'static str),
                      #[error("io: {0}")] Io(#[from] std::io::Error) }
 // validate(): strings dentro dos MAX_*, floats finitos, pos/from/to em 0..=1,
-// events.len() <= MAX_EVENTS_PER_DATAGRAM, text.len() <= MAX_CLIP_TEXT_BYTES, mime == MIME_TEXT_UTF8 no MVP.
+// events.len() <= MAX_EVENTS_PER_DATAGRAM, text.len() <= MAX_CLIP_TEXT_BYTES, mime == MIME_TEXT_UTF8 no MVP,
+// device_name com 1..=MAX_NAME_BYTES bytes (vazio recusado), Hello com min_version <= version.
+// Compatibilidade de versão entre os dois Hello NÃO é do validate(): é do core (CloseCode::Version).
 
 // clip.rs
 pub const MIME_TEXT_UTF8: &str = "text/plain;charset=utf-8";
@@ -255,9 +260,12 @@ pub struct PeerPerms { pub clipboard_in: bool, pub clipboard_out: bool, pub inpu
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PeerInfo { pub id: PeerId, pub name: String, pub perms: PeerPerms,
                       pub remote_modules: ModuleSet, pub connected: bool }
+/// #[error] em inglês, curto. Texto em português fica no msg.rs de quem exibe (cli, módulos).
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
-pub enum SendError { NotConnected, NotAuthorized, RemoteModuleDisabled, LocalModuleDisabled,
-                     Paused, TooLarge, Transport(String) }
+pub enum SendError { #[error("peer not connected")] NotConnected, #[error("not authorized")] NotAuthorized,
+                     #[error("module disabled on peer")] RemoteModuleDisabled,
+                     #[error("module disabled locally")] LocalModuleDisabled, #[error("paused")] Paused,
+                     #[error("message too large")] TooLarge, #[error("transport: {0}")] Transport(String) }
 #[derive(thiserror::Error, Debug)]
 pub enum ModuleError { #[error("config: {0}")] Config(String), #[error("adapter: {0}")] Adapter(String),
                        #[error("{0}")] Other(String) }
@@ -296,13 +304,17 @@ pub trait Module: Send + 'static {
 }
 
 /// Fonte ÚNICA das regras de autorização (core e MemHub chamam estas funções).
-/// Outbound: Clip::Offer exige perms.clipboard_out + remote.clipboard; Input::Enter e datagramas
-/// exigem remote.input (permissão de controle é checada no DESTINO). Pausado bloqueia Offer, Enter e
-/// datagramas; Ack, Stats, StatsRequest, Leave e ReleaseAll passam sempre.
+/// Outbound, checado NESTA ORDEM, primeira falha vence:
+///   LocalModuleDisabled -> RemoteModuleDisabled -> NotAuthorized -> Paused.
+/// NotAuthorized na saída só existe para Clip::Offer (perms.clipboard_out); Input::Enter e datagramas
+/// não têm permissão local de saída (a permissão de controle é checada no DESTINO).
+/// Ack, Stats, StatsRequest, Leave e ReleaseAll ignoram pausa e permissão, mas exigem o módulo local ligado.
 pub fn authorize_outbound(local: ModuleSet, perms: &PeerPerms, remote: ModuleSet, paused: bool, msg: &ModuleMsg) -> Result<(), SendError>;
 pub fn authorize_outbound_datagram(local: ModuleSet, remote: ModuleSet, paused: bool) -> Result<(), SendError>;
-/// Inbound: módulo local desligado -> ModuleDisabled; Clip::Offer sem perms.clipboard_in -> NotAuthorized;
-/// Input::Enter/datagrama sem perms.input_in -> NotAuthorized; pausado -> Paused (Offer/Enter/datagrama).
+/// Inbound, checado NESTA ORDEM: ModuleDisabled -> NotAuthorized -> Paused.
+/// Clip::Offer exige perms.clipboard_in; Input::Enter e datagrama exigem perms.input_in; pausa bloqueia
+/// Offer, Enter e datagrama. Ack, Stats, StatsRequest, Leave e ReleaseAll ignoram pausa e permissão,
+/// mas exigem o módulo local ligado. Por isso o MÓDULO só age sobre esses se a session/id pertence ao remetente (§8 regra 2).
 pub fn authorize_inbound(local: ModuleSet, perms: &PeerPerms, paused: bool, msg: &ModuleMsg) -> Result<(), RejectReason>;
 pub fn authorize_inbound_datagram(local: ModuleSet, perms: &PeerPerms, paused: bool) -> Result<(), RejectReason>;
 // Inbound rejeitado: core responde Frame::Rejected{kind, ref_id: id da Offer se houver, reason}
@@ -356,9 +368,12 @@ impl MemHub {
     pub fn new() -> Self;
     pub fn add_node(&self, name: &str, modules: ModuleSet) -> MemNode;
     /// a_grants = permissões que A concede a B (gravadas em A); idem b_grants.
+    /// Entrega ModuleInput::PeerUp aos DOIS lados.
     pub fn link(&self, a: PeerId, b: PeerId, a_grants: PeerPerms, b_grants: PeerPerms);
     pub fn set_paused(&self, node: PeerId, paused: bool); // também entrega ModuleInput::Paused
-    pub fn sent_count(&self, from: PeerId, to: PeerId) -> usize; // frames reliable entregues
+    /// Conta só frames reliable ENTREGUES ao destino. Entrada recusada não conta e vira
+    /// ModuleInput::Rejected{from: destino, ref_id, reason} no remetente (mesmo efeito do Frame::Rejected no core).
+    pub fn sent_count(&self, from: PeerId, to: PeerId) -> usize;
 }
 ```
 
@@ -516,7 +531,7 @@ pub mod probe {
 ```
 Regras do módulo:
 1. MVP de hoje: o agente **não captura sozinho**. Captura só sob `ModuleCommand::InputLoopback{to, seconds}`: usa `[[input.barrier]]` (ou, sem barreira, metade superior da borda direita da zona 0), ao `Activated` manda `InputMsg::Enter`, cada evento vira datagrama (lote até MAX_EVENTS_PER_DATAGRAM, sem esperar), ao fim `Leave` + `StatsRequest`, responde `ModuleReply::InputLoopback(stats)`.
-2. Destino: ao receber `Enter` autorizado inicia o emulador (preguiçoso); com `emulate = "fake"` só conta. Mede latência = mono_us() na chegada menos t_mono_us; p50/p95 por ordenação; responde `Stats`. `Leave`/`ReleaseAll`/pausa/PeerDown -> `release_all()`.
+2. Destino: ao receber `Enter` autorizado inicia o emulador (preguiçoso); com `emulate = "fake"` só conta. Mede latência = mono_us() na chegada menos t_mono_us; p50/p95 por ordenação; responde `Stats`. `Leave`/`ReleaseAll`/pausa/PeerDown -> `release_all()`. Como o core deixa passar `Leave`, `ReleaseAll` e `StatsRequest` sem checar input_in (§4), o módulo só age se `session` é uma sessão aberta por aquele MESMO remetente; senão ignora e conta. Idem `Stats` recebido: só aceita para sessão que este nó pediu àquele par.
 3. Limite de taxa MAX_INPUT_DATAGRAMS_PER_SEC por par; excedente descartado e contado. Datagrama de sessão desconhecida descartado.
 4. Probe `--capture`: lista zonas (nome via Mutter DisplayConfig ou wl_output quando o portal não der nome), barreira só na metade superior da borda direita, imprime contagem de eventos por tipo e latência, nunca tecla; `Esc` (KEY_ESC lido, não impresso) ou `--seconds` libera.
 5. Probe `--emulate`: pede confirmação "s/N" (pula com `--yes`), espera 5 s, move o cursor num quadrado e digita "ção" (dead keys/compose conforme keymap) na janela focada.

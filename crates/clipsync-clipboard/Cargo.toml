@@ -1,0 +1,24 @@
+[package]
+name = "clipsync-clipboard"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+clipsync-proto = { path = "../clipsync-proto" }
+arboard.workspace = true
+x11rb.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+humantime.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

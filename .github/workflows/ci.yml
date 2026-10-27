@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: fmt + clippy + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Fixado aqui porque a action exige o input `toolchain`; mantenha em sincronia
+      # com rust-toolchain.toml (1.99.1) ao subir o toolchain.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.1"
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # O runner não tem sessão gráfica: nada de Wayland, X11, portais XDG ou libei.
+      # Testes que exigem sessão gráfica são `#[ignore = "requer sessão gráfica"]`
+      # (contrato §2.6) e, por padrão, `cargo test` não os executa.
+      - name: cargo test
+        run: cargo test --workspace

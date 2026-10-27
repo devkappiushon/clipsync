@@ -1,0 +1,24 @@
+[package]
+name = "clipsync-proto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Liga `MemHub` e os adaptadores falsos usados pelos testes dos módulos.
+[features]
+testing = []
+
+[dependencies]
+serde.workspace = true
+postcard.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+rand.workspace = true
+hex.workspace = true
+rustix.workspace = true
+
+[lints]
+workspace = true
