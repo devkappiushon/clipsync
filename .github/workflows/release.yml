@@ -1,0 +1,109 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: linux-x86_64
+            ext: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: windows-x86_64
+            ext: zip
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Versão do rust-toolchain.toml (1.99.1). A action exige o input `toolchain`.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.1"
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: cargo build --release
+        run: cargo build --release -p clipsync-cli --locked --target ${{ matrix.target }}
+
+      - name: empacota (linux)
+        if: matrix.name == 'linux-x86_64'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          stage="clipsync-${TAG}-linux-x86_64"
+          mkdir -p "$stage"
+          cp "target/${{ matrix.target }}/release/clipsync" "$stage/"
+          cp README.md "$stage/"
+          tar -czf "${stage}.tar.gz" -C "$stage" clipsync README.md
+
+      - name: empacota (windows)
+        if: matrix.name == 'windows-x86_64'
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $stage = "clipsync-$env:TAG-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/clipsync.exe" "$stage/"
+          Copy-Item README.md "$stage/"
+          Compress-Archive -Path "$stage/clipsync.exe", "$stage/README.md" -DestinationPath "$stage.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: clipsync-*-${{ matrix.name }}.${{ matrix.ext }}
+          if-no-files-found: error
+
+  release:
+    name: publica release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: SHA256SUMS
+        working-directory: dist
+        run: sha256sum clipsync-* > SHA256SUMS
+
+      - name: notas do release
+        run: |
+          cat > notes.md <<'EOF'
+          Binários de linha de comando para Linux e Windows.
+
+          - Linux (X11 e XWayland): malha QUIC, pareamento, clipboard e teclado e mouse experimentais.
+          - Windows: malha QUIC, pareamento e clipboard de texto. Teclado e mouse ainda não estão disponíveis nesta versão.
+
+          Confira o SHA-256 em SHA256SUMS antes de executar.
+          EOF
+
+      - name: gh release create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "ClipSync $TAG" --notes-file notes.md

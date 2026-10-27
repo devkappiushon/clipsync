@@ -37,3 +37,25 @@ jobs:
       # (contrato §2.6) e, por padrão, `cargo test` não os executa.
       - name: cargo test
         run: cargo test --workspace
+
+  windows:
+    name: windows build + test
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.1"
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Prova que o release compila para Windows. O input e o roteiro e2e ficam
+      # só no Linux por enquanto (dependem de portal/libei e de sessão gráfica).
+      - name: cargo build --release
+        run: cargo build --release -p clipsync-cli --locked
+
+      - name: cargo test (headless)
+        run: cargo test -p clipsync-proto -p clipsync-core -p clipsync-clipboard --locked

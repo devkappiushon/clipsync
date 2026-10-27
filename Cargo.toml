@@ -20,6 +20,14 @@ todo = "deny"
 unimplemented = "deny"
 dbg_macro = "deny"
 
+# Binário de release: menor e mais rápido. `panic` fica no padrão (unwind):
+# há testes que dependem de unwind.
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = 3
+
 # Versões fixadas com `=`. Provedor TLS: ring em todo lugar (aws-lc-sys exige
 # cmake/nasm, ausentes nesta máquina). Nenhuma lib de sistema é necessária.
 # Dep nova entra aqui primeiro (Keel aprova); crates usam `dep.workspace = true`.

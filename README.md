@@ -4,6 +4,33 @@ Teclado, mouse e área de transferência entre os meus computadores, em um aplic
 
 Estado em 2026-10-27: nível 1 (provas técnicas) concluído neste notebook; MVP de linha de comando em construção. Nada validado em outra máquina ainda. Detalhes: `docs/matriz-compatibilidade.md`.
 
+## Baixar
+
+Cada release traz um pacote por plataforma, com o binário `clipsync` e este README:
+
+- `clipsync-v0.1.0-linux-x86_64.tar.gz`
+- `clipsync-v0.1.0-windows-x86_64.zip` (`clipsync.exe`)
+
+O release também publica `SHA256SUMS`. Confira antes de executar (troque `v0.1.0` pela tag que você baixou):
+
+```sh
+# Linux e macOS
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+```powershell
+# Windows (PowerShell): compare com a linha do pacote em SHA256SUMS
+Get-FileHash .\clipsync-v0.1.0-windows-x86_64.zip -Algorithm SHA256
+```
+
+O que funciona em cada plataforma nesta versão:
+
+| Recurso | Linux (X11 e XWayland) | Windows |
+|---|---|---|
+| Malha QUIC e pareamento | sim | sim |
+| Clipboard de texto | sim | sim (só texto) |
+| Teclado e mouse | experimental | ainda não disponível |
+
 ## Documentos
 
 - `docs/prompt-mestre.md`: especificação que manda (v4).
