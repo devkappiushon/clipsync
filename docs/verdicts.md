@@ -1196,7 +1196,377 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; fini
 
 Evidência persistente: `/home/kappxs/.cache/clipsync-verdict/argus-7923e20-3po5__ky` (meta/results/before/after/boundary-results.json, probe-stdin.txt e boundary-tests).
 
+### S3 · Vector · 2026-10-27T12:35:27-03:00 · Não passa
+
+Base informada pelo Maestro: export **3eaa730**, em `/home/kappxs/.cache/clipsync-verdict/src`; `CARGO_TARGET_DIR=/home/kappxs/.cache/clipsync-verdict/target`. §9 S3 itens 1 e 5 executados de **12:28:30 a 12:28:49 -03:00**, após `source ~/.cargo/env`. Os critérios S3 do contrato no export são idênticos aos do contrato atual no repositório (workboard v1.8). Nenhum arquivo do export mudou entre o inventário inicial, os gates e as reproduções, inclusive Cargo.lock.
+
+**Veredito: Não passa**, por S3-1/S3-2 reproduzidos abaixo. Os gates oficiais passam: **16 testes aprovados** (8 de módulo, 7 unitários de integração, 1 smoke), zero falhos, **1 ignorado** (`portal_loopback`, requer sessão gráfica); Clippy e fmt saem 0. A aprovação automática de S2 v1.4 permanece no bloco anterior; este bloco não aprova S1/S4/integração.
+
+#### Achados reproduzidos
+
+1. **S3-1 · P2 · `crates/clipsync-input/src/module.rs:441`** — todo Enter substitui o registro por `Incoming::new(session)`, zerando `window_count` e reiniciando `window_start` (`:72`). O limite de `:460` fica por sessão, embora §8 regra 3 exija limite por par. Reprodução usando módulo real + MemHub/FakeEmulate: mesmo peer envia 1.500 datagramas na sessão 7 e 1.500 na sessão 8; **3.000 datagramas emulados em 9.348 µs**, limite 2.000/s. As seis movimentações de posicionamento dos dois Enter foram descontadas. Impacto: um peer autorizado contorna continuamente o limite abrindo sessões; o teste oficial só cobre uma sessão.
+2. **S3-2 · P2 · `crates/clipsync-input/src/module.rs:550`** — `pick_barriers` faz parse direto de u32; o seletor contratual `monitor = "#0"` (§3 e §10 item 3) cai em `ZoneRef::Name("#0")`. Reprodução pelo módulo real com adaptador de inspeção confirma **configured_monitor=#0 adapter_zone=Name("#0")**. `PortalCapture::resolve` (`adapter/portal.rs:138`) busca esse nome literalmente, logo a seleção por índice falha quando a zona tem nome de conector ou nenhum nome. Impacto: fica quebrado o fallback por índice previsto quando o portal não fornece o nome. Nenhum portal foi acionado por esta reprodução.
+
+#### Checagens por leitura e cobertura observada
+
+| Requisito | Evidência e resultado |
+|---|---|
+| Debug de Key/Button redigido | `clipsync-proto/src/input.rs:32`: os dois braços usam Redacted; InputDatagram imprime só session/seq/contagem. CaptureEvent delega ao Debug de InputEvent. Teste `debug_hides_key_and_button_codes` passa com sentinelas 4660/4661. |
+| Nenhum keycode em log | Revisados logs/prints em module.rs, adapter/portal.rs e probe.rs. Não há impressão explícita de code/ev/eventos; o probe conta tipos e usa KEY_ESC só em comparação (`probe.rs:133`). Erros de emulação imprimem capacidade ou erro de I/O, sem interpolar código de tecla. Verificação por leitura, sem afirmar validação gráfica em execução. |
+| Dono de Leave/ReleaseAll/StatsRequest/Stats | `module.rs:361`, `:375`, `:386` consultam incoming pelo remetente e conferem session; `:401` exige ctl.to == from e session atual não zero. Falhas incrementam ignored. Os testes oficiais de Leave, ReleaseAll e StatsRequest estrangeiros passam; a checagem de Stats foi conferida por leitura. |
+| Limite por peer | O caso oficial de sessão única passa; **S3-1 reprova a continuidade do orçamento entre sessões**. Sessão desconhecida é descartada em `module.rs:451`/`:455`. |
+| TokenStore 0600 | `adapter/tokens.rs:54` cria temporário com 0600, aplica chmod 0600 antes de rename; `:32` descarta token malformado. Testes `token_file_is_0600_and_roundtrips` e `invalid_token_is_discarded` passam. Persistência RemoteDesktop usa ExplicitlyRevoked e restore_token (`adapter/portal.rs:656`). Reuso sem diálogo permanece manual. |
+| supported_capabilities ausente | A busca no crate encontra só comentários em portal.rs/diag.rs; nenhuma chamada. CreateSession/SelectDevices pedem Keyboard e Pointer diretamente. |
+| Barreira direita | `adapter/barrier.rs:28` usa zone.x + zone.width; span arredonda e subtrai 1 no extremo final. Testes confirmam x=1920, y=0..539, outras bordas e offsets. Configuração por índice tem o defeito separado S3-2. |
+| Permissão, pausa, liberação e loopback fake | Testes oficiais aprovados: destino sem input_in não inicia emulador; pausa descarta datagramas e exige novo Enter; Leave/PeerDown liberam teclas; loopback recebe 200 eventos com p50 <= p95. |
+
+**Pendentes, sem execução por Argus:** §9 S3 itens **2, 3, 4, 6 e 7**, conforme instrução do Maestro. Captura/emulação reais, loopback com CLI, `portal_loopback --ignored`, reuso de token sem diálogo, teclado e posição após Release aguardam o log do Maestro/matriz. O teste gráfico ignorado no gate não equivale a aprovação. O workboard mantém essas responsabilidades em S3; nenhuma mudança de posse foi realizada.
+
+#### Saídas reais dos gates
+
+Comando: `cargo test -p clipsync-input`; início `2026-10-27T12:28:30.863454-03:00`; exit **0**.
+
+stdout:
+
+```text
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 8 tests
+test loopback_counts_every_event_and_orders_percentiles ... ok
+test rate_limit_drops_the_excess_and_counts_it ... ok
+test destination_without_input_in_refuses_enter_and_never_starts_the_emulator ... ok
+test release_all_only_from_the_session_owner ... ok
+test leave_and_peer_down_release_everything ... ok
+test stats_request_for_foreign_session_gets_no_answer ... ok
+test paused_destination_drops_datagrams_and_needs_a_new_enter ... ok
+test loopback_without_activation_reports_it ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+
+running 1 test
+test portal_loopback ... ignored, requer sessão gráfica
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 7 tests
+test other_edges_and_offsets ... ok
+test debug_hides_key_and_button_codes ... ok
+test upper_half_of_the_right_edge_is_x_1920_y_0_to_539 ... ok
+test config_defaults_and_barriers ... ok
+test token_file_is_0600_and_roundtrips ... ok
+test config_rejects_bad_input ... ok
+test invalid_token_is_discarded ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+```
+
+stderr:
+
+```text
+   Compiling rustix v1.1.6
+   Compiling linux-raw-sys v0.12.1
+   Compiling slab v0.4.12
+   Compiling tracing v0.1.44
+   Compiling futures-util v0.3.34
+   Compiling zbus v5.19.0
+   Compiling reis v0.7.1
+   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling tempfile v3.27.0
+   Compiling ashpd v0.13.13
+   Compiling clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.97s
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_input-17510809f8dddc56)
+     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-6791af65086b93b6)
+     Running tests/portal_loopback.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/portal_loopback-637131c0ec0c5ce4)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-3665d3e3b17d8b56)
+     Running tests/units.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/units-1b23caa983c13b1f)
+   Doc-tests clipsync_input
+```
+
+Comando: `cargo clippy -p clipsync-input --all-targets -- -D warnings`; início `2026-10-27T12:28:42.958875-03:00`; exit **0**.
+
+stderr:
+
+```text
+    Checking linux-raw-sys v0.12.1
+    Checking slab v0.4.12
+    Checking tracing v0.1.44
+    Checking futures-util v0.3.34
+    Checking rustix v1.1.6
+    Checking zbus v5.19.0
+    Checking reis v0.7.1
+    Checking clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+    Checking tempfile v3.27.0
+    Checking ashpd v0.13.13
+    Checking clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.13s
+```
+
+Comando: `cargo fmt -p clipsync-input --check`; início `2026-10-27T12:28:49.148611-03:00`; exit **0**.
+
+stdout/stderr vazios.
+
+#### Reproduções independentes, fora dos fontes
+
+Harness compilado por stdin contra as bibliotecas produzidas pelo gate; texto preservado como `s3-probe-stdin.txt` e comando completo em `s3-boundary-results.json`. SHA-256 do stdin: `4e68bae1e65b6a61f23df78b63c0457e707ef9d3f88dc246cd76af4aafd3836b`. Não foi acrescentado nem editado arquivo .rs no repositório/export. O primeiro comando de compilação do harness escolheu um artefato Tokio com features diferentes e falhou; após selecionar as dependências exatas do fingerprint de clipsync-input, compilou com exit 0. O histórico completo está no JSON. Os quatro warnings de helpers não usados são só do harness; o Clippy do crate permanece verde.
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/argus-3eaa730-7l7l0kyr/s3-boundary-tests --exact rate_budget_must_survive_new_session_from_same_peer --nocapture`; exit **101**.
+
+stdout:
+
+```text
+
+running 1 test
+same_peer sessions=2 submitted_datagrams=3000 emulated_datagrams=3000 elapsed_us=9348 limit=2000
+test rate_budget_must_survive_new_session_from_same_peer ... FAILED
+
+failures:
+
+failures:
+    rate_budget_must_survive_new_session_from_same_peer
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.01s
+
+```
+
+stderr:
+
+```text
+
+thread 'rate_budget_must_survive_new_session_from_same_peer' (470633) panicked at <anon>:146:5:
+a new session must not renew the peer's rate budget
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+```
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/argus-3eaa730-7l7l0kyr/s3-boundary-tests --exact hash_zero_monitor_must_be_zone_index_zero --nocapture`; exit **101**.
+
+stdout:
+
+```text
+
+running 1 test
+configured_monitor=#0 adapter_zone=Name("#0")
+test hash_zero_monitor_must_be_zone_index_zero ... FAILED
+
+failures:
+
+failures:
+    hash_zero_monitor_must_be_zone_index_zero
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+```
+
+stderr:
+
+```text
+
+thread 'hash_zero_monitor_must_be_zone_index_zero' (470635) panicked at <anon>:184:5:
+contract #0 must select zone index 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+```
+
+#### Hashes da base revisada
+
+```text
+87221da170a1501c83d6aa31be70b8873ced7432606c687ef6b59c07db692d9a  docs/contrato.md
+c61ece11395b51b30ad72848618edd23b41fdac97f713deed13fb4873c3a8ef3  crates/clipsync-input/src/module.rs
+5c82cf48afbb39ff5f77c5544f4ce9f816120acd47609789e084b187ee989fdd  crates/clipsync-input/src/adapter/portal.rs
+dd4b79f976853aae21339e388354c06ac561bae8b9f9afcba61bc866b9902e36  crates/clipsync-input/src/adapter/tokens.rs
+75d3718b8996bcaabfb8069c18a583514e89bdbbce3b1042e030b81cb553fc20  crates/clipsync-input/src/adapter/barrier.rs
+123e5a26e44f4b0d52c94b41873003e64a146f575846b83cce873a49d51525e3  crates/clipsync-proto/src/input.rs
+907ad512ba7c0a719d52064ddddfedcce2dbe6d11f5cdd824a37879dc778afd9  Cargo.lock
+```
+
+Evidência persistente: `/home/kappxs/.cache/clipsync-verdict/argus-3eaa730-7l7l0kyr` (meta/results/before/after.json, s3-probe-stdin.txt, s3-boundary-results.json e s3-boundary-tests). Argus não aplicou correções e não executou git.
+
+### S3 · v1.1 · 2026-10-27T12:42:05-03:00 · Passa no escopo automático
+
+Base informada: **30dcd43**, export `/home/kappxs/.cache/clipsync-verdict/src`, cache `/home/kappxs/.cache/clipsync-verdict/target`. **Encerra S3-1 e S3-2**; substitui a reprovação de 3eaa730 no escopo automático. Gates oficiais: **18 aprovados, 0 falhos, 1 ignorado** (portal_loopback); clippy/fmt saem 0. Inventário antes/depois idêntico. Itens gráficos §9 S3.2/3/4/6/7 continuam pendentes do Maestro.
+
+- S3-1: `module.rs:103` implementa token bucket monotônico, capacidade 2.000 e reposição de 2.000/s; mapa por PeerId separado de Incoming, consultado em `:489`, removido somente em PeerDown (`:363`). Enter não renova o orçamento. Novo teste oficial `rate_limit_survives_a_new_enter` passa.
+- A reprodução original, sem alterar o stdin, resultou em **2.022 aceitos em 11.192 µs** e exit 101: a asserção antiga exigia no máximo 2.000, ignorando a reposição contínua do token bucket informado pelo Maestro. Preservei esse resultado. Adaptei somente o teto da asserção para `2000 + ceil(elapsed_seconds * 2000)`, mantendo o mesmo peer, duas sessões e 3.000 envios. Resultado **2.024 aceitos, teto 2.025, 12.152 µs**, exit 0. Isso aprova a semântica de token bucket solicitada (burst 2.000 + reposição), não afirma um teto rígido de 2.000 em toda janela móvel de um segundo.
+- S3-2: `config.rs:118` reconhece '#' seguido de dígitos como Index; `module.rs:574` usa essa função. A reprodução original agora imprime **configured_monitor=#0 adapter_zone=Index(0)**, exit 0. Testes novos cobrem #0/#12 e nomes; o restante da geometria permanece coberto pelos gates.
+
+Debug, não impressão de keycodes, checagem do dono de session, TokenStore e ausência de chamada a supported_capabilities mantêm a leitura da revisão anterior; os testes correspondentes foram executados novamente. Sem edição de fonte, execução de git ou portal.
+
+#### Saídas reais
+
+Comando: `cargo test -p clipsync-input`; exit **0**.
+
+stdout:
+
+```text
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 9 tests
+test loopback_counts_every_event_and_orders_percentiles ... ok
+test rate_limit_drops_the_excess_and_counts_it ... ok
+test destination_without_input_in_refuses_enter_and_never_starts_the_emulator ... ok
+test release_all_only_from_the_session_owner ... ok
+test leave_and_peer_down_release_everything ... ok
+test stats_request_for_foreign_session_gets_no_answer ... ok
+test rate_limit_survives_a_new_enter ... ok
+test paused_destination_drops_datagrams_and_needs_a_new_enter ... ok
+test loopback_without_activation_reports_it ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+
+running 1 test
+test portal_loopback ... ignored, requer sessão gráfica
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 8 tests
+test debug_hides_key_and_button_codes ... ok
+test other_edges_and_offsets ... ok
+test config_defaults_and_barriers ... ok
+test upper_half_of_the_right_edge_is_x_1920_y_0_to_539 ... ok
+test hash_digits_is_a_zone_index_everything_else_a_name ... ok
+test config_rejects_bad_input ... ok
+test token_file_is_0600_and_roundtrips ... ok
+test invalid_token_is_discarded ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+```
+
+stderr:
+
+```text
+   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.80s
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_input-17510809f8dddc56)
+     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-6791af65086b93b6)
+     Running tests/portal_loopback.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/portal_loopback-637131c0ec0c5ce4)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-3665d3e3b17d8b56)
+     Running tests/units.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/units-1b23caa983c13b1f)
+   Doc-tests clipsync_input
+```
+
+Comando: `cargo clippy -p clipsync-input --all-targets -- -D warnings`; exit **0**.
+
+stderr:
+
+```text
+    Checking clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+    Checking clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.27s
+```
+
+Comando: `cargo fmt -p clipsync-input --check`; exit **0**.
+
+stdout/stderr vazios.
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/s3-original-tests --exact rate_budget_must_survive_new_session_from_same_peer --nocapture`; exit **101**.
+
+stdout:
+
+```text
+
+running 1 test
+same_peer sessions=2 submitted_datagrams=3000 emulated_datagrams=2022 elapsed_us=11192 limit=2000
+test rate_budget_must_survive_new_session_from_same_peer ... FAILED
+
+failures:
+
+failures:
+    rate_budget_must_survive_new_session_from_same_peer
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.01s
+
+```
+
+stderr:
+
+```text
+
+thread 'rate_budget_must_survive_new_session_from_same_peer' (527610) panicked at <anon>:146:5:
+a new session must not renew the peer's rate budget
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+```
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/s3-original-tests --exact hash_zero_monitor_must_be_zone_index_zero --nocapture`; exit **0**.
+
+stdout:
+
+```text
+
+running 1 test
+configured_monitor=#0 adapter_zone=Index(0)
+test hash_zero_monitor_must_be_zone_index_zero ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+```
+
+Comando: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/s3-bucket-tests --exact rate_budget_must_survive_new_session_from_same_peer --nocapture`; exit **0**.
+
+stdout:
+
+```text
+
+running 1 test
+same_peer sessions=2 submitted_datagrams=3000 emulated_datagrams=2024 elapsed_us=12152 limit=2000
+token_bucket capacity=2000 permitted_with_elapsed_refill=2025 observed=2024
+test rate_budget_must_survive_new_session_from_same_peer ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.01s
+
+```
+
+Hashes de reprodução (stdin):
+
+```text
+4e68bae1e65b6a61f23df78b63c0457e707ef9d3f88dc246cd76af4aafd3836b  s3-original-stdin.txt
+c3957b861828cfef5e00f5b238350b5a233ec0b289f48f2f4a322e67731b794f  s3-bucket-stdin.txt
+```
+
+Evidências completas e hashes do export: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p` (s3-results.json, s3-boundary-results.json, before.json/after-s3.json).
+
 ## Findings
+
+### S3 · 3eaa730 · histórico — encerrados na v1.1 (30dcd43)
+
+1. **S3-1 · P2 · `crates/clipsync-input/src/module.rs:441`** — todo Enter substitui o registro por `Incoming::new(session)`, zerando `window_count` e reiniciando `window_start` (`:72`). O limite de `:460` fica por sessão, embora §8 regra 3 exija limite por par. Reprodução usando módulo real + MemHub/FakeEmulate: mesmo peer envia 1.500 datagramas na sessão 7 e 1.500 na sessão 8; **3.000 datagramas emulados em 9.348 µs**, limite 2.000/s. As seis movimentações de posicionamento dos dois Enter foram descontadas. Impacto: um peer autorizado contorna continuamente o limite abrindo sessões; o teste oficial só cobre uma sessão.
+2. **S3-2 · P2 · `crates/clipsync-input/src/module.rs:550`** — `pick_barriers` faz parse direto de u32; o seletor contratual `monitor = "#0"` (§3 e §10 item 3) cai em `ZoneRef::Name("#0")`. Reprodução pelo módulo real com adaptador de inspeção confirma **configured_monitor=#0 adapter_zone=Name("#0")**. `PortalCapture::resolve` (`adapter/portal.rs:138`) busca esse nome literalmente, logo a seleção por índice falha quando a zona tem nome de conector ou nenhum nome. Impacto: fica quebrado o fallback por índice previsto quando o portal não fornece o nome. Nenhum portal foi acionado por esta reprodução.
+
 
 ### S2 v1.3 · e611a88 · histórico — S2-1/S2-2 encerrados na v1.4 (7923e20)
 
