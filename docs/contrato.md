@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.10, Keel, 2026-10-27)
+# Contrato · ClipSync MVP de hoje (v1.11, Keel, 2026-10-27)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -10,11 +10,12 @@ v1.7 (decisão do Maestro): hoje o Rivet NÃO embrulha `quinn::crypto`. Em falha
 v1.8 (decisão do Maestro): `run` perde o flag `--listen` (§6). A porta vem só de `network.listen`, porque o `agent::run` lê a config sozinho.
 v1.9: §9 S4 item 2 passa a usar `--test control`, porque o filtro por nome não selecionava o arquivo. Pendências pós-MVP registradas no workboard: ajuda e erros do clap em inglês; embrulho quinn-proto.
 v1.10 (auditoria `docs/seguranca.md`): §5 regra 3 define o que conta como tentativa de pareamento (Commit recebido; máx 3 por janela; Reveal divergente fecha na hora; implementação pós-MVP, S1-04). Regras dos achados em correção hoje: nome de dispositivo (S1-01, §4 validate e §2 regra 8), nome inválido nunca gravado (S1-02, regra 3), pausa falha fechada (S1-08, regra 8), socket criado de forma atômica (S1-09, control.rs).
+v1.11 (fatia S5 · Windows e release, decisões do Maestro + Keel): nova §11 e §9 S5. No Windows, a 0.1.0 tem malha, pareamento e clipboard; teclado e mouse ficam indisponíveis. Controle por named pipe só local (`reject_remote_clients`, `first_pipe_instance`, nome sorteado publicado em `DIR\agent.pipe`). Perfil protegido pela ACL do usuário, sem chmod, em `%LOCALAPPDATA%\clipsync`. Clipboard `win-poll` (arboard, 250 ms) experimental. Release por tag `v*` sem cache e com CRT estática. Na S5 cada builder commita os próprios arquivos (§11 regra 12). Posse do core inteiro volta ao Rivet durante a S5.
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
 ## 0. Regras do time
-1. Ninguém roda git (o Maestro commita). Ninguém sobe processo de longa duração fora de teste automatizado (`cargo test` pode subir `clipsync run` como filho e matar no fim).
+1. Ninguém roda git (o Maestro commita); exceção na S5: cada builder commita os próprios arquivos na main local, sem push (§11 regra 12). Ninguém sobe processo de longa duração fora de teste automatizado (`cargo test` pode subir `clipsync run` como filho e matar no fim).
 2. Um dono por crate/arquivo (§2). Editar arquivo de outra fatia = pedir ao dono.
 3. Sempre `source ~/.cargo/env` antes de cargo. Toolchain fixado: 1.99.1. Sem sudo, sem Node, sem Tauri.
 4. Dep nova no `[workspace.dependencies]`: pedir ao Keel; Bolt adiciona. Crates só usam `dep.workspace = true`.
@@ -73,6 +74,7 @@ DIR/
 ```
 `portal-tokens.toml`: `version = 1` · `remote_desktop = "<token>"`. Token inválido ou recusado: apaga a chave e pede o diálogo de novo. InputCapture v1 não tem token: 1 diálogo por sessão do agente (documentado na matriz).
 Segredo em arquivo 0600 é provisório (cofre da plataforma fica para depois; registrado em Aberto).
+Windows (v1.11): DIR padrão `%LOCALAPPDATA%\clipsync`, sem chmod (a ACL do usuário protege), e `agent.pipe` no lugar de `agent.sock`. Ver §11 regras 4 e 5.
 
 ### config.toml
 ```toml
@@ -717,6 +719,54 @@ Todos os comandos rodam de `/home/kappxs/Documentos/ANTIGOS/clipsync` com `sourc
 3. Roteiro 7: `cargo test --workspace` verde; `clipsync diagnose` lista portais (InputCapture v1, RemoteDesktop v2), data-control ausente, Input Leap ativo.
 4. `cargo build --release -p clipsync-cli` gera `target/release/clipsync`.
 
+### S5 · Windows e release (v1.11; regras na §11)
+Todos os comandos rodam da raiz do repo com `export PATH=$HOME/.cargo/bin:$PATH`. Os critérios do Maestro são três: (A) checagem de compilação Windows verde no workspace, itens 1 a 7; (B) CI verde nos dois runners, item 8; (C) release v0.1.0 com dois artefatos e SHA256SUMS, itens 9 e 10.
+1. **Compilação Windows** (cada builder no seu crate; o Bolt roda a final no workspace): `cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings` sai 0. Isso cobre o `cargo check --workspace --target x86_64-pc-windows-gnu` do Maestro e ainda passa o lint no código `cfg(windows)`, sem linkar. O `ring` já compila para esse alvo nesta máquina.
+2. **Linux sem regressão:** `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace` sai 0.
+3. **Grafo por plataforma:**
+   - cada comando abaixo imprime `0`:
+     - `cargo tree -q -p clipsync-input --target x86_64-pc-windows-gnu -e normal | grep -cE 'ashpd|reis'`
+     - `cargo tree -q -p clipsync-clipboard --target x86_64-pc-windows-gnu -e normal | grep -c x11rb`
+     - `cargo tree -q -p clipsync-core --target x86_64-pc-windows-gnu -e normal | grep -c rustix`
+   - `grep -rn unsafe_code crates` não imprime nada: nenhum crate afrouxa o `forbid`.
+   - Conferido pelo Keel em 2026-10-27, com o trabalho em andamento: os três dão 0 no alvo Windows, e o primeiro dá 2 no alvo Linux, prova de que o grep pega.
+4. **Controle no Windows (Rivet):** `cargo test -p clipsync-core --test control` fica verde no Linux e no job Windows do CI. Casos `#[cfg(windows)]`:
+   - (a) um segundo `serve` com o primeiro vivo dá `AgentAlreadyRunning`;
+   - (b) `request` sem agente dá `AgentNotRunning`;
+   - (c) com um `agent.pipe` velho (nome sem servidor), o `serve` sobe e grava um nome novo;
+   - (d) o nome em `agent.pipe` casa com `^\\\\\.\\pipe\\clipsync-[0-9a-f]{32}$` e muda a cada `serve`;
+   - (e) `agent.pipe` some depois do shutdown.
+
+   `cargo test -p clipsync-core --test mesh` também fica verde no job Windows: QUIC e named pipe juntos, com o agente real.
+5. **Clipboard (Flux):** `cargo test -p clipsync-clipboard` fica verde com testes do watcher de polling (`poll.rs`, que compila em `cfg(any(windows, test))`):
+   - (a) troca de conteúdo gera 1 evento;
+   - (b) o mesmo conteúdo por 3 tiques gera 0 eventos;
+   - (c) fonte `Busy` não gera evento, e o tique seguinte roda normalmente;
+   - (d) `stop` encerra a thread em até 1 tique.
+
+   `grep -n experimental crates/clipsync-clipboard/src/msg.rs` mostra o texto que o `diagnose` usa no Windows.
+6. **Teclado e mouse (Vector):** `grep -n UNAVAILABLE_ON_PLATFORM crates/clipsync-input/src/*.rs` mostra a mesma const em `lib.rs` (build), `probe.rs` e `diag.rs`. Entregue em b4f472a; falta a conferência.
+7. **cli (Flux):** um teste unitário cobre os três casos da §11 regra 8. Ele passa a plataforma como parâmetro de uma função pura, sem `cfg!` dentro dela, para rodar no Linux:
+   - `init` fora do Linux grava `input = false`;
+   - `input = true` fora do Linux avisa e segue sem o módulo;
+   - sem módulo sobrando, sai 1.
+8. **CI (Bolt):**
+   - `python3 -c "import yaml;[yaml.safe_load(open(f)) for f in ('.github/workflows/ci.yml','.github/workflows/release.yml')]"` sai 0.
+   - O job Windows de `ci.yml` roda `cargo clippy --workspace --all-targets --locked -- -D warnings` e `cargo test --workspace --locked`.
+   - Depois do push, que é do usuário: `gh run list --workflow ci.yml --branch main --limit 1 --json conclusion,databaseId` dá `success`.
+   - `gh run view <id> --json jobs --jq '.jobs[]|[.name,.conclusion]'` mostra os dois jobs (Linux e Windows) com `success`.
+9. **Release, conferência estática (Bolt).** Em `.github/workflows/release.yml`:
+   - `grep -c rust-cache` dá 0;
+   - todo `uses:` começa com `actions/`;
+   - `grep -n crt-static` mostra o RUSTFLAGS do build Windows;
+   - `grep -n ubuntu-24.04` aparece no build Linux;
+   - existe um passo que falha quando a tag sem o `v` difere do `version` do `[workspace.package]`.
+10. **Release v0.1.0.** Pré-condição: o usuário decidiu a licença (§11 regra 9). Depois que o usuário empurra a tag `v0.1.0`:
+    - `gh release view v0.1.0 --json assets --jq '.assets[].name' | sort` lista exatamente `SHA256SUMS`, `clipsync-v0.1.0-linux-x86_64.tar.gz` e `clipsync-v0.1.0-windows-x86_64.zip`.
+    - Num diretório vazio, `gh release download v0.1.0 && sha256sum -c SHA256SUMS` dá OK nos dois pacotes.
+    - `tar -xzf clipsync-v0.1.0-linux-x86_64.tar.gz && ./clipsync --version` imprime `clipsync 0.1.0`.
+    - O `.exe` num Windows real é prova M, pendente: o adaptador segue experimental até lá.
+
 ## 10. Aberto (decisão fora do time)
 1. **Licença** antes do primeiro commit (MIT/Apache-2.0 sugerido; GPL-3 só se copiar Lan Mouse). Usuário decide.
 2. Chave privada em arquivo 0600 no perfil até existir cofre (Secret Service no Linux). Registrar na ADR de stack.
@@ -724,3 +774,85 @@ Todos os comandos rodam de `/home/kappxs/Documentos/ANTIGOS/clipsync` com `sourc
 4. ADRs (stack, transporte, licença) e `docs/matriz-compatibilidade.md`: sem dono neste contrato; o Maestro atribui.
 5. Captura contínua guiada por barreiras no agente (produto 2B) fica fora de hoje; hoje só loopback e probes.
 6. Decisão do Keel a confirmar com o usuário: "conteúdo inalterado não é cópia nova" (§7 regra 3). O anexo §15 pede que recopiar o mesmo texto possa valer como ação nova; aqui não vale, porque a tomada de posse do Mutter (app de origem morre) gera evento idêntico a qualquer tempo e reenviaria conteúdo velho por cima de cópia nova do par. Saída para o usuário: `clipsync send`.
+
+## 11. S5 · Windows e release (v1.11)
+Escopo da 0.1.0, decidido pelo Maestro:
+- no Windows entram a malha QUIC, o pareamento e o módulo clipboard;
+- teclado e mouse ficam "indisponível nesta versão".
+
+O binário Windows usa o alvo `x86_64-pc-windows-msvc` (CI e release). Aqui só se checa `x86_64-pc-windows-gnu`, sem linkar (§9 S5 item 1).
+
+Posse na S5:
+- **Rivet:** `crates/clipsync-proto/**` e o `crates/clipsync-core/**` inteiro. A S5 devolve ao Rivet `src/{profile,control,diag}.rs` e `tests/{profile,control}.rs`. Motivo: o named pipe mexe em control, profile e agent ao mesmo tempo, e a porta Windows do core precisa de um dono só.
+- **Flux:** `crates/clipsync-clipboard/**` e `crates/clipsync-cli/**`.
+- **Vector:** `crates/clipsync-input/**`.
+- **Bolt:** `Cargo.toml` raiz, `Cargo.lock`, `.github/workflows/{ci,release}.yml` e `README.md`.
+- **Keel:** `docs/contrato.md`, `docs/workboard.md`, `docs/decisoes/**` e `docs/matriz-compatibilidade.md`.
+
+Regras:
+1. **Sem unsafe novo e sem dep nova.** O que a S5 precisa já está no workspace: `tokio::net::windows::named_pipe` (feature `net`), o backend Windows do arboard e a std. O que exigiria Win32 direto (`windows-sys`, FFI) fica fora da 0.1.0. Antes de tentar, pergunte ao Keel.
+2. **cfg por plataforma:**
+   - `cfg(unix)`: socket Unix, modos 0600 e 0700, rustix;
+   - `cfg(windows)`: named pipe e adaptador `win-poll`;
+   - `cfg(target_os = "linux")`: x11rb, ashpd, reis e portal-tokens.
+
+   Dep de uma plataforma só vai em `[target.'cfg(...)'.dependencies]` do crate dono, com `workspace = true`. Código que uma plataforma não usa fica atrás do mesmo cfg. Nada de `#[allow(dead_code)]` para calar o outro alvo.
+3. **Relógio (proto, já feito pelo Rivet).** No Unix, `mono_us()` segue no CLOCK_MONOTONIC. No Windows, conta µs desde um `Instant` fixado na primeira chamada do processo. Esse valor só vale dentro do processo. O único leitor entre processos é o loopback de input, e ele não existe no Windows.
+4. **Perfil no Windows (Rivet, profile.rs).**
+   - O padrão é `%LOCALAPPDATA%\clipsync`, não o Roaming: a chave privada não pode viajar para um servidor de domínio.
+   - `--profile` e `CLIPSYNC_PROFILE` funcionam igual ao Unix. Sem `LOCALAPPDATA`, sai `CoreError::Profile` pedindo `--profile`.
+   - **A proteção vem da ACL herdada do usuário.** Nada de chmod, e `load_identity` não confere modo no Windows.
+   - Risco aceito na 0.1.0: um `--profile` em pasta compartilhada expõe a chave, e o README avisa disso. Conferir que a ACL é só do dono exige Win32: fica como pendência.
+5. **Canal de controle no Windows (Rivet: control.rs e agent.rs).** Named pipe só local:
+   - a primeira instância usa `ServerOptions::first_pipe_instance(true)`, e todas usam `reject_remote_clients(true)`;
+   - o nome é sorteado a cada `serve`: `\\.\pipe\clipsync-` + 32 hex de 16 bytes do `rand`;
+   - o nome é publicado em `DIR\agent.pipe`, com escrita atômica (tmp + rename). Pela ACL do perfil, só o dono lê esse arquivo;
+   - `request` lê o arquivo e conecta só a esse nome. No Windows, `Profile::socket_path()` devolve `DIR\agent.pipe`. As assinaturas da §5 não mudam;
+   - se `agent.pipe` existe e o connect funciona, é `AgentAlreadyRunning`. Se o connect dá NotFound, o arquivo é velho e o `serve` o regrava. Qualquer outro erro sobe sem apagar nada. O `serve` apaga `agent.pipe` ao sair;
+   - `agent.rs` não abre `UnixStream` direto. A checagem de agente vivo usa a mesma rotina do control.rs, uma por plataforma;
+   - o quadro é o mesmo do Unix: u32 BE + JSON, no máximo MAX_FRAME_BYTES, uma requisição por conexão.
+
+   Por que o nome é sorteado: o namespace `\\.\pipe\` é global na máquina, e qualquer usuário lista os nomes. Com nome fixo, ou derivado do caminho do perfil, outro usuário local criaria o pipe antes do agente. Aí receberia o texto de `clipsync send --stdin`. Com o nome sorteado na hora, ninguém consegue criá-lo antes. A DACL padrão do pipe também não deixa outro usuário abrir instância nova nem conectar para escrita.
+6. **Clipboard no Windows (Flux).** Adaptador `win-poll` (`WinClipboard`):
+   - lê e escreve pelo arboard, com `WatchMode::Poll { interval_ms: 250 }`;
+   - a cada 250 ms lê o texto, e só gera `ChangeEvent` quando o conteúdo muda. É a mesma regra da §7 regra 3: recópia idêntica não é cópia nova;
+   - clipboard ocupado por outro app (`Busy`): tenta de novo no próximo tique, sem evento e sem erro para o usuário. Só texto;
+   - `adapter = "auto"` escolhe `win-poll` no Windows. `"x11"` no Windows é erro de config;
+   - as regras 1 a 12 da §7 valem do mesmo jeito: livro de escritas, Lamport, caixa, pausa, e conteúdo nunca em log.
+
+   **É experimental até o teste em máquina real.** O `diagnose` e o README dizem "experimental", e a matriz continua "não testada" na linha Windows.
+7. **Teclado e mouse no Windows (Vector, entregue em b4f472a).** ashpd e reis só existem no Linux. Fora do Linux:
+   - `build` devolve `ModuleError::Adapter(msg::UNAVAILABLE_ON_PLATFORM)`;
+   - `probe input` sai 1 com o mesmo texto;
+   - o `diagnose` mostra o item.
+
+   O Hello anuncia só os módulos que de fato rodam (Rivet confere no agent.rs). Assim, o par Linux recebe `RemoteModuleDisabled` ao tentar mandar input para o Windows.
+8. **cli no Windows (Flux).**
+   - Fora do Linux, o `init` grava `input = false` sem perguntar. A pergunta do clipboard mantém o padrão NÃO: recusar deixa zero módulos, e o `init` recusa com motivo.
+   - Com `input = true` fora do Linux, o `run` avisa `INPUT_UNAVAILABLE` e segue sem o módulo. Se não sobrar nenhum módulo, o `run` sai 1 com motivo.
+9. **Release (Bolt).**
+   - `[profile.release]`: `lto = true`, `codegen-units = 1`, `strip = true` (já no Cargo.toml).
+   - `release.yml` dispara em tag `v*`. Ele falha se a tag sem o `v` diferir do `version` do `[workspace.package]`.
+   - O build Linux roda em `ubuntu-24.04` fixo, não `ubuntu-latest`. A glibc do runner é o mínimo que o binário exige, e o README diz isso.
+   - O build Windows usa `x86_64-pc-windows-msvc` com `RUSTFLAGS=-C target-feature=+crt-static`. Sem isso, o `.exe` depende do `VCRUNTIME140.dll` do VC++ Redistributable, que um Windows limpo pode não ter.
+   - **Sem cache no release:** nada de `Swatinem/rust-cache` nem `actions/cache` no `release.yml`. Um cache restaurado de execução de PR pode envenenar o binário publicado. No CI, o cache continua liberado.
+   - O `release.yml` só usa actions de `actions/*`. O toolchain vem do rustup do runner, que lê o `rust-toolchain.toml` (1.99.1).
+   - Artefatos: `clipsync-<tag>-linux-x86_64.tar.gz` (binário `clipsync` + README), `clipsync-<tag>-windows-x86_64.zip` (`clipsync.exe` + README) e `SHA256SUMS` dos dois.
+   - **Pré-condição do tag:** a licença decidida pelo usuário (pendência 1 do workboard). O próprio README diz "a definir antes do primeiro release". Sem essa decisão, não há tag.
+10. **CI (Bolt).** O job Windows (`windows-latest`) roda `cargo clippy --workspace --all-targets --locked -- -D warnings` e `cargo test --workspace --locked`.
+    - Esse clippy é o único lugar onde o código `cfg(windows)` passa pelo lint.
+    - O e2e `roteiro.rs` já é `cfg(unix)`.
+    - Os testes de malha (`mesh`) e de controle do core rodam no Windows e provam lá o named pipe e o QUIC.
+11. **README (Bolt).** O quadro por plataforma segue esta seção:
+    - no Windows, clipboard "experimental (polling de 250 ms, só texto, não testado em máquina real)" e teclado e mouse "indisponível nesta versão";
+    - no Linux, só o que a matriz valida.
+
+    O README também diz onde fica o perfil no Windows e avisa para não pôr `--profile` em pasta compartilhada. E informa a glibc mínima do binário Linux.
+12. **git na S5** (decisão do Maestro; substitui a §0 regra 1 durante a fatia):
+    - cada builder commita só os próprios arquivos, na main local, com caminho explícito: `git add <arquivos> && git commit -m "<msg>" -- <arquivos>`;
+    - nunca `git add -A`, `git add .` nem `commit -a`;
+    - se `.git/index.lock` existir, espere e tente de novo. Nunca apague esse arquivo;
+    - mensagem em português, minúscula, no imperativo, sem co-author;
+    - push e tag: só o usuário.
+
+    O Bolt commita o `Cargo.lock` por último. A S5 não adiciona dep, então o lock não deve mudar. Se mudar, avise o Keel.

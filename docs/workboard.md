@@ -1,8 +1,8 @@
 # workboard · ClipSync MVP de hoje
 
-**Estado: MVP de 2026-10-27 FECHADO.** S0 a S4 e I passam no warden (Argus). Segurança liberada, com 0 bloqueantes (`docs/seguranca.md`). Pendências consolidadas e próxima fatia no fim deste arquivo.
+**Estado: MVP de 2026-10-27 FECHADO.** S0 a S4 e I passam no warden (Argus). Segurança liberada, com 0 bloqueantes (`docs/seguranca.md`). **S5 (Windows e release) EM ANDAMENTO** desde 2026-10-27. Pendências consolidadas e próxima fatia no fim deste arquivo.
 
-Contrato: `docs/contrato.md` (v1.10). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Ninguém roda git. Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
+Contrato: `docs/contrato.md` (v1.11). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Git: até a S4 só o Maestro commitava; na S5 cada builder commita os próprios arquivos na main local, sem push (contrato §11 regra 12). Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
 
 ## Ordem
 1. S0 Bolt fecha primeiro (esqueleto compila). Só então S1, S2, S3 começam a editar seus crates.
@@ -46,6 +46,45 @@ Estado: PASSA no warden (após reemissão)
 Pronto: §9 I itens 1 a 4.
 Estado: PASSA no warden
 
+## S5 · Windows e release (v1.11, aberta em 2026-10-27)
+Regras: contrato §11. Pronto: §9 S5 itens 1 a 10. Os três critérios do Maestro são:
+- (A) checagem de compilação Windows verde no workspace (itens 1 a 7);
+- (B) CI verde nos dois runners (item 8);
+- (C) release v0.1.0 com dois artefatos e SHA256SUMS (itens 9 e 10).
+
+Verificação local: `export PATH=$HOME/.cargo/bin:$PATH`, depois `cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings` (alvo Windows, sem linkar) e `cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace` (Linux). Nada de `target/` em /tmp.
+
+- **Rivet · core e proto no Windows.** Posse: `crates/clipsync-proto/**` e o `crates/clipsync-core/**` inteiro. Na S5, profile, control e diag voltam ao Rivet. Faz:
+  - named pipe só local (`first_pipe_instance`, `reject_remote_clients`), com nome sorteado em `DIR\agent.pipe`;
+  - perfil em `%LOCALAPPDATA%\clipsync`, protegido pela ACL, sem chmod;
+  - Hello anuncia só os módulos que rodam;
+  - testes de control e mesh verdes no Windows.
+
+  Pronto: itens 1 a 4. Estado: em andamento (`time.rs` e os Cargo.toml de proto e core já sem rustix no Windows, ainda sem commit).
+- **Flux · clipboard e cli no Windows.** Posse: `crates/clipsync-clipboard/**` e `crates/clipsync-cli/**`. Faz:
+  - adaptador `win-poll` (arboard, 250 ms, só texto), experimental;
+  - init e run fora do Linux sem input;
+  - teste do watcher e da escolha de módulos.
+
+  Pronto: itens 1, 2, 5 e 7. Estado: em andamento (`poll.rs` e `win.rs` criados, ainda sem commit).
+- **Vector · input indisponível no Windows.** Posse: `crates/clipsync-input/**`. Pronto: itens 1, 3 e 6. Estado: entregue no commit b4f472a; falta a conferência.
+- **Bolt · release, CI e README.** Posse: `Cargo.toml` raiz, `Cargo.lock`, `.github/workflows/{ci,release}.yml` e `README.md`. Faz:
+  - `[profile.release]` com LTO e strip (já feito);
+  - `release.yml` por tag `v*`, sem cache, só `actions/*`, CRT estática no Windows, `ubuntu-24.04` e conferência tag = versão;
+  - job Windows do CI com clippy e `test --workspace`;
+  - quadro do README com clipboard Windows "experimental".
+
+  Pronto: itens 1, 8, 9 e 10. Estado: em andamento. O `release.yml` atual ainda não segue a §11 regra 9: usa rust-cache e dtolnay, `ubuntu-latest` e não tem crt-static. O job Windows do CI ainda não roda clippy nem testa `clipsync-input`.
+- **Pré-condição do release:** o usuário decide a licença (pendência 1). Push e tag são só do usuário.
+
+## Telas (Figma)
+Prontas em 2026-10-27:
+- as nove telas, nos temas claro e escuro;
+- os ajustes de atalho com a tecla Windows (Win+Alt);
+- a malha de 16 px.
+
+Commits 0e76039, f54c995, 8daf2f5 e 3c2bad0. A implementação (Tauri) segue depois do `apt install` (próxima fatia, item 4).
+
 ## Decisões
 - 2026-10-27 · Keel · Contrato v1 publicado.
 - 2026-10-27 · Keel · Spike Bolt: versões fixadas com `=`; ring em todo lugar (aws-lc exige cmake/nasm); ashpd com screencast junto de remote_desktop; target/ compartilhado no mesmo checkout.
@@ -76,6 +115,23 @@ Estado: PASSA no warden
   Implementação pós-MVP (S1-04, baixa), salvo se o Rivet couber em 15 min.
 - 2026-10-27 · CORRIGIDO e liberado pela segurança · Rivet/Flux · S1-01 (BLOCKER): `validate_name` única no proto recusa controle e formatação Unicode, e o cli filtra todo texto do par (§4, §2 regra 8). S1-02: pairing nunca grava nome inválido; `load_peers` põe a entrada ruim em quarentena. S1-08: pausa aplica na memória primeiro e fica pausada se não gravar (§5 regra 8). S1-09: socket criado em nome temporário + chmod + rename; apaga o socket velho só em ConnectionRefused/NotFound; `run` recusa DIR com modo diferente de 0700 (ressalva da segurança: esta última parte NÃO entrou; ver pendências).
 - 2026-10-27 · Maestro · Fechamento do MVP: S0 a S4 e I passam no warden; segurança liberada com 0 bloqueantes. As pendências que estavam espalhadas aqui foram consolidadas na seção "Pendências pós-MVP".
+- 2026-10-27 · Maestro · Telas do Figma prontas: as nove telas claras e escuras, os ajustes de atalho Win+Alt e a malha de 16 px.
+- 2026-10-27 · Maestro · Fatia S5 · Windows e release (o usuário pediu release no GitHub com binário Linux e Windows):
+  - no Windows, a 0.1.0 entrega malha QUIC, pareamento e clipboard; teclado e mouse ficam "indisponível nesta versão";
+  - nada de unsafe novo;
+  - named pipe só local, com `reject_remote_clients` e `first_pipe_instance`;
+  - no Windows, a proteção do perfil vem da ACL do usuário, sem chmod;
+  - o adaptador de clipboard do Windows é "experimental" até o teste em máquina real;
+  - cada builder commita os próprios arquivos na main local, sem push.
+- 2026-10-27 · Keel · Contrato v1.11, acréscimos à S5 (§11):
+  - (a) a posse do core inteiro volta ao Rivet durante a S5, porque o pipe mexe em control, profile e agent juntos;
+  - (b) o nome do pipe é sorteado a cada `serve` e publicado em `DIR\agent.pipe`. O namespace `\\.\pipe\` é global e listável: com nome fixo, outro usuário local criaria o pipe antes e receberia o texto do `send --stdin`;
+  - (c) o perfil padrão fica em `%LOCALAPPDATA%`, não no Roaming, para a chave não viajar ao servidor de domínio;
+  - (d) o Hello anuncia só os módulos que rodam;
+  - (e) o release não usa cache (risco de envenenar o binário publicado), só usa `actions/*`, tem CRT estática no Windows (sem depender do VC++ Redistributable), roda em `ubuntu-24.04` fixo e confere tag = versão;
+  - (f) o job Windows do CI roda clippy, único lint do código `cfg(windows)`, e `test --workspace`;
+  - (g) sem dep nova; Win32 direto fica fora da 0.1.0;
+  - (h) licença decidida é pré-condição do tag.
 
 ## Medições
 - P2 (Argus/Rivet, loopback, build debug, 300 RTTs): fluxo uni 1024 B p95 432 µs · datagrama 64 B p95 313 µs. Passa no critério do §9 S1 item 4 (p95 < 1 ms). Spike em release deu < 100 µs; a diferença vem do build debug.
@@ -85,7 +141,7 @@ Estado: PASSA no warden
 ## Pendências pós-MVP (consolidado em 2026-10-27)
 
 ### Decisões do usuário
-1. **Licença**, antes do primeiro commit público. Sugestão: MIT (ou MIT/Apache-2.0 dual, o padrão do ecossistema Rust). GPL-3 só se copiarmos código do Lan Mouse, o que o contrato evita.
+1. **Licença**, antes do primeiro commit público. **Agora bloqueia o tag v0.1.0 da S5.** Sugestão: MIT (ou MIT/Apache-2.0 dual, o padrão do ecossistema Rust). GPL-3 só se copiarmos código do Lan Mouse, o que o contrato evita.
 2. **Regra da recópia** (contrato §7 regra 3): copiar o mesmo texto duas vezes seguidas não reenvia. Ela protege contra a tomada de posse do Mutter. O reenvio forçado é `clipsync send`. Aguarda confirmação.
 
 ### Segurança (`docs/seguranca.md`)
@@ -94,6 +150,8 @@ Estado: PASSA no warden
 3. S1-05: `validate()` aceita valores fora de qualquer faixa útil. Ressalva da liberação: caracteres invisíveis confundíveis (fora da lista da v1.10) ainda passam no nome do dispositivo.
 4. Ressalva da liberação: o `run` não recusa perfil com modo diferente de 0700 (parte da regra S1-09 que não entrou). A chave fica em arquivo 0600 até existir o cofre da plataforma (Secret Service, CNG, Keychain).
 5. Sem `cargo audit` nem `cargo deny` instalados: a auditoria de dependências não foi feita. Texto em claro no fio não verificado (falta CAP_NET_RAW). Embrulho do `quinn::crypto` via quinn-proto =0.11.19 para o reason de falha de handshake virar `CloseCode::reason()` (ADR 0002, contrato v1.7).
+6. Windows (S5): a ACL do perfil não é conferida, porque exige Win32 e FFI. Um `--profile` em pasta compartilhada expõe a chave.
+7. As duas plataformas ignoram o marcador de conteúdo sensível dos gerenciadores de senha (`ExcludeClipboardContentFromMonitorProcessing` no Windows, `x-kde-passwordManagerHint` no Linux). Uma senha copiada vai para os pares com `clipboard_out`. Ler o marcador exige formato customizado (FFI no Windows).
 
 ### Qualidade
 1. Ajuda e erros nativos do clap saem em inglês. O contrato (§2 regra 1, §6) pede português: localizar com template de ajuda e mapeamento de `clap::Error` para o `msg.rs`.
@@ -102,6 +160,7 @@ Estado: PASSA no warden
 ### Provas pendentes do usuário (sessão gráfica)
 1. Roteiro §14 item 5: `probe input --capture` (barreira só na metade superior direita), `--emulate` (quadrado + "ção") e `--loopback` (p50/p95). Registrar as saídas na matriz.
 2. Itens da matriz sem prova: teclado durante a captura, posição do cursor depois do Release, segundo `--emulate` sem diálogo (token), latência do clipboard medida de novo (P1).
+3. Windows real (S5): `clipsync.exe` do release v0.1.0 num PC Windows. Pareamento com o notebook, `send` nos dois sentidos e cópia num app nativo chegando ao Linux. Só depois disso a linha Windows da matriz sai de "não testada", e o adaptador `win-poll` deixa de ser "experimental".
 
 ## Próxima fatia recomendada (Keel)
 
@@ -118,4 +177,5 @@ Estado: PASSA no warden
    - adaptadores do outro SO (Windows: hooks + `SendInput`);
    - checagem de conflito com Input Leap e Barrier antes de capturar.
    2A e 2B andam em paralelo com builders diferentes, como no prompt mestre §7.
+   A S5 (2026-10-27) já adianta parte da 2A: binário release, e o clipboard Windows por polling, experimental. Na 2A sobra a prova em máquina real e a segurança de LAN.
 4. **Tauri** (janela, bandeja, editor de layout) só depois de o usuário rodar `sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev pkg-config`. Até lá, CLI e TOML.
