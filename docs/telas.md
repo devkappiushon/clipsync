@@ -35,3 +35,18 @@ Blocos: Sistema (SO, sessão gráfica, protocolos, portais e versões), Adaptado
 ## 7. Preferências
 
 Grupos: Atalhos (abrir, pausar tudo, enviar uma vez, travar nesta tela, ir para dispositivo), Inicialização com a sessão (consentimento explícito), Notificações por tipo (item recebido, dispositivo conectado, bloqueio) com padrão "sem conteúdo", Aparência (tema claro, escuro, sistema; reduzir movimento), Idioma. Rodapé: versão, licença, "feito por montesouza.dev".
+
+## Arquivo no Figma
+
+Arquivo: https://www.figma.com/design/vkXY3Q37AaGe1argTA2STv (rascunhos da equipe "A equipe de João pedro").
+
+Criado em 2026-10-27 pelo MCP do Figma, a partir desta especificação:
+
+- Página "Telas": 9 quadros de 1280×800 no tema claro: 01a, 01b e 01c (os três passos do onboarding), 02 Dispositivos, 03 Pareamento, 04 Layout de telas, 05 Clipboard, 06 Diagnóstico, 07 Preferências. Tudo em camadas editáveis com auto layout.
+- Seção "Componentes": Botão (Primário, Secundário, Perigo, Discreto, propriedade de texto "Rótulo"), Interruptor (Ligado, Desligado), Selo de estado (ok, aviso, erro, neutro, acento, propriedade "Texto"), Tecla de atalho ("Teclas") e Barra lateral (240 px, navegação e rodapé de estado).
+- Variáveis: coleções "Cor claro" e "Cor escuro" com os mesmos 16 nomes (fundo, borda, texto, acento, estado) e "Espaço" (4 a 40, raio 8). O plano Starter permite só um modo por coleção, por isso duas coleções em vez de dois modos.
+- Fontes: Inter no corpo, Geist nos títulos, Geist Mono em código, ids e valores.
+
+Conferido com captura: 01b, 03, 05, 06 e 07. As telas 02 e 04 foram refeitas depois da primeira captura (coluna Nome esmagada; monitor do notebook cortado) e ainda não foram recapturadas. 01a e 01c não foram capturadas.
+
+Pendente no Figma: versão escura dos 9 quadros (script pronto em `docs/telas/figma-escuro.js`) e a recaptura de 01a, 01c, 02 e 04. Parou no limite de chamadas do MCP do Figma no plano Starter.
