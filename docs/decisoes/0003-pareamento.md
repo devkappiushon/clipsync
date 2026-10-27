@@ -20,12 +20,17 @@ Um código de 6 dígitos tirado só do `export_keying_material` é forçável po
 
    nA e nB têm 32 bytes aleatórios novos por tentativa.
 4. Código = u64 big-endian de `export_keying_material(8 bytes, "EXPORTER-clipsync-pair-v1", nB ‖ nA)` mod 1 000 000, mostrado como `NNN NNN`.
-5. **Uma tentativa por janela.** Qualquer falha fecha a janela com `CloseCode::PairFailed`, e o `pair host` termina. As falhas são: compromisso que não confere, recusa, timeout ou mensagem fora de ordem.
+5. **Até 3 tentativas por janela** (revisto em 2026-10-27, contrato v1.10, achado S1-04 de `docs/seguranca.md`).
+   - Uma tentativa começa no primeiro `Commit`, recebido numa conexão com handshake completo e Hello válido.
+   - Antes disso nada conta: sonda, handshake falho, ALPN errado ou Hello inválido. Assim, um host qualquer da LAN não queima a janela.
+   - Recusa, código divergente ou timeout depois do Commit contam como tentativa. A 3ª falha fecha a janela com `CloseCode::PairFailed`.
+   - Reveal que não confere com o Commit fecha a janela na hora: é prova de ataque.
+   - A implementação é pós-MVP. Até lá vale a primeira versão: uma tentativa, e qualquer falha fecha.
 6. Cada lado mostra o código, o nome e o id curto do outro. Depois pergunta as permissões só dos módulos ligados. Tudo vem desligado por padrão, e o controle de teclado e mouse traz o aviso de confiança total. O `peers.toml` só é gravado se os dois lados aceitarem.
 
 ## Por que o compromisso resolve
 
-B se compromete com nB antes de conhecer nA, e A escolhe nA depois de receber o compromisso. Quem está no meio precisa fixar o seu nB do lado de A antes de ver o nA que A vai sortear. Então o código daquele lado sai aleatório para ele, e a chance de coincidir é 1 em 10^6 por janela. Como a janela fecha na primeira falha, ele não pode repetir.
+B se compromete com nB antes de conhecer nA, e A escolhe nA depois de receber o compromisso. Quem está no meio precisa fixar o seu nB do lado de A antes de ver o nA que A vai sortear. Então o código daquele lado sai aleatório para ele, e a chance de coincidir é 1 em 10^6 por janela. Cada tentativa sorteia um nA novo depois do Commit, então as chances não se somam a favor dele: com 3 tentativas, o teto por janela é 3 em 10^6. Um Reveal falso fecha a janela na hora.
 
 ## Consequências
 

@@ -1,6 +1,6 @@
 # workboard · ClipSync MVP de hoje
 
-Contrato: `docs/contrato.md` (v1.9). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Ninguém roda git. Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
+Contrato: `docs/contrato.md` (v1.10). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Ninguém roda git. Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
 
 ## Ordem
 1. S0 Bolt fecha primeiro (esqueleto compila). Só então S1, S2, S3 começam a editar seus crates.
@@ -66,6 +66,17 @@ Estado: bloqueado por S4
 - 2026-10-27 · Keel · Contrato v1.9: §9 S4 item 2 passa a usar `cargo test -p clipsync-core --test control`. O filtro `control_` não pegava nada: o teste de `tests/control.rs` se chama `serve_request_roundtrip_stale_socket_and_cleanup`.
 - PENDENTE · pós-MVP · Ajuda e mensagens de erro nativas do clap saem em inglês; o contrato (§2 regra 1, §6) pede português. Localizar com template de ajuda do clap e mapeamento de `clap::Error` para textos do `msg.rs`.
 - PENDENTE · pós-MVP · Padronizar os nomes dos testes com o prefixo da área (`control_`, `profile_`...) para o filtro por nome funcionar igual em todo o §9. Hoje vale `--test <arquivo>` (v1.9).
+- 2026-10-27 · Keel · Contrato v1.10, auditoria `docs/seguranca.md` (veredito BLOQUEADO por S1-01). O que conta como tentativa de pareamento (§5 regra 3), proposta do Maestro aceita com três acréscimos:
+  - a tentativa começa no primeiro Commit recebido, após handshake TLS em ALPN_PAIR e Hello válido;
+  - antes disso nada conta (sonda, handshake falho, Hello inválido), e o host volta ao accept() até o prazo. Uma conexão pré-Commit por vez, com 5 s até o Commit (acréscimo do Keel: evita prender o slot);
+  - no máximo 3 tentativas por janela; a 3ª falha fecha;
+  - Reveal que não confere com o Commit fecha a janela na hora (acréscimo do Keel: prova de ataque);
+  - conexões extras durante uma tentativa são recusadas (acréscimo do Keel);
+  - teto do MITM: 3/10^6 por janela. ADR 0003 atualizada.
+
+  Implementação pós-MVP (S1-04, baixa), salvo se o Rivet couber em 15 min.
+- EM CORREÇÃO HOJE · Rivet/Flux · S1-01 (BLOCKER): `validate_name` única no proto recusa controle e formatação Unicode, e o cli filtra todo texto do par (§4, §2 regra 8). S1-02: pairing nunca grava nome inválido; `load_peers` põe a entrada ruim em quarentena. S1-08: pausa aplica na memória primeiro e fica pausada se não gravar (§5 regra 8). S1-09: socket criado em nome temporário + chmod + rename; apaga o socket velho só em ConnectionRefused/NotFound; `run` recusa DIR com modo diferente de 0700.
+- PENDENTE · pós-MVP · S1-03 (nome repetido apaga par existente; busca por nome ambígua) · S1-04 (tentativa de pareamento, regra v1.10 acima) · S1-05 (`validate()` aceita valores fora de faixa útil) · S1-06 (bloqueio por chave mudada não se desfaz sem reiniciar) · S1-07 (listener da malha sem teto de handshakes simultâneos). Detalhes em `docs/seguranca.md`.
 - PENDENTE · usuário · **Licença** a decidir antes do primeiro commit público. Sugestão do Keel: MIT (ou MIT/Apache-2.0 dual, padrão do ecossistema Rust). GPL-3 só se copiarmos código do Lan Mouse, o que o contrato evita.
 - PROVISÓRIO · Keel · Chave privada em `identity.key.pem` com modo 0600 no perfil, até existir o cofre da plataforma (Secret Service, CNG, Keychain).
 - PENDENTE · usuário · "Conteúdo inalterado não é cópia nova" (contrato §7 regra 3): copiar o mesmo texto duas vezes seguidas não reenvia. Protege contra a tomada de posse do Mutter, que reenviaria conteúdo velho por cima de cópia nova do par. Reenvio forçado: `clipsync send`. Aguarda confirmação do usuário.

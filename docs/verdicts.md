@@ -1572,7 +1572,7 @@ Base informada: **30dcd43**, export e cache em `~/.cache/clipsync-verdict/{src,t
 | `cargo test -p clipsync-core mesh_` | 4 casos de malha e 1 TLS aprovados. QUIC real em loopback, Hello/PeerUp, desconhecido, reconexão e chave trocada/Blocked. |
 | `cargo test -p clipsync-core stream_and_datagram -- --nocapture` | 2 aprovados: uni + datagrama; controle 65.537 B recusado com STOP/RESET Protocol após ler apenas o prefixo. 300 amostras: RTT fluxo p95 629,432 µs; datagrama p95 405,839 µs. |
 | clippy/fmt do workspace | Ambos saem 0, sem warnings/diffs. |
-| S1.6 · pairing/agent pela CLI | Executado depois neste mesmo export: pairing passa, mas o roteiro mesh falha no conjunto e passa isolado. **Pendente de S4-1**, conforme veredito S4 abaixo. |
+| S1.6 · pairing/agent pela CLI | Em 30dcd43 houve o flake S4-1. **Encerrado na reemissão 796e46c**: roteiro completo e workspace aprovados, conforme bloco S4 mais recente. |
 
 **P2 — complemento para cumprir os tamanhos literais:** o teste do repositório usa StatsRequest/Stats e datagrama de quatro movimentos, sem comprovar 1 KiB/64 B. Harness de revisão compilado por stdin contra o core novo, sem alterar fonte: endpoints QUIC reais com as configurações TLS do core, verificação dos pins das identidades sintéticas, uma mesma Connection, fluxo uni com **1.024 B** e datagrama com **64 B**, eco conferido byte a byte. 20 aquecimentos + 300 RTTs medidos por modalidade em 127.0.0.1, sem perdas nesta execução. Resultado: **fluxo p50 168 µs / p95 432 µs; datagrama p50 117 µs / p95 313 µs**, ambos < 1 ms. Este complemento mede o transporte com essas cargas; o caminho ModuleHost/agent foi exercitado separadamente pelo teste oficial. Valores são RTT, não latência unilateral. Não generalizar para outra máquina/carga.
 
@@ -2404,9 +2404,417 @@ A aprovação automática de S2 v1.4 consta no bloco anterior (15 testes e duas 
 
 Evidências diretas de S2.4 e diagnose em `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/s4-extra-results.json`; evidência manual integral no arquivo do Maestro e em `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/manual-evidence-copy.md`.
 
+### S4 · reemissão 796e46c · 2026-10-27T12:56:09-03:00 · Passa — S4-1 e S1.6 encerrados
+
+Base informada pelo Maestro: **796e46c**, export `/home/kappxs/.cache/clipsync-verdict/src`, `CARGO_TARGET_DIR=/home/kappxs/.cache/clipsync-verdict/target`. **Substitui a reprovação de S4 em 30dcd43 e encerra S4-1 e o critério de integração S1.6.** Nenhum arquivo do export mudou durante a revisão.
+
+| Verificação fresca | Resultado |
+|---|---|
+| `cargo test -p clipsync-cli --test roteiro` | **8 aprovados**, 0 falhos; mesh incluído. Duração dos testes 45,01 s. |
+| `cargo test --workspace` | **113 aprovados**, 0 falhos, **1 ignorado** (`portal_loopback`). Roteiro: 8 aprovados em 43,74 s. Duração do comando 71,39 s, incluindo compilação. |
+| `cargo clippy --workspace --all-targets -- -D warnings` | Exit 0. |
+| `cargo fmt --all --check` | Exit 0, saída vazia. |
+| `CLIPSYNC_PERF=1 cargo test -p clipsync-core --test mesh stream_and_datagram -- --exact --nocapture` | 1 aprovado; RTT fluxo p95 **703,969 µs**, datagrama p95 **452,347 µs**, 300/300 na primeira tentativa, zero reenvios. |
+
+**Correção conferida por leitura:** os oito testes do roteiro adquirem o mesmo Mutex estático em `serial()` (`tests/roteiro.rs:18`); WAIT passou de 20 para 60 s (`:15`). Entre 30dcd43 e 796e46c, os únicos arquivos de código alterados são `crates/clipsync-cli/tests/roteiro.rs` e `crates/clipsync-core/tests/mesh.rs`; implementação de core/CLI/input/clipboard permanece idêntica. O cenário anteriormente falho passou tanto no roteiro completo quanto dentro do workspace. O Maestro também informou três execuções verdes do workspace; **Argus executou uma**, registrada integralmente abaixo, além do roteiro separado. O encerramento é baseado nessas observações, sem prometer ausência de qualquer flake futuro.
+
+**Transporte:** o teste novo mantém entrega/ordem/integridade como asserções normais, permite até três tentativas de datagrama e condiciona o teto p95 < 1 ms a CLIPSYNC_PERF=1. Por isso executei esse modo explicitamente depois do workspace. A saída acima corresponde a StatsRequest/Stats e datagrama de quatro eventos; as medições literais 1.024 B/64 B estão no complemento P2 do veredito S1 de 30dcd43, com a mesma implementação de transporte/TLS (somente o teste mudou).
+
+**S1.6 encerrado:** pairing, reconexão, recusa de desconhecido, troca de chave/Blocked, pausa e clipboard pela CLI passaram no roteiro completo. A auditoria de segurança S1 permanece com o auditor recrutado pelo Maestro; não é substituída por este fechamento de integração.
+
+**Drifts aceitos como pós-MVP, sem bloquear por decisão explícita do Maestro:** ajuda/erros padrão do clap em inglês; filtro `control_` não seleciona o teste do socket. Ambos continuam registrados. O workspace executou o teste real `serve_request_roundtrip_stale_socket_and_cleanup`, aprovado; a revisão anterior também o executou por `--test control`.
+
+**Evidências preservadas de S2/S4:** ajuda, diagnose, exit codes e permissões dos perfis foram verificados em 30dcd43; seus fontes não mudaram. Evidência manual release do Maestro em [roteiro-2026-10-27.md](evidencias/roteiro-2026-10-27.md) foi incorporada aos blocos S2/S4. O workspace desta reemissão também repetiu os **15 testes de clipboard** e **18 testes não gráficos de input**, todos aprovados. **Input gráfico/§14 item 5 e portal_loopback continuam pendentes do usuário**. Nenhuma nova captura/emulação gráfica foi executada pelo Argus.
+
+#### Saídas reais da reemissão
+
+Comando: `cargo test -p clipsync-cli --test roteiro`; duração 48.335 s; exit **0**.
+
+stdout:
+
+```text
+
+running 8 tests
+test clip_send_arrives_in_the_inbox_and_is_refused_when_the_module_is_off ... ok
+test init_refuses_a_config_with_both_modules_off_and_says_why ... ok
+test init_creates_profile_files_with_private_modes ... ok
+test init_without_a_clipboard_answer_writes_false_and_flags_variant_works ... ok
+test pair_declined_on_one_side_saves_nothing_on_either ... ok
+test mesh_connects_refuses_strangers_reconnects_and_flags_a_changed_key ... ok
+test pause_blocks_and_resume_returns_and_state_survives ... ok
+test pair_shows_the_same_code_and_saves_permissions_on_both_sides ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 45.01s
+
+```
+
+stderr:
+
+```text
+   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+   Compiling clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+   Compiling clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
+   Compiling clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.24s
+     Running tests/roteiro.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/roteiro-8bb0db80bf9a908a)
+```
+
+Comando: `cargo test --workspace`; duração 71.39 s; exit **0**.
+
+stdout:
+
+```text
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 8 tests
+test init_creates_profile_files_with_private_modes ... ok
+test clip_send_arrives_in_the_inbox_and_is_refused_when_the_module_is_off ... ok
+test init_refuses_a_config_with_both_modules_off_and_says_why ... ok
+test pair_declined_on_one_side_saves_nothing_on_either ... ok
+test pair_shows_the_same_code_and_saves_permissions_on_both_sides ... ok
+test init_without_a_clipboard_answer_writes_false_and_flags_variant_works ... ok
+test mesh_connects_refuses_strangers_reconnects_and_flags_a_changed_key ... ok
+test pause_blocks_and_resume_returns_and_state_survives ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 43.74s
+
+
+running 1 test
+test smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test ledger::tests::ids_past_the_ttl_are_forgotten ... ok
+test ledger::tests::full_cap_repeating_the_oldest_id_is_a_duplicate_not_a_new_event ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 12 tests
+test i_debug_never_shows_content ... ok
+test h_manual_mode_only_fills_the_inbox ... ok
+test c_old_lamport_after_new_is_stale_and_goes_to_inbox ... ok
+test f_remote_module_disabled_is_reported ... ok
+test b_duplicate_event_id_applies_once_and_acks_duplicate ... ok
+test d_x_y_x_makes_three_offers_x_x_makes_one ... ok
+test l_pause_between_authorization_and_write_blocks_the_write ... ok
+test k_ttl_counts_from_local_receipt_and_drops_the_text ... ok
+test a_mesh_one_copy_two_offers_no_reoffer ... ok
+test e_own_write_echo_takeover_and_empty_do_not_offer ... ok
+test g_paused_neither_sends_nor_applies_and_resume_does_not_resend ... ok
+test j_clipsend_lists_every_target_and_no_ack_is_unreachable ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.07s
+
+
+running 1 test
+test smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 12 tests
+test pairing::tests::pairing_commitment_is_domain_separated ... ok
+test tls::tests::tls_pin_set_replace ... ok
+test tls::tests::tls_changed_server_key_detected_by_dialer ... ok
+test tls::tests::tls_unknown_client_refused_with_fixed_reason ... ok
+test tls::tests::tls_pairing_mode_accepts_any_key_but_mesh_does_not ... ok
+test tls::tests::tls_verifier_runs_on_every_connection_resumption_is_off ... ok
+test pairing::tests::pairing_code_depends_on_both_nonces ... ok
+test pairing::tests::pairing_declined_on_one_side_saves_nothing ... ok
+test pairing::tests::pairing_bad_reveal_fails_saves_nothing_and_host_ends ... ok
+test pairing::tests::pairing_happy_path_same_code_and_both_saved ... ok
+test pairing::tests::pairing_window_takes_one_attempt_only ... ok
+test pairing::tests::pairing_after_a_failure_the_window_is_closed ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.12s
+
+
+running 1 test
+test serve_request_roundtrip_stale_socket_and_cleanup ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test system_diag_reports_os_session_display_and_both_input_tools ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 6 tests
+test stream_and_datagram_control_frame_over_limit_is_reset ... ok
+test mesh_connects_after_hello_both_ways ... ok
+test stream_and_datagram ... ok
+test mesh_unknown_identity_never_connects ... ok
+test mesh_restart_reconnects ... ok
+test mesh_changed_key_is_blocked_with_constant_reason ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.32s
+
+
+running 10 tests
+test profile_both_modules_off_and_bad_names_are_refused ... ok
+test profile_identity_id_is_the_single_pin_function ... ok
+test profile_state_defaults_to_running_and_roundtrips_pause ... ok
+test profile_peers_file_has_64_hex_ids_and_flat_permissions ... ok
+test profile_key_with_loose_mode_is_refused_and_missing_profile_says_so ... ok
+test profile_fake_adapters_are_written_to_the_module_tables ... ok
+test profile_peers_upsert_replaces_by_id_or_name_and_rejects_duplicates_on_load ... ok
+test profile_init_creates_private_profile_and_reloads_same_identity ... ok
+test profile_config_with_unknown_key_or_wrong_version_is_an_error ... ok
+test profile_reinit_gets_a_new_identity_but_keeps_peers ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 9 tests
+test loopback_counts_every_event_and_orders_percentiles ... ok
+test rate_limit_drops_the_excess_and_counts_it ... ok
+test destination_without_input_in_refuses_enter_and_never_starts_the_emulator ... ok
+test release_all_only_from_the_session_owner ... ok
+test leave_and_peer_down_release_everything ... ok
+test stats_request_for_foreign_session_gets_no_answer ... ok
+test rate_limit_survives_a_new_enter ... ok
+test paused_destination_drops_datagrams_and_needs_a_new_enter ... ok
+test loopback_without_activation_reports_it ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+
+running 1 test
+test portal_loopback ... ignored, requer sessão gráfica
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 8 tests
+test debug_hides_key_and_button_codes ... ok
+test config_defaults_and_barriers ... ok
+test other_edges_and_offsets ... ok
+test hash_digits_is_a_zone_index_everything_else_a_name ... ok
+test config_rejects_bad_input ... ok
+test upper_half_of_the_right_edge_is_x_1920_y_0_to_539 ... ok
+test token_file_is_0600_and_roundtrips ... ok
+test invalid_token_is_discarded ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+test inbound_datagram_table ... ok
+test outbound_datagram_table ... ok
+test outbound_table ... ok
+test inbound_table ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 7 tests
+test module_set ... ok
+test reject_reasons_have_portuguese_text ... ok
+test peer_id_from_hex_errors ... ok
+test mono_us_is_monotonic ... ok
+test peer_id_is_sha256_of_spki ... ok
+test peer_id_hex_roundtrip_and_short_form ... ok
+test event_ids_are_random ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 7 tests
+test link_delivers_peer_up_with_grants_and_remote_modules ... ok
+test paused_destination_rejects_offer_but_ack_passes ... ok
+test inbound_refusal_becomes_rejected_at_sender ... ok
+test delivers_authorized_offer ... ok
+test outbound_rules_return_errors ... ok
+test datagrams_follow_the_same_rules ... ok
+test invalid_or_oversized_message_is_not_sent ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 5 tests
+test key_and_button_debug_hide_code ... ok
+test clip_offer_debug_hides_text ... ok
+test inbox_item_debug_hides_preview ... ok
+test control_request_debug_hides_clip_send_text ... ok
+test control_messages_roundtrip_as_json ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 17 tests
+test datagram_over_1200_bytes_is_refused ... ok
+test garbage_and_trailing_bytes_are_decode_errors ... ok
+test module_msg_kind ... ok
+test encode_refuses_body_over_max ... ok
+test datagram_with_32_events_fits_and_roundtrips ... ok
+test every_frame_variant_roundtrips ... ok
+test validate_hello_min_version ... ok
+test validate_refuses_nan_and_infinite_floats ... ok
+test validate_refuses_33_events ... ok
+test validate_refuses_pos_outside_unit_range ... ok
+test validate_device_name_bounds ... ok
+test close_codes_are_stable_short_tokens ... ok
+test unreachable_never_goes_on_the_wire ... ok
+test oversized_frame_is_refused_before_allocating ... ok
+test control_frame_of_64k_plus_one_is_refused ... ok
+test write_then_read_over_a_duplex ... ok
+test validate_clip_offer_mime_and_size ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+```
+
+stderr:
+
+```text
+   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
+   Compiling clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+   Compiling clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+   Compiling clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.54s
+     Running unittests src/main.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync-0967276870f4a82a)
+     Running tests/roteiro.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/roteiro-cd5a0289063c2691)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-c72612d8116dfe30)
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_clipboard-baed76060361b842)
+     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-c494c8daf81d2787)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-85906dbb9d313bfa)
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-832e8e82e2bb6e1a)
+     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-312579bf9b7d9ca5)
+     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-cc539867a6e3d6bf)
+     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-a9645200717e2296)
+     Running tests/profile.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/profile-d468434fb273c2cd)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-5d9c5b98048de6d8)
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_input-b172c508683df1d7)
+     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-d213bec33e27bc54)
+     Running tests/portal_loopback.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/portal_loopback-b8a062dca1ade761)
+     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-8ffafc657e108765)
+     Running tests/units.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/units-8bfc9ad83c6aad0a)
+     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_proto-0c66604f71ca982e)
+     Running tests/authorize.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/authorize-e391bd3d15518a60)
+     Running tests/ids.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/ids-dc4409c0c4cc9425)
+     Running tests/memhub.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/memhub-08e08ec1e88b0447)
+     Running tests/redact.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/redact-b33032db01aafc8d)
+     Running tests/wire.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/wire-bc8f4451e647d888)
+   Doc-tests clipsync_clipboard
+   Doc-tests clipsync_core
+   Doc-tests clipsync_input
+   Doc-tests clipsync_proto
+```
+
+Comando: `cargo clippy --workspace --all-targets -- -D warnings`; duração 1.363 s; exit **0**.
+
+stderr:
+
+```text
+    Checking clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+    Checking clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
+    Checking clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+    Checking clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+    Checking clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.27s
+```
+
+Comando: `cargo fmt --all --check`; duração 0.155 s; exit **0**.
+
+stdout/stderr vazios.
+
+Comando: `CLIPSYNC_PERF=1 cargo test -p clipsync-core --test mesh stream_and_datagram -- --exact --nocapture`; duração 4.097 s; exit **0**.
+
+stdout:
+
+```text
+
+running 1 test
+test stream_and_datagram ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 2.54s
+
+```
+
+stderr:
+
+```text
+   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.52s
+     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
+RTT fluxo 1 frame: p50 556.598µs p95 703.969µs · datagrama 4 eventos: p50 258.39µs p95 452.347µs (1ª tentativa 300 de 300, reenvios 0)
+```
+
+Hashes relevantes:
+
+```text
+751f5d6e2f1c4992bec4a7b749a41330e3d26778cb18e4f1c2a31c40a2885de0  docs/contrato.md
+6ee61f12e6ea4f2314736f58a9df29c18f4ce593c234749fba7862ad5a19b7ff  crates/clipsync-cli/tests/roteiro.rs
+7bf7db7c6f3056bdfaf041c8be1f3c40596c2f94eb81da950848f96fb2c59efe  crates/clipsync-core/tests/mesh.rs
+6f4bb939c97ec1ebf5e27a7580ca5470dabda082fb333e917713510c689c6a3b  crates/clipsync-core/src/transport.rs
+907ad512ba7c0a719d52064ddddfedcce2dbe6d11f5cdd824a37879dc778afd9  Cargo.lock
+```
+
+Evidência completa: `/home/kappxs/.cache/clipsync-verdict/argus-796e46c-bf8p000u` (meta/results/before/after.json). Nenhum fonte foi editado pelo Argus e nenhum comando git foi executado.
+
 ## Findings
 
-### S4 · 30dcd43 · aberto
+### Pendências pós-MVP aceitas pelo Maestro
+
+- **Ajuda/erros nativos do clap em inglês:** registrar localização para depois do MVP; não bloqueia o veredito atual por decisão explícita do Maestro em 796e46c.
+- **Filtro `control_`:** o comando contratual não seleciona `serve_request_roundtrip_stale_socket_and_cleanup`. Ajustar nome/filtro depois do MVP. Cobertura real obtida por `--test control` e `cargo test --workspace`; não bloqueia por decisão explícita do Maestro.
+
+
+### S4 · 30dcd43 · histórico — S4-1 encerrado na reemissão 796e46c
 
 1. **S4-1 · P2 · `crates/clipsync-cli/tests/roteiro.rs:230` (chamado em `:479`)** — o roteiro completo falha esperando `chave do par mudou` depois de reinicializar a identidade de B. Na execução do Argus, `cargo test -p clipsync-cli --test roteiro` saiu **101**, com **7 aprovados e 1 falho**; último status de B era **desconectado**, não Blocked. A repetição isolada `... roteiro mesh_` saiu **0**, 1 aprovado em 41,21 s. Confirma **flake observado** no caminho de troca de identidade (além do relato anterior do Maestro sob `cargo test --workspace`). Não há evidência para atribuir a causa exclusivamente à concorrência ou ao timeout. O WAIT do helper é 20 s; investigação da sincronização do teste e do estado/backoff do agente cabe a Flux/Rivet. Impacto: gate S4.4 e integração S1.6 não reproduzem o resultado de forma confiável. Nenhuma correção foi aplicada; sucesso isolado não substitui o gate completo falho.
 

@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.9, Keel, 2026-10-27)
+# Contrato · ClipSync MVP de hoje (v1.10, Keel, 2026-10-27)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -9,6 +9,7 @@ v1.6: posse dividida (Maestro): core/{profile,control,diag}.rs e o crate cli int
 v1.7 (decisão do Maestro): hoje o Rivet NÃO embrulha `quinn::crypto`. Em falha de handshake, o reason do CONNECTION_CLOSE é a string CONSTANTE do rustls para os erros fixos que o PinVerifier devolve (`ApplicationVerificationFailure` para par desconhecido ou chave trocada, `UnknownIssuer` para X.509 inválido), sem Debug de cert nem erro interno. A regra 9 continua integral para Bye e closes de aplicação. O embrulho via quinn-proto fica pendente para depois do MVP. §5 itens 3 e 6, §9 S1 itens 3c e 5d ajustados.
 v1.8 (decisão do Maestro): `run` perde o flag `--listen` (§6). A porta vem só de `network.listen`, porque o `agent::run` lê a config sozinho.
 v1.9: §9 S4 item 2 passa a usar `--test control`, porque o filtro por nome não selecionava o arquivo. Pendências pós-MVP registradas no workboard: ajuda e erros do clap em inglês; embrulho quinn-proto.
+v1.10 (auditoria `docs/seguranca.md`): §5 regra 3 define o que conta como tentativa de pareamento (Commit recebido; máx 3 por janela; Reveal divergente fecha na hora; implementação pós-MVP, S1-04). Regras dos achados em correção hoje: nome de dispositivo (S1-01, §4 validate e §2 regra 8), nome inválido nunca gravado (S1-02, regra 3), pausa falha fechada (S1-08, regra 8), socket criado de forma atômica (S1-09, control.rs).
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -55,6 +56,7 @@ Build: frio ~6 min, incremental ~30 s. Os quatro builders trabalham no MESMO che
 5. Erros: `thiserror` nas libs, `anyhow` só em `clipsync-cli` e funções `probe::run`. Sem `unwrap/expect` fora de teste.
 6. Teste que exige sessão gráfica, portal ou diálogo: `#[ignore = "requer sessão gráfica"]`. CI roda só os não ignorados.
 7. Saída de CLI e probe: nunca imprime tecla; clipboard só no `inbox` (preview) e no `probe clipboard --write` (comparação ok/falha, sem ecoar).
+8. (v1.10, S1-01) Todo texto que vem do par (nome, motivo de bloqueio, preview do inbox) passa por filtro de caracteres de controle e formatação antes de ir ao terminal. No pareamento, a linha `Código:` é a última antes da pergunta, depois do nome.
 
 ## 3. Perfil (`--profile DIR`)
 `--profile` é global (qualquer posição). Padrão: `$XDG_CONFIG_HOME/clipsync` (ou `~/.config/clipsync`); env `CLIPSYNC_PROFILE`. DIR criado com 0700.
@@ -225,6 +227,9 @@ pub enum WireError { #[error("frame too large: {len} > {max}")] TooLarge { len: 
 // validate(): strings dentro dos MAX_*, floats finitos, pos/from/to em 0..=1,
 // events.len() <= MAX_EVENTS_PER_DATAGRAM, text.len() <= MAX_CLIP_TEXT_BYTES, mime == MIME_TEXT_UTF8 no MVP,
 // device_name com 1..=MAX_NAME_BYTES bytes (vazio recusado), Hello com min_version <= version.
+// device_name (v1.10, S1-01): UMA função `validate_name` no proto recusa `char::is_control` (C0, DEL, C1 e U+009B)
+// e os caracteres de formatação Unicode U+200B..U+200F, U+2028, U+2029, U+202A..U+202E, U+2066..U+2069 e U+FEFF.
+// O `profile::valid_name` chama essa mesma função; as duas regras não podem divergir.
 // Compatibilidade de versão entre os dois Hello NÃO é do validate(): é do core (CloseCode::Version).
 
 // clip.rs
@@ -481,7 +486,9 @@ pub struct State { pub version: u32, pub paused: bool }
 // ===== control.rs (Flux) =====
 #[async_trait::async_trait]
 pub trait ControlHandler: Send + Sync + 'static { async fn handle(&self, req: ControlRequest) -> ControlResponse; }
-/// Cria o socket com 0600. Socket velho: se connect falha, apaga e segue; se connect funciona, AgentAlreadyRunning.
+/// Cria o socket com 0600 de forma atômica (v1.10, S1-09): bind em nome temporário no DIR, chmod 0600, rename para agent.sock.
+/// Socket velho: apaga SÓ se o connect der ConnectionRefused ou NotFound; se connect funciona, AgentAlreadyRunning;
+/// qualquer outro erro sobe sem apagar nada. DIR com modo diferente de 0700 é recusado pelo `run`.
 /// Uma conexão = uma requisição + uma resposta (quadro u32 BE + JSON, máx MAX_FRAME_BYTES). Apaga o socket ao sair.
 pub async fn serve(socket: &Path, handler: Arc<dyn ControlHandler>, shutdown: impl Future<Output = ()> + Send) -> Result<(), CoreError>;
 pub async fn request(p: &Profile, req: ControlRequest) -> Result<ControlResponse, CoreError>; // AgentNotRunning sem socket vivo
@@ -510,12 +517,19 @@ pub async fn run(p: &Profile, modules: Vec<Box<dyn Module>>, shutdown: impl Futu
 Regras de transporte (implementação livre dentro delas):
 1. Identidade: ECDSA P-256 (rcgen; ADR 0003), PeerId = SHA-256(SPKI DER). **Um verificador único** (`core::tls::PinVerifier`) implementa `ClientCertVerifier` e `ServerCertVerifier`: valida o X.509 com o próprio cert como âncora (autoassinado), verifica a assinatura TLS 1.3 real com o provider ring, e o pino é SHA-256 do SPKI. Modo malha: pino precisa estar em peers.toml. Modo pareamento (ALPN_PAIR): aceita qualquer pino, mas exige posse da chave. Cert de cliente obrigatório nos dois modos (TLS mútuo).
 2. **Retomada TLS 1.3 desligada (obrigatório)**, senão o verificador não roda na reconexão. Servidor: `session_storage = NoServerSessionStorage`, `send_tls13_tickets = 0`. Cliente: `resumption = Resumption::disabled()`. Vale para malha e pareamento.
-3. Pareamento: host escuta em porta efêmera (`--port 0` padrão), imprime `Aguardando em <addr>:<porta> (expira em 2 min)`. No fluxo de controle aberto pelo join (B): Hello B->A, Hello A->B, depois o compromisso de `PairMsg` (§4): B envia Commit{H(nB)}, A envia Nonce{nA}, B revela nB, A confere H(nB). Código = u64 BE de `export_keying_material(8 bytes, PAIR_EXPORTER_LABEL, contexto nB||nA)` mod 1_000_000, "NNN NNN". nA e nB: 32 bytes aleatórios novos por tentativa. **Uma tentativa por janela**: qualquer falha (hash não confere, recusa, timeout, frame fora de ordem) fecha com CloseCode::PairFailed e encerra `pair host` (sai 3). Conexões extras durante a tentativa são recusadas. Cada lado mostra código + nome + id curto e pergunta permissões só dos módulos ligados (input_in com aviso de confiança total). Cada lado envia Confirm{accept}; grava peers.toml **só se os dois aceitarem**. Se o agente estiver rodando, manda `ReloadPeers`.
+3. Pareamento: host escuta em porta efêmera (`--port 0` padrão), imprime `Aguardando em <addr>:<porta> (expira em 2 min)`. No fluxo de controle aberto pelo join (B): Hello B->A, Hello A->B, depois o compromisso de `PairMsg` (§4): B envia Commit{H(nB)}, A envia Nonce{nA}, B revela nB, A confere H(nB). Código = u64 BE de `export_keying_material(8 bytes, PAIR_EXPORTER_LABEL, contexto nB||nA)` mod 1_000_000, "NNN NNN". nA e nB: 32 bytes aleatórios novos por tentativa. **O que conta como tentativa (v1.10):**
+   - **a)** Uma tentativa começa quando o host recebe o primeiro `PairMsg::Commit` numa conexão que completou o handshake TLS em ALPN_PAIR e mandou um Hello válido.
+   - **b)** Antes do Commit nada conta: handshake falho, ALPN errado, sonda sem Hello, Hello inválido (nome recusado) ou timeout. O host descarta a conexão e volta ao `accept()` até o prazo da janela. Só uma conexão pré-Commit por vez, com 5 s do fim do handshake até o Commit.
+   - **c)** No máximo **3 tentativas por janela**. Recusa, código divergente, timeout depois do Commit e frame fora de ordem contam como tentativa. A 3ª falha fecha a janela com CloseCode::PairFailed e encerra `pair host` (sai 3). O cli mostra quantas tentativas sobram.
+   - **d)** **Reveal que não confere com o Commit fecha a janela NA HORA**, sem olhar o contador: é prova de ataque ativo. O cli avisa "possível ataque: refaça o pareamento numa rede confiável".
+   - **e)** Durante uma tentativa (Commit recebido até o fim), conexões extras são recusadas.
+   - **f)** Segurança: nA é sorteado depois do Commit, então cada tentativa dá ao MITM chance 1/10^6, independente das outras. Com 3, o teto por janela é 3/10^6 (ADR 0003).
+   - **g)** Implementação é pós-MVP (S1-04, baixa), salvo se o Rivet couber em 15 min. Até lá vale o comportamento atual: a primeira conexão é a tentativa, e qualquer falha fecha. É mais restritivo; o único custo é negação de serviço. Cada lado mostra código + nome + id curto e pergunta permissões só dos módulos ligados (input_in com aviso de confiança total). Cada lado envia Confirm{accept}; grava peers.toml **só se os dois aceitarem** e só com nome que passa em `validate_name`; nome inválido = PairFailed antes de gravar (v1.10, S1-02). `load_peers` põe em quarentena a entrada inválida (aviso + ignora só ela) em vez de derrubar o perfil. Se o agente estiver rodando, manda `ReloadPeers`.
 4. Malha: `run` escuta em `network.listen`, disca cada par (backoff 1 s até 30 s, jitter ±20%). Fluxo bidi de controle aberto por quem disca. **Conectado só depois de Hello de aplicação autenticado nos DOIS sentidos** (o `connect()` do quinn volta antes de o servidor validar o cert do cliente): antes disso nada de PeerUp, nada de módulo, status = Connecting. Versão incompatível fecha com CloseCode::Version. Mensagens de módulo: um fluxo uni por frame. Datagramas: `encode_datagram`. keep-alive 5 s, idle 15 s, datagramas ligados.
 5. Duplicada: se há duas conexões com o mesmo par, fica a discada pelo menor PeerId; a outra fecha com CloseCode::Duplicate.
 6. Par desconhecido: handshake recusado; servidor loga `par desconhecido recusado: <id curto>`; cliente desconhecido vê a mensagem de `msg.rs` "recusado pelo par: certificado não confiável".
 7. Chave trocada: ao discar `addr` de um par conhecido e receber outro SPKI: aborta (CloseCode::KeyChanged), PeerState::Blocked{"chave do par mudou; repareie"}, alerta em warn e em `status`. Não reconecta até novo pareamento.
-8. Pausa: core guarda (state.toml), aplica authorize_* e propaga `ModuleInput::Paused`.
+8. Pausa: core guarda (state.toml), aplica authorize_* e propaga `ModuleInput::Paused`. **Falha fechada (v1.10, S1-08):** aplica na memória primeiro e depois persiste. Se gravar falhar, continua pausado e o erro avisa que a pausa não sobrevive a reinício.
 9. **CONNECTION_CLOSE e Bye levam só `CloseCode::code()` + `reason()`** (token curto fixo). Nunca texto Debug/Display de rustls, quinn ou io vai ao par. Erro detalhado só em log local.
 10. Frame acima do limite do fluxo: o leitor para antes de alocar e reseta o fluxo (`stop`/RESET com CloseCode::Protocol). Fluxo de controle: MAX_CONTROL_FRAME_BYTES (64 KiB); fluxo de módulo: MAX_FRAME_BYTES.
 
