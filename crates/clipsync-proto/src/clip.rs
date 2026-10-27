@@ -53,12 +53,17 @@ pub enum DeliveryState {
     InInbox,
     Rejected(RejectReason),
     Expired,
+    /// Local only, never on the wire: target peer not connected, transport error, or no Ack in 5 s.
+    Unreachable,
 }
 
 impl Validate for ClipMsg {
     fn validate(&self) -> Result<(), WireError> {
         match self {
             ClipMsg::Offer(o) => o.validate(),
+            ClipMsg::Ack(ack) if ack.state == DeliveryState::Unreachable => {
+                Err(WireError::Invalid("local-only delivery state"))
+            }
             ClipMsg::Ack(_) => Ok(()),
         }
     }

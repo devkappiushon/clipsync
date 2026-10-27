@@ -333,3 +333,33 @@ fn module_msg_kind() {
         ModuleKind::Input
     );
 }
+
+#[test]
+fn unreachable_never_goes_on_the_wire() {
+    let ack = |state| {
+        Frame::Module(ModuleMsg::Clip(ClipMsg::Ack(ClipAck {
+            id: EventId([1; 16]),
+            state,
+        })))
+    };
+    assert!(matches!(
+        encode_frame(&ack(DeliveryState::Unreachable), MAX_FRAME_BYTES),
+        Err(WireError::Invalid(_))
+    ));
+    let raw = postcard::to_allocvec(&ack(DeliveryState::Unreachable)).unwrap();
+    assert!(matches!(
+        decode_frame_body(&raw),
+        Err(WireError::Invalid(_))
+    ));
+    assert!(encode_frame(&ack(DeliveryState::Applied), MAX_FRAME_BYTES).is_ok());
+    // The local control socket (JSON) does carry it.
+    let reply = ModuleReply::ClipSent(vec![SendOutcome {
+        peer: "b".into(),
+        state: DeliveryState::Unreachable,
+    }]);
+    let json = serde_json::to_vec(&reply).unwrap();
+    assert!(matches!(
+        serde_json::from_slice::<ModuleReply>(&json).unwrap(),
+        ModuleReply::ClipSent(v) if v[0].state == DeliveryState::Unreachable
+    ));
+}
