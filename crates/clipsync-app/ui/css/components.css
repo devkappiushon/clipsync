@@ -1,0 +1,91 @@
+/* Componentes. Cada bloco usa só os tokens de tokens.css. */
+
+/* Botão */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  min-height: 40px;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--raio);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+  line-height: 1.25;
+  text-align: center;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--panel-hover);
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.btn--bloco {
+  width: 100%;
+}
+
+/* Tecla de atalho */
+
+kbd {
+  display: inline-block;
+  padding: 0 var(--s-1);
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+/* Selo de estado */
+
+.selo {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+.selo::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.selo--ok {
+  color: var(--ok);
+}
+
+.selo--aviso {
+  color: var(--warn);
+}
+
+.selo--erro {
+  color: var(--err);
+}
+
+.selo--neutro {
+  color: var(--muted);
+}
+
+.selo--acento {
+  color: var(--accent);
+}
