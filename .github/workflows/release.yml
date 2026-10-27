@@ -18,7 +18,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             name: linux-x86_64
             ext: tar.gz
@@ -30,17 +30,33 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Versão do rust-toolchain.toml (1.99.1). A action exige o input `toolchain`.
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.99.1"
-          targets: ${{ matrix.target }}
+      # Só actions oficiais e sem cache (contrato §11 regra 9): um cache restaurado
+      # de PR poderia envenenar o binário publicado. O rustup do runner instala a
+      # toolchain fixada em rust-toolchain.toml na primeira chamada.
+      - name: toolchain fixada
+        shell: bash
+        run: |
+          rustup toolchain install
+          rustup target add ${{ matrix.target }}
+          cargo --version
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
+      - name: tag confere com a versão do workspace
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "v${version}" != "${TAG}" ]; then
+            echo "tag ${TAG} difere da versão ${version} do Cargo.toml" >&2
+            exit 1
+          fi
 
+      # CRT estática no Windows: sem isso o .exe exige o VCRUNTIME140.dll do
+      # VC++ Redistributable, que um Windows limpo pode não ter.
       - name: cargo build --release
+        shell: bash
+        env:
+          RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C target-feature=+crt-static' || '' }}
         run: cargo build --release -p clipsync-cli --locked --target ${{ matrix.target }}
 
       - name: empacota (linux)

@@ -23,6 +23,8 @@ sha256sum -c SHA256SUMS --ignore-missing
 Get-FileHash .\clipsync-v0.1.0-windows-x86_64.zip -Algorithm SHA256
 ```
 
+Requisitos: no Linux, glibc 2.39 ou mais nova (o binário é compilado no Ubuntu 24.04). No Windows, nenhum pacote extra: o `.exe` leva a biblioteca de execução embutida. O perfil fica em `~/.config/clipsync` no Linux e em `%LOCALAPPDATA%\clipsync` no Windows; não aponte `--profile` para uma pasta compartilhada, porque a chave privada mora nela.
+
 O que funciona em cada plataforma nesta versão:
 
 | Recurso | Linux (X11 e XWayland) | Windows |

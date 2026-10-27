@@ -49,13 +49,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.99.1"
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
 
-      # Prova que o release compila para Windows. O input e o roteiro e2e ficam
-      # só no Linux por enquanto (dependem de portal/libei e de sessão gráfica).
+      # Prova que o release compila para Windows e que o alvo fica sem aviso.
+      # O roteiro e2e da CLI é cfg(unix); os testes de portal são ignorados.
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
       - name: cargo build --release
         run: cargo build --release -p clipsync-cli --locked
 
-      - name: cargo test (headless)
-        run: cargo test -p clipsync-proto -p clipsync-core -p clipsync-clipboard --locked
+      - name: cargo test
+        run: cargo test --workspace --locked
