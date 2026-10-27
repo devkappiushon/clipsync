@@ -1,7 +1,7 @@
 //! Local control channel: client side (`request`), server side (`serve`) plus the framing both sides share.
 //! Frame = u32 big-endian length + JSON body, at most `MAX_FRAME_BYTES`; one request, one response, close.
-//! Unix: socket `DIR/agent.sock` (0600). Windows: named pipe `\\.\pipe\clipsync-<16 hex>` derived from
-//! the profile directory (`pipe_name`); same frames on both.
+//! Unix: socket `DIR/agent.sock` (0600). Windows: named pipe `\\.\pipe\clipsync-<32 random hex>`, drawn per
+//! `serve` and published in `DIR\agent.pipe` (contract §11 rule 5); same frames on both.
 use crate::CoreError;
 use crate::profile::Profile;
 use clipsync_proto::{ControlRequest, ControlResponse, MAX_FRAME_BYTES};
@@ -115,11 +115,9 @@ async fn connect(socket: &Path) -> Result<UnixStream, CoreError> {
 }
 
 /// A busy pipe has a live agent behind it: wait for a free instance (the caller bounds the wait).
-/// Known gap: a pipe created first by another local user would be accepted here; checking the server's
-/// owner needs Win32 calls (unsafe or a new dependency), pending a decision.
 #[cfg(windows)]
 async fn connect(socket: &Path) -> Result<NamedPipeClient, CoreError> {
-    let name = pipe_name(socket);
+    let name = read_pipe_name(socket)?.ok_or(CoreError::AgentNotRunning)?;
     loop {
         match ClientOptions::new().open(&name) {
             Ok(c) => return Ok(c),
@@ -143,21 +141,59 @@ pub(crate) async fn agent_alive(socket: &Path) -> bool {
 /// True when an agent answers on the control channel of `socket`'s profile.
 #[cfg(windows)]
 pub(crate) async fn agent_alive(socket: &Path) -> bool {
-    match ClientOptions::new().open(pipe_name(socket)) {
-        Ok(_) => true,
-        Err(e) => e.raw_os_error() == Some(ERROR_PIPE_BUSY),
+    matches!(probe(socket), Ok(PipeProbe::Live))
+}
+
+#[cfg(any(windows, test))]
+const PIPE_PREFIX: &str = r"\\.\pipe\clipsync-";
+
+/// A fresh name per `serve`. The `\\.\pipe\` namespace is global and any local user can list it: a name
+/// fixed or derived from the profile path could be created first by someone else, who would then receive
+/// what `request` sends. A name drawn at startup cannot be taken ahead of time.
+#[cfg(any(windows, test))]
+fn new_pipe_name() -> String {
+    format!("{PIPE_PREFIX}{}", hex::encode(rand::random::<[u8; 16]>()))
+}
+
+#[cfg(any(windows, test))]
+fn is_pipe_name(s: &str) -> bool {
+    s.strip_prefix(PIPE_PREFIX)
+        .is_some_and(|h| h.len() == 32 && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+}
+
+/// The name published in `DIR\agent.pipe`; `None` when there is no such file.
+#[cfg(windows)]
+fn read_pipe_name(file: &Path) -> Result<Option<String>, CoreError> {
+    match std::fs::read_to_string(file) {
+        Ok(name) if is_pipe_name(&name) => Ok(Some(name)),
+        Ok(_) => Err(invalid(format!(
+            "{}: not a clipsync pipe name",
+            file.display()
+        ))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
     }
 }
 
-/// `\\.\pipe\clipsync-<16 hex>`: the first 8 bytes of SHA-256 over the profile directory (canonical
-/// when it exists), so the agent and the CLI of one profile meet on one name and two profiles never share it.
-#[cfg(any(windows, test))]
-fn pipe_name(socket: &Path) -> String {
-    use sha2::{Digest, Sha256};
-    let dir = socket.parent().unwrap_or(socket);
-    let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
-    let digest: [u8; 32] = Sha256::digest(dir.as_os_str().as_encoded_bytes()).into();
-    format!(r"\\.\pipe\clipsync-{}", hex::encode(&digest[..8]))
+#[cfg(windows)]
+enum PipeProbe {
+    Absent,
+    Stale,
+    Live,
+}
+
+/// Reads `DIR\agent.pipe` and tries its name: NotFound means a stale file; any other error is surfaced.
+#[cfg(windows)]
+fn probe(file: &Path) -> Result<PipeProbe, CoreError> {
+    let Some(name) = read_pipe_name(file)? else {
+        return Ok(PipeProbe::Absent);
+    };
+    match ClientOptions::new().open(&name) {
+        Ok(_) => Ok(PipeProbe::Live),
+        Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => Ok(PipeProbe::Live),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(PipeProbe::Stale),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Serves the control socket until `shutdown` completes, then removes the socket file.
@@ -195,30 +231,45 @@ pub async fn serve(
     Ok(())
 }
 
-/// Serves the profile's named pipe until `shutdown` completes. `first_pipe_instance` makes the name a lock:
-/// another agent on this profile already owns it, so creation fails and we give `AgentAlreadyRunning`.
-/// Access: remote clients are refused; the default pipe DACL grants write only to the owner, SYSTEM and
-/// Administrators (Everyone may open it read-only, which cannot send a request). Nothing to clean up on exit:
-/// the pipe disappears with its last handle.
+/// Serves a fresh named pipe until `shutdown` completes. `socket` is `DIR\agent.pipe`: a live agent named
+/// there gives `AgentAlreadyRunning`, a stale name is replaced, and the file is removed on exit.
+/// Access: remote clients are refused; the default pipe DACL lets no other user create an instance or
+/// connect for writing; `agent.pipe` is readable only through the profile's ACL.
 #[cfg(windows)]
 pub async fn serve(
     socket: &Path,
     handler: Arc<dyn ControlHandler>,
     shutdown: impl Future<Output = ()> + Send,
 ) -> Result<(), CoreError> {
-    let name = pipe_name(socket);
-    let mut server = ServerOptions::new()
+    if let PipeProbe::Live = probe(socket)? {
+        return Err(CoreError::AgentAlreadyRunning);
+    }
+    let name = new_pipe_name();
+    let server = ServerOptions::new()
         .first_pipe_instance(true)
         .reject_remote_clients(true)
-        .create(&name)
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::PermissionDenied => CoreError::AgentAlreadyRunning,
-            _ => e.into(),
-        })?;
+        .create(&name)?;
+    // Published only once the pipe exists: whoever reads the file finds a server.
+    crate::profile::write_private(socket, name.as_bytes())?;
+    let served = accept_pipes(&name, server, handler, shutdown).await;
+    // Only our own name is removed; a file another agent rewrote is left alone.
+    if matches!(read_pipe_name(socket), Ok(Some(n)) if n == name) {
+        let _ = std::fs::remove_file(socket);
+    }
+    served
+}
+
+#[cfg(windows)]
+async fn accept_pipes(
+    name: &str,
+    mut server: tokio::net::windows::named_pipe::NamedPipeServer,
+    handler: Arc<dyn ControlHandler>,
+    shutdown: impl Future<Output = ()> + Send,
+) -> Result<(), CoreError> {
     let next_instance = || {
         ServerOptions::new()
             .reject_remote_clients(true)
-            .create(&name)
+            .create(name)
     };
     let mut tasks = tokio::task::JoinSet::new();
     tokio::pin!(shutdown);
@@ -291,16 +342,23 @@ fn bind_private(socket: &Path) -> Result<UnixListener, CoreError> {
 
 #[cfg(test)]
 mod tests {
-    use super::pipe_name;
-    use std::path::Path;
+    use super::{is_pipe_name, new_pipe_name};
 
     #[test]
-    fn pipe_name_is_stable_per_profile_and_distinct_across_profiles() {
-        let a = pipe_name(Path::new("/nonexistent/profile-a/agent.sock"));
-        assert_eq!(a, pipe_name(Path::new("/nonexistent/profile-a/agent.sock")));
-        assert_ne!(a, pipe_name(Path::new("/nonexistent/profile-b/agent.sock")));
-        let hash = a.strip_prefix(r"\\.\pipe\clipsync-").unwrap_or_default();
-        assert_eq!(hash.len(), 16, "{a}");
-        assert!(hash.bytes().all(|b| b.is_ascii_hexdigit()), "{a}");
+    fn pipe_name_is_random_and_matches_the_contract_shape() {
+        let a = new_pipe_name();
+        assert!(is_pipe_name(&a), "{a}");
+        assert_ne!(a, new_pipe_name());
+        let hex = a.strip_prefix(r"\\.\pipe\clipsync-").unwrap_or_default();
+        assert_eq!(hex.len(), 32);
+        for bad in [
+            r"\\.\pipe\clipsync-",
+            r"\\.\pipe\clipsync-0123456789ABCDEF0123456789abcdef",
+            r"\\.\pipe\other-0123456789abcdef0123456789abcdef",
+            r"\\server\pipe\clipsync-0123456789abcdef0123456789abcdef",
+        ] {
+            assert!(!is_pipe_name(bad), "{bad}");
+        }
+        assert!(!is_pipe_name(&format!("{a}\n")));
     }
 }

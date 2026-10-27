@@ -20,7 +20,11 @@ const KEY_FILE: &str = "identity.key.pem";
 const CERT_FILE: &str = "identity.cert.pem";
 const PEERS_FILE: &str = "peers.toml";
 const STATE_FILE: &str = "state.toml";
+/// Control rendezvous: the Unix socket itself; on Windows, the file that publishes the random pipe name.
+#[cfg(unix)]
 const SOCKET_FILE: &str = "agent.sock";
+#[cfg(windows)]
+const SOCKET_FILE: &str = "agent.pipe";
 
 #[derive(Debug, Clone)]
 pub struct Profile {
@@ -284,7 +288,7 @@ fn valid_name(name: &str) -> Result<(), CoreError> {
 
 /// Writes `data` to `path` through a private temp file and an atomic rename; mode 0600 on Unix (on Windows
 /// the file inherits the ACL of the profile directory, see `Profile::init`).
-fn write_private(path: &Path, data: &[u8]) -> Result<(), CoreError> {
+pub(crate) fn write_private(path: &Path, data: &[u8]) -> Result<(), CoreError> {
     let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
     let _ = fs::remove_file(&tmp);
     let res = (|| {
@@ -307,22 +311,31 @@ fn read_text(path: &Path) -> Result<String, CoreError> {
     fs::read_to_string(path).map_err(|e| io_ctx(format!("lendo {}", path.display()), e))
 }
 
-fn xdg_default() -> Result<PathBuf, CoreError> {
+fn default_dir() -> Result<PathBuf, CoreError> {
     if let Some(p) = std::env::var_os("CLIPSYNC_PROFILE").filter(|v| !v.is_empty()) {
         return Ok(PathBuf::from(p));
     }
+    platform_default_dir()
+}
+
+#[cfg(unix)]
+fn platform_default_dir() -> Result<PathBuf, CoreError> {
     if let Some(x) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
         return Ok(PathBuf::from(x).join("clipsync"));
-    }
-    // Windows has no HOME by default; %APPDATA% sits inside the user profile and inherits its ACL.
-    #[cfg(windows)]
-    if let Some(a) = std::env::var_os("APPDATA").filter(|v| !v.is_empty()) {
-        return Ok(PathBuf::from(a).join("clipsync"));
     }
     let home = std::env::var_os("HOME")
         .filter(|v| !v.is_empty())
         .ok_or_else(|| CoreError::Config("HOME indefinido".into()))?;
     Ok(PathBuf::from(home).join(".config").join("clipsync"))
+}
+
+/// Local, not Roaming: the private key must not travel to a domain server (contract §11 rule 4).
+#[cfg(windows)]
+fn platform_default_dir() -> Result<PathBuf, CoreError> {
+    std::env::var_os("LOCALAPPDATA")
+        .filter(|v| !v.is_empty())
+        .map(|d| PathBuf::from(d).join("clipsync"))
+        .ok_or_else(|| CoreError::Profile("LOCALAPPDATA indefinido: use --profile DIR".into()))
 }
 
 fn module_table(fake: bool, keys: &[(&str, &str)]) -> toml::Table {
@@ -339,12 +352,12 @@ fn module_table(fake: bool, keys: &[(&str, &str)]) -> toml::Table {
 }
 
 impl Profile {
-    /// `--profile` argument, else `$CLIPSYNC_PROFILE`, else `$XDG_CONFIG_HOME/clipsync`, else (Windows)
-    /// `%APPDATA%\clipsync`, else `~/.config/clipsync`.
+    /// `--profile` argument, else `$CLIPSYNC_PROFILE`, else `$XDG_CONFIG_HOME/clipsync`, else `~/.config/clipsync`.
+    /// On Windows the last two are replaced by `%LOCALAPPDATA%\clipsync`.
     pub fn resolve(arg: Option<PathBuf>) -> Result<Self, CoreError> {
         let dir = match arg {
             Some(p) => p,
-            None => xdg_default()?,
+            None => default_dir()?,
         };
         let dir = if dir.is_absolute() {
             dir
