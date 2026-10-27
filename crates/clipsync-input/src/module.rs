@@ -1,9 +1,8 @@
 //! The input module: destination side (Enter / datagrams / Stats) and the source-side loopback
 //! driven by `ModuleCommand::InputLoopback` (contract §8 rules 1 to 3).
-use crate::adapter::{
-    BarrierSpec, CaptureAdapter, CaptureEvent, EmulateAdapter, InputError, ZoneRef,
-};
-use crate::config::InputConfig;
+use crate::adapter::ZoneRef;
+use crate::adapter::{BarrierSpec, CaptureAdapter, CaptureEvent, EmulateAdapter, InputError};
+use crate::config::{InputConfig, zone_ref};
 use crate::msg;
 use async_trait::async_trait;
 use clipsync_proto::{
@@ -53,8 +52,6 @@ struct Incoming {
     last_seq: Option<u32>,
     latencies: Vec<u64>,
     samples: u64,
-    window_start: Instant,
-    window_count: u32,
 }
 
 impl Incoming {
@@ -68,8 +65,6 @@ impl Incoming {
             last_seq: None,
             latencies: Vec::new(),
             samples: 0,
-            window_start: Instant::now(),
-            window_count: 0,
         }
     }
 
@@ -105,6 +100,37 @@ impl Incoming {
     }
 }
 
+/// Token bucket on the monotonic clock: `MAX_INPUT_DATAGRAMS_PER_SEC` tokens per second,
+/// burst of the same size.
+struct Bucket {
+    tokens: f64,
+    last: Instant,
+}
+
+impl Default for Bucket {
+    fn default() -> Self {
+        Self {
+            tokens: f64::from(MAX_INPUT_DATAGRAMS_PER_SEC),
+            last: Instant::now(),
+        }
+    }
+}
+
+impl Bucket {
+    fn take(&mut self, now: Instant) -> bool {
+        let cap = f64::from(MAX_INPUT_DATAGRAMS_PER_SEC);
+        let elapsed = now.saturating_duration_since(self.last).as_secs_f64();
+        self.last = now;
+        self.tokens = (self.tokens + elapsed * cap).min(cap);
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 enum LoopSignal {
     Stats(LoopbackStats),
     Rejected(RejectReason),
@@ -134,6 +160,7 @@ struct State {
     emu_name: &'static str,
     peers: HashMap<PeerId, PeerInfo>,
     incoming: HashMap<PeerId, Incoming>,
+    buckets: HashMap<PeerId, Bucket>,
     ctl: Option<LoopCtl>,
     ignored: u64,
     rate_dropped: u64,
@@ -168,6 +195,7 @@ impl Module for InputModule {
             cap: Some(me.cap),
             peers: HashMap::new(),
             incoming: HashMap::new(),
+            buckets: HashMap::new(),
             ctl: None,
             ignored: 0,
             rate_dropped: 0,
@@ -332,6 +360,7 @@ impl State {
             }
             ModuleInput::PeerDown(id) => {
                 self.peers.remove(&id);
+                self.buckets.remove(&id);
                 if self.incoming.remove(&id).is_some_and(|i| i.active) {
                     self.release_all().await;
                 }
@@ -456,13 +485,8 @@ impl State {
             self.ignored += 1;
             return;
         }
-        let now = Instant::now();
-        if now.duration_since(inc.window_start) >= Duration::from_secs(1) {
-            inc.window_start = now;
-            inc.window_count = 0;
-        }
-        inc.window_count += 1;
-        if inc.window_count > MAX_INPUT_DATAGRAMS_PER_SEC {
+        // Per peer, not per session: a new Enter must not refill the budget.
+        if !self.buckets.entry(from).or_default().take(Instant::now()) {
             self.rate_dropped += 1;
             return;
         }
@@ -547,10 +571,7 @@ fn pick_barriers(
     let mut specs = Vec::new();
     let mut entries = Vec::new();
     for b in cfgs.iter().filter(|b| b.peer == peer) {
-        let zone = b
-            .monitor
-            .parse::<u32>()
-            .map_or_else(|_| ZoneRef::Name(b.monitor.clone()), ZoneRef::Index);
+        let zone = zone_ref(&b.monitor);
         specs.push(BarrierSpec {
             zone,
             edge: b.edge,

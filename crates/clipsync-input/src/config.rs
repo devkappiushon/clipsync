@@ -1,3 +1,4 @@
+use crate::adapter::ZoneRef;
 use clipsync_proto::{Edge, ModuleError};
 use serde::Deserialize;
 
@@ -111,4 +112,13 @@ impl InputConfig {
             barriers,
         })
     }
+}
+
+/// `"#0"` ('#' plus digits) is a zone index; anything else is a monitor name (`"eDP-1"`).
+pub fn zone_ref(monitor: &str) -> ZoneRef {
+    monitor
+        .strip_prefix('#')
+        .filter(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|d| d.parse::<u32>().ok())
+        .map_or_else(|| ZoneRef::Name(monitor.to_owned()), ZoneRef::Index)
 }

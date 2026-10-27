@@ -16,7 +16,7 @@ pub use adapter::{
 };
 #[cfg(target_os = "linux")]
 pub use adapter::{PortalCapture, PortalEmulate};
-pub use config::{AdapterChoice, BarrierConfig, InputConfig};
+pub use config::{AdapterChoice, BarrierConfig, InputConfig, zone_ref};
 pub use diag::diagnose;
 pub use module::build_with_adapters;
 

@@ -183,3 +183,16 @@ fn config_rejects_bad_input() {
         assert!(InputConfig::from_table(Some(&t)).is_err(), "{b}");
     }
 }
+
+#[test]
+fn hash_digits_is_a_zone_index_everything_else_a_name() {
+    use clipsync_input::{ZoneRef, zone_ref};
+    assert!(matches!(zone_ref("#0"), ZoneRef::Index(0)));
+    assert!(matches!(zone_ref("#12"), ZoneRef::Index(12)));
+    for name in ["eDP-1", "HDMI-A-1", "#", "#x", "#1a", "0", ""] {
+        assert!(
+            matches!(zone_ref(name), ZoneRef::Name(ref n) if n == name),
+            "{name}"
+        );
+    }
+}

@@ -27,7 +27,9 @@ impl<R: BufRead, W: Write> Prompter<R, W> {
     pub fn yes_no(&mut self, question: &str, default: bool) -> io::Result<bool> {
         let hint = if default { "[S/n]" } else { "[s/N]" };
         loop {
-            let Some(ans) = self.line(&format!("{question} {hint}"))? else { return Ok(default) };
+            let Some(ans) = self.line(&format!("{question} {hint}"))? else {
+                return Ok(default);
+            };
             match ans.to_lowercase().as_str() {
                 "" => return Ok(default),
                 "s" | "sim" | "y" | "yes" => return Ok(true),

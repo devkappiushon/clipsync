@@ -30,6 +30,8 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(10);
 const BACKOFF_MIN: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(30);
+/// The larger PeerId waits this long before dialing, so the smaller one dials first.
+const DEFER: Duration = Duration::from_secs(2);
 /// Time the control tasks get to put Bye on the wire before the connections close.
 const BYE_GRACE: Duration = Duration::from_millis(100);
 
@@ -460,6 +462,10 @@ impl Inner {
 
     async fn dial_loop(self: Arc<Self>, peer: PeerId) {
         let mut backoff = BACKOFF_MIN;
+        // Rule 5 keeps the connection dialed by the smaller PeerId, so when we are the larger
+        // side our dial would only make a duplicate (and lose frames sent on it). We give the
+        // other side DEFER to dial first, once per disconnected spell.
+        let mut deferred = false;
         loop {
             if self.stopped() {
                 return;
@@ -473,12 +479,22 @@ impl Inner {
                     _ = self.until_stop() => return,
                 }
                 backoff = BACKOFF_MIN;
+                deferred = false;
                 continue;
             };
+            if self.id > peer && !deferred {
+                deferred = true;
+                tokio::select! {
+                    _ = tokio::time::sleep(jitter(DEFER)) => {}
+                    _ = self.until_stop() => return,
+                }
+                continue;
+            }
             self.set_state(peer, PeerState::Connecting);
             match self.clone().dial_once(peer, addr).await {
                 Ok(()) => {
                     backoff = BACKOFF_MIN;
+                    deferred = false;
                     continue;
                 }
                 Err(DialFail::KeyChanged(got)) => {

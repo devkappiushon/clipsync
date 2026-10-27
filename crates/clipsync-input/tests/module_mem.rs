@@ -330,7 +330,8 @@ async fn rate_limit_drops_the_excess_and_counts_it() {
         }
     };
     assert!(
-        stats.received <= u64::from(MAX_INPUT_DATAGRAMS_PER_SEC),
+        // token bucket: the budget plus whatever refilled while the burst ran
+        stats.received <= u64::from(MAX_INPUT_DATAGRAMS_PER_SEC) + 100,
         "{stats:?}"
     );
     assert!(stats.received > 0);
@@ -379,4 +380,43 @@ async fn paused_destination_drops_datagrams_and_needs_a_new_enter() {
         .unwrap();
     tokio::time::sleep(Duration::from_millis(150)).await;
     assert_eq!(b.emu.emitted(), emitted);
+}
+
+#[tokio::test]
+async fn rate_limit_survives_a_new_enter() {
+    let (_hub, a, b) = dest_with_raw(true).await;
+    let enter = |s| InputMsg::Enter {
+        session: s,
+        edge: Edge::Left,
+        pos: 0.5,
+    };
+    send(&a, b.id, enter(1)).await;
+    until("started", || b.emu.started()).await;
+    let started = Instant::now();
+    let mut sent = 0u32;
+    for session in [1u32, 2] {
+        if session == 2 {
+            send(&a, b.id, enter(2)).await;
+        }
+        for seq in 0..1500u32 {
+            a.host
+                .send_datagram(b.id, dg(session, seq, vec![motion()]))
+                .unwrap();
+            sent += 1;
+            if seq % 100 == 0 {
+                tokio::task::yield_now().await;
+            }
+        }
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "test must stay inside one second"
+    );
+    assert_eq!(sent, 3000);
+    // each Enter emits 3 positioning events; the rest are datagram events
+    let accepted = b.emu.emitted() - 6;
+    let budget = MAX_INPUT_DATAGRAMS_PER_SEC as usize;
+    assert!(accepted <= budget + 60, "accepted {accepted} of 3000");
+    assert!(accepted >= budget - 100, "accepted {accepted} of 3000");
 }

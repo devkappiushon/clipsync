@@ -40,7 +40,11 @@ fn default_name() -> String {
         .unwrap_or_else(|| "clipsync".to_owned())
 }
 
-pub fn run<R: BufRead, W: Write>(profile: &Profile, args: InitArgs, ui: &mut Prompter<R, W>) -> Result<(), Fail> {
+pub fn run<R: BufRead, W: Write>(
+    profile: &Profile,
+    args: InitArgs,
+    ui: &mut Prompter<R, W>,
+) -> Result<(), Fail> {
     let modules_arg = args.modules.as_deref().map(parse_modules).transpose()?;
     if profile.is_initialized() && !ui.yes_no(msg::ASK_RECREATE, false)? {
         return Err(Fail::refused(msg::INIT_NOT_CONFIRMED));
@@ -50,19 +54,29 @@ pub fn run<R: BufRead, W: Write>(profile: &Profile, args: InitArgs, ui: &mut Pro
         None => {
             ui.say(msg::INIT_INTRO)?;
             let fallback = default_name();
-            ui.line(&format!("{} [{fallback}]:", msg::ASK_NAME))?.filter(|n| !n.is_empty()).unwrap_or(fallback)
+            ui.line(&format!("{} [{fallback}]:", msg::ASK_NAME))?
+                .filter(|n| !n.is_empty())
+                .unwrap_or(fallback)
         }
     };
     let modules = match modules_arg {
         Some(m) => m,
         // input is on by default; the clipboard question defaults to NO
-        None => ModuleSet { input: true, clipboard: ui.yes_no(msg::ASK_CLIPBOARD, false)? },
+        None => ModuleSet {
+            input: true,
+            clipboard: ui.yes_no(msg::ASK_CLIPBOARD, false)?,
+        },
     };
     let listen = SocketAddr::from((Ipv4Addr::UNSPECIFIED, args.port.unwrap_or(DEFAULT_PORT)));
-    let identity = profile.init(InitOptions { device_name: name.clone(), modules, listen, fake_adapters: args.fake_adapters })?;
+    let identity = profile.init(InitOptions {
+        device_name: name.clone(),
+        modules,
+        listen,
+        fake_adapters: args.fake_adapters,
+    })?;
     ui.say(&msg::init_done(
         &profile.dir.display().to_string(),
-        &identity.id.short(),
+        &identity.id().short(),
         &name,
         &listen.to_string(),
         modules.input,

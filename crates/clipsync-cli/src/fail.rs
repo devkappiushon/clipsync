@@ -10,13 +10,22 @@ pub struct Fail {
 
 impl Fail {
     pub fn error(message: impl Into<String>) -> Self {
-        Self { code: 1, message: message.into() }
+        Self {
+            code: 1,
+            message: message.into(),
+        }
     }
     pub fn refused(message: impl Into<String>) -> Self {
-        Self { code: 3, message: message.into() }
+        Self {
+            code: 3,
+            message: message.into(),
+        }
     }
     pub fn not_running() -> Self {
-        Self { code: 4, message: msg::AGENT_STOPPED.into() }
+        Self {
+            code: 4,
+            message: msg::AGENT_STOPPED.into(),
+        }
     }
 }
 
