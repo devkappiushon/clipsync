@@ -369,3 +369,10 @@ body > .conteudo {
   border-style: solid;
   border-color: var(--err);
 }
+
+.sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
