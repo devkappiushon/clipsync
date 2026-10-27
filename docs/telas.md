@@ -47,8 +47,8 @@ Criado em 2026-10-27 pelo MCP do Figma, a partir desta especificação:
 - Variáveis: coleções "Cor claro" e "Cor escuro" com os mesmos 16 nomes (fundo, borda, texto, acento, estado) e "Espaço" (4 a 40, raio 8). O plano Starter permite só um modo por coleção, por isso duas coleções em vez de dois modos.
 - Fontes: Inter no corpo, Geist nos títulos, Geist Mono em código, ids e valores.
 
-Conferido com captura: 01b, 03, 05, 06 e 07 (captura do MCP) e 02 e 04 (portal do Maestri, depois de refeitas: a coluna Nome estava esmagada e o monitor do notebook, cortado). 01a e 01c ainda não foram capturadas.
+Conferido com captura: as 9 telas claras. 01b, 03, 05, 06 e 07 pela captura do MCP; 01a, 01c, 02 e 04 pelo portal do Maestri (02 e 04 depois de refeitas: a coluna Nome estava esmagada e o monitor do notebook, cortado).
 
 Ajustes pendentes no arquivo, todos no script `docs/telas/figma-ajustes.js` (rodar no Scripter ou no MCP quando a cota voltar): trocar `Ctrl+Alt` por `Win+Alt` em todas as teclas de atalho; malha de pontos de 16 px no canvas de 04 Layout de telas; em 02, quebrar a linha do rótulo "É controlada por esta máquina"; em 04, encurtar o rótulo do notebook para "esta máquina". O protótipo HTML em `docs/telas/index.html` já está com as duas mudanças pedidas (tecla Windows e malha).
 
-Pendente no Figma: versão escura dos 9 quadros (script pronto em `docs/telas/figma-escuro.js`) e a captura de 01a e 01c. Parou no limite do MCP do Figma: o plano Starter dá 20 chamadas por mês, todas usadas em 2026-10-27. Caminho sem esperar o mês virar: abrir o arquivo no Figma, rodar o plugin Scripter e colar o script do tema escuro.
+Pendente no Figma: versão escura dos 9 quadros (script pronto em `docs/telas/figma-escuro.js`) e os ajustes de `docs/telas/figma-ajustes.js`. Parou no limite do MCP do Figma: o plano Starter dá 20 chamadas por mês, todas usadas em 2026-10-27. Caminho sem esperar o mês virar: abrir o arquivo no Figma, rodar o plugin Scripter e colar o script do tema escuro.
