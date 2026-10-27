@@ -1,6 +1,6 @@
 # Telas do ClipSync (protótipo Figma e base da UI Tauri)
 
-Desktop 1280×800, temas claro e escuro. Sistema: Inter no corpo, Geist nos títulos, Geist Mono em códigos, ids e valores de tabela (`tabular-nums`). Escala de 8 pt. Um raio de borda (8 px) e uma elevação. Paleta: fundo neutro, texto alto contraste, um acento azul-escuro para ação primária, verde e vermelho só para estado, sempre com ícone ou texto junto. Sem roxo, sem emoji como ícone, sem travessão em texto de interface, sem kicker decorativo. Foco visível em tudo. Textos em português, preparados para tradução.
+Desktop 1280×800, temas claro e escuro. Sistema: Inter no corpo, Geist nos títulos, Geist Mono em códigos, ids e valores de tabela (`tabular-nums`). Atalhos sempre com a tecla Windows como modificador, escrita "Win" (no Linux a mesma tecla é a Super; nunca o símbolo de command da Apple): padrão `Win+Alt+<tecla>`. Escala de 8 pt. Um raio de borda (8 px) e uma elevação. Paleta: fundo neutro, texto alto contraste, um acento azul-escuro para ação primária, verde e vermelho só para estado, sempre com ícone ou texto junto. Sem roxo, sem emoji como ícone, sem travessão em texto de interface, sem kicker decorativo. Foco visível em tudo. Textos em português, preparados para tradução.
 
 ## Estrutura comum
 
@@ -22,7 +22,7 @@ Dois modos em abas: "Aceitar" (mostra endereço e porta em mono, tempo restante 
 
 ## 4. Layout de telas
 
-Canvas em escala com os monitores reais de cada máquina, agrupados por dispositivo, com nome e resolução em mono. Arrastar um dispositivo reposiciona o grupo. Clicar numa borda de monitor seleciona um segmento (alças para encurtar) e um painel pede o destino: dispositivo e borda de monitor de destino. Ligações aparecem como linhas entre as bordas. Bordas internas entre monitores locais aparecem travadas, com dica. Lista lateral das ligações com atalho de troca e botão remover. Rodapé: "Travar nesta tela" (atalho), "Cantos mortos", "Copiar layout para os pares".
+Canvas em escala sobre uma malha de pontos (16 px) com os monitores reais de cada máquina, agrupados por dispositivo, com nome e resolução em mono. Arrastar um dispositivo reposiciona o grupo e ele encaixa na malha (snap), para alinhar bordas entre máquinas sem precisão de pixel; a malha some ao exportar o layout. Clicar numa borda de monitor seleciona um segmento (alças para encurtar) e um painel pede o destino: dispositivo e borda de monitor de destino. Ligações aparecem como linhas entre as bordas. Bordas internas entre monitores locais aparecem travadas, com dica. Lista lateral das ligações com atalho de troca e botão remover. Rodapé: "Travar nesta tela" (atalho), "Cantos mortos", "Copiar layout para os pares".
 
 ## 5. Clipboard
 
@@ -34,7 +34,7 @@ Blocos: Sistema (SO, sessão gráfica, protocolos, portais e versões), Adaptado
 
 ## 7. Preferências
 
-Grupos: Atalhos (abrir, pausar tudo, enviar uma vez, travar nesta tela, ir para dispositivo), Inicialização com a sessão (consentimento explícito), Notificações por tipo (item recebido, dispositivo conectado, bloqueio) com padrão "sem conteúdo", Aparência (tema claro, escuro, sistema; reduzir movimento), Idioma. Rodapé: versão, licença, "feito por montesouza.dev".
+Grupos: Atalhos (abrir Win+Alt+C, pausar tudo Win+Alt+P, enviar uma vez Win+Alt+V, travar nesta tela Win+Alt+L, ir para dispositivo Win+Alt+1 a 3), Inicialização com a sessão (consentimento explícito), Notificações por tipo (item recebido, dispositivo conectado, bloqueio) com padrão "sem conteúdo", Aparência (tema claro, escuro, sistema; reduzir movimento), Idioma. Rodapé: versão, licença, "feito por montesouza.dev".
 
 ## Arquivo no Figma
 
@@ -49,6 +49,6 @@ Criado em 2026-10-27 pelo MCP do Figma, a partir desta especificação:
 
 Conferido com captura: 01b, 03, 05, 06 e 07 (captura do MCP) e 02 e 04 (portal do Maestri, depois de refeitas: a coluna Nome estava esmagada e o monitor do notebook, cortado). 01a e 01c ainda não foram capturadas.
 
-Ajustes pequenos pendentes: em 02, o rótulo "É controlada por esta máquina" encosta no interruptor (falta quebrar a linha); em 04, o rótulo "notebook-joao · esta máquina · 1 monitor" passa da borda do canvas (encurtar para "esta máquina").
+Ajustes pendentes no arquivo, todos no script `docs/telas/figma-ajustes.js` (rodar no Scripter ou no MCP quando a cota voltar): trocar `Ctrl+Alt` por `Win+Alt` em todas as teclas de atalho; malha de pontos de 16 px no canvas de 04 Layout de telas; em 02, quebrar a linha do rótulo "É controlada por esta máquina"; em 04, encurtar o rótulo do notebook para "esta máquina". O protótipo HTML em `docs/telas/index.html` já está com as duas mudanças pedidas (tecla Windows e malha).
 
 Pendente no Figma: versão escura dos 9 quadros (script pronto em `docs/telas/figma-escuro.js`) e a captura de 01a e 01c. Parou no limite do MCP do Figma: o plano Starter dá 20 chamadas por mês, todas usadas em 2026-10-27. Caminho sem esperar o mês virar: abrir o arquivo no Figma, rodar o plugin Scripter e colar o script do tema escuro.
