@@ -1,0 +1,784 @@
+//! `layout.toml`: the single source of the screen layout (S6). Devices with their position on the
+//! canvas, links between monitor-edge segments, and options. Pure data and validation: the
+//! derivation of barriers and the Tauri commands live elsewhere.
+use crate::config::{EdgeRaw, InputConfig};
+use crate::msg;
+use clipsync_proto::{Edge, MAX_NAME_BYTES, PeerId};
+use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::io::Write;
+use std::path::Path;
+
+pub const LAYOUT_VERSION: u32 = 1;
+pub const DEFAULT_DEAD_CORNER_PX: u32 = 8;
+pub const MAX_DEAD_CORNER_PX: u32 = 32;
+pub const MAX_HOTKEY: u8 = 9;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayoutOptions {
+    pub dead_corner_px: u32,
+}
+
+impl Default for LayoutOptions {
+    fn default() -> Self {
+        Self {
+            dead_corner_px: DEFAULT_DEAD_CORNER_PX,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayoutDevice {
+    pub peer: PeerId,
+    pub name: String,
+    /// Canvas position in logical px. Visual only: it never changes a barrier.
+    pub x: i32,
+    pub y: i32,
+    /// `Win+Alt+<n>` jumps to this device (1..=9).
+    pub hotkey: Option<u8>,
+}
+
+/// One side of a link: a segment `from..to` (0..1) of one edge of one monitor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Endpoint {
+    pub peer: PeerId,
+    /// A connector name or `"#idx"` (see `config::zone_ref`).
+    pub monitor: String,
+    pub edge: Edge,
+    pub from: f32,
+    pub to: f32,
+}
+
+/// Undirected: it produces one barrier on each machine.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Link {
+    pub id: String,
+    pub a: Endpoint,
+    pub b: Endpoint,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Layout {
+    pub rev: u64,
+    pub options: LayoutOptions,
+    pub devices: Vec<LayoutDevice>,
+    pub links: Vec<Link>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayoutError {
+    Parse(String),
+    Io(String),
+    UnsupportedVersion(u32),
+    InvalidField(String),
+    DuplicateId(String),
+    UnknownDevice { link: String },
+    SameDevice { link: String },
+    EmptySegment { link: String },
+    SegmentOutOfRange { link: String },
+    SegmentOverlap { link: String, other: String },
+    ManualBarrierConflict,
+}
+
+impl LayoutError {
+    /// Stable code for the UI (`details` carries the ids).
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Parse(_) => "parse",
+            Self::Io(_) => "io",
+            Self::UnsupportedVersion(_) => "unsupported_version",
+            Self::InvalidField(_) => "invalid_field",
+            Self::DuplicateId(_) => "duplicate_id",
+            Self::UnknownDevice { .. } => "unknown_device",
+            Self::SameDevice { .. } => "same_device",
+            Self::EmptySegment { .. } => "empty_segment",
+            Self::SegmentOutOfRange { .. } => "segment_out_of_range",
+            Self::SegmentOverlap { .. } => "segment_overlap",
+            Self::ManualBarrierConflict => "manual_barrier_conflict",
+        }
+    }
+}
+
+impl fmt::Display for LayoutError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Parse(d) => msg::layout_parse(d),
+            Self::Io(d) => msg::layout_io(d),
+            Self::UnsupportedVersion(v) => msg::layout_unsupported_version(*v),
+            Self::InvalidField(d) => msg::layout_invalid_field(d),
+            Self::DuplicateId(id) => msg::layout_duplicate_id(id),
+            Self::UnknownDevice { link } => msg::layout_unknown_device(link),
+            Self::SameDevice { link } => msg::layout_same_device(link),
+            Self::EmptySegment { link } => msg::layout_empty_segment(link),
+            Self::SegmentOutOfRange { link } => msg::layout_out_of_range(link),
+            Self::SegmentOverlap { link, other } => msg::layout_overlap(link, other),
+            Self::ManualBarrierConflict => msg::LAYOUT_MANUAL_CONFLICT.to_owned(),
+        };
+        f.write_str(&s)
+    }
+}
+
+impl std::error::Error for LayoutError {}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawLayout {
+    version: u32,
+    #[serde(default)]
+    rev: u64,
+    #[serde(default)]
+    options: RawOptions,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    device: Vec<RawDevice>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    link: Vec<RawLink>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawOptions {
+    #[serde(default = "default_dead_corner")]
+    dead_corner_px: u32,
+}
+
+fn default_dead_corner() -> u32 {
+    DEFAULT_DEAD_CORNER_PX
+}
+
+impl Default for RawOptions {
+    fn default() -> Self {
+        Self {
+            dead_corner_px: DEFAULT_DEAD_CORNER_PX,
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawDevice {
+    peer: String,
+    name: String,
+    #[serde(default)]
+    x: i32,
+    #[serde(default)]
+    y: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hotkey: Option<u8>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawLink {
+    id: String,
+    a: RawEndpoint,
+    b: RawEndpoint,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawEndpoint {
+    peer: String,
+    monitor: String,
+    edge: EdgeRaw,
+    from: f64,
+    to: f64,
+}
+
+fn invalid(detail: String) -> LayoutError {
+    LayoutError::InvalidField(detail)
+}
+
+/// `0.1_f32` is written as `0.1`, not as `0.10000000149011612`.
+fn clean(v: f32) -> f64 {
+    format!("{v}").parse().unwrap_or(f64::from(v))
+}
+
+fn peer_of(s: &str) -> Result<PeerId, LayoutError> {
+    PeerId::from_hex(s).map_err(|_| invalid(msg::layout_bad_peer(s)))
+}
+
+impl RawEndpoint {
+    fn parse(self) -> Result<Endpoint, LayoutError> {
+        Ok(Endpoint {
+            peer: peer_of(&self.peer)?,
+            monitor: self.monitor,
+            edge: self.edge.into(),
+            from: self.from as f32,
+            to: self.to as f32,
+        })
+    }
+}
+
+impl From<&Endpoint> for RawEndpoint {
+    fn from(e: &Endpoint) -> Self {
+        Self {
+            peer: e.peer.to_hex(),
+            monitor: e.monitor.clone(),
+            edge: e.edge.into(),
+            from: clean(e.from),
+            to: clean(e.to),
+        }
+    }
+}
+
+impl Endpoint {
+    fn overlaps(&self, o: &Endpoint) -> bool {
+        self.peer == o.peer
+            && self.monitor == o.monitor
+            && self.edge == o.edge
+            && self.from < o.to
+            && o.from < self.to
+    }
+
+    fn in_range(&self) -> bool {
+        let ok = |v: f32| v.is_finite() && (0.0..=1.0).contains(&v);
+        ok(self.from) && ok(self.to)
+    }
+}
+
+impl Layout {
+    /// Parses and validates. Unknown keys are an error.
+    pub fn from_toml_str(s: &str) -> Result<Self, LayoutError> {
+        let raw: RawLayout = toml::from_str(s).map_err(|e| LayoutError::Parse(e.to_string()))?;
+        if raw.version != LAYOUT_VERSION {
+            return Err(LayoutError::UnsupportedVersion(raw.version));
+        }
+        let mut devices = Vec::new();
+        for d in raw.device {
+            devices.push(LayoutDevice {
+                peer: peer_of(&d.peer)?,
+                name: d.name,
+                x: d.x,
+                y: d.y,
+                hotkey: d.hotkey,
+            });
+        }
+        let mut links = Vec::new();
+        for l in raw.link {
+            links.push(Link {
+                id: l.id,
+                a: l.a.parse()?,
+                b: l.b.parse()?,
+            });
+        }
+        let layout = Self {
+            rev: raw.rev,
+            options: LayoutOptions {
+                dead_corner_px: raw.options.dead_corner_px,
+            },
+            devices,
+            links,
+        };
+        layout.validate()?;
+        Ok(layout)
+    }
+
+    pub fn to_toml_string(&self) -> Result<String, LayoutError> {
+        let raw = RawLayout {
+            version: LAYOUT_VERSION,
+            rev: self.rev,
+            options: RawOptions {
+                dead_corner_px: self.options.dead_corner_px,
+            },
+            device: self
+                .devices
+                .iter()
+                .map(|d| RawDevice {
+                    peer: d.peer.to_hex(),
+                    name: d.name.clone(),
+                    x: d.x,
+                    y: d.y,
+                    hotkey: d.hotkey,
+                })
+                .collect(),
+            link: self
+                .links
+                .iter()
+                .map(|l| RawLink {
+                    id: l.id.clone(),
+                    a: (&l.a).into(),
+                    b: (&l.b).into(),
+                })
+                .collect(),
+        };
+        toml::to_string(&raw).map_err(|e| LayoutError::Parse(e.to_string()))
+    }
+
+    /// Structural rules; also run by `from_toml_str`, and by the commands before they write.
+    pub fn validate(&self) -> Result<(), LayoutError> {
+        if self.options.dead_corner_px > MAX_DEAD_CORNER_PX {
+            return Err(invalid(msg::layout_bad_dead_corner(MAX_DEAD_CORNER_PX)));
+        }
+        for (i, d) in self.devices.iter().enumerate() {
+            let short = d.peer.short();
+            if d.name.is_empty() || d.name.len() > MAX_NAME_BYTES {
+                return Err(invalid(msg::layout_bad_name(&short)));
+            }
+            if self.devices[..i].iter().any(|o| o.peer == d.peer) {
+                return Err(invalid(msg::layout_dup_device(&short)));
+            }
+            if let Some(n) = d.hotkey {
+                if !(1..=MAX_HOTKEY).contains(&n) {
+                    return Err(invalid(msg::layout_bad_hotkey(&short)));
+                }
+                if self.devices[..i].iter().any(|o| o.hotkey == Some(n)) {
+                    return Err(invalid(msg::layout_dup_hotkey(n)));
+                }
+            }
+        }
+        let known = |p: &PeerId| self.devices.iter().any(|d| d.peer == *p);
+        for (i, l) in self.links.iter().enumerate() {
+            let id = l.id.as_str();
+            if id.is_empty() || l.a.monitor.is_empty() || l.b.monitor.is_empty() {
+                return Err(invalid(msg::layout_bad_link_field(id)));
+            }
+            if self.links[..i].iter().any(|o| o.id == l.id) {
+                return Err(LayoutError::DuplicateId(l.id.clone()));
+            }
+            if !known(&l.a.peer) || !known(&l.b.peer) {
+                return Err(LayoutError::UnknownDevice { link: l.id.clone() });
+            }
+            if l.a.peer == l.b.peer {
+                return Err(LayoutError::SameDevice { link: l.id.clone() });
+            }
+            if !l.a.in_range() || !l.b.in_range() {
+                return Err(LayoutError::SegmentOutOfRange { link: l.id.clone() });
+            }
+            if l.a.from >= l.a.to || l.b.from >= l.b.to {
+                return Err(LayoutError::EmptySegment { link: l.id.clone() });
+            }
+            for o in &self.links[..i] {
+                let hit = [&l.a, &l.b]
+                    .iter()
+                    .any(|e| e.overlaps(&o.a) || e.overlaps(&o.b));
+                if hit {
+                    return Err(LayoutError::SegmentOverlap {
+                        link: l.id.clone(),
+                        other: o.id.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Links in `layout.toml` and manual `[[input.barrier]]` together are ambiguous.
+    pub fn ensure_no_manual_barriers(&self, cfg: &InputConfig) -> Result<(), LayoutError> {
+        if self.links.is_empty() || cfg.barriers.is_empty() {
+            Ok(())
+        } else {
+            Err(LayoutError::ManualBarrierConflict)
+        }
+    }
+
+    /// `Ok(None)` when the file does not exist.
+    pub fn read(path: &Path) -> Result<Option<Self>, LayoutError> {
+        match std::fs::read_to_string(path) {
+            Ok(s) => Self::from_toml_str(&s).map(Some),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(LayoutError::Io(e.to_string())),
+        }
+    }
+
+    /// Validates, then writes `path.tmp` and renames it over `path`.
+    pub fn write(&self, path: &Path) -> Result<(), LayoutError> {
+        self.validate()?;
+        let text = self.to_toml_string()?;
+        let mut tmp = path.as_os_str().to_owned();
+        tmp.push(".tmp");
+        let tmp = std::path::PathBuf::from(tmp);
+        let io = |e: std::io::Error| LayoutError::Io(e.to_string());
+        let res = (|| {
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(text.as_bytes())?;
+            f.sync_all()?;
+            std::fs::rename(&tmp, path)
+        })();
+        if res.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        res.map_err(io)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::BarrierConfig;
+
+    fn id(n: u8) -> PeerId {
+        PeerId([n; 32])
+    }
+
+    fn ep(n: u8, monitor: &str, edge: Edge, from: f32, to: f32) -> Endpoint {
+        Endpoint {
+            peer: id(n),
+            monitor: monitor.into(),
+            edge,
+            from,
+            to,
+        }
+    }
+
+    fn device(n: u8, name: &str) -> LayoutDevice {
+        LayoutDevice {
+            peer: id(n),
+            name: name.into(),
+            x: 0,
+            y: 0,
+            hotkey: None,
+        }
+    }
+
+    fn sample() -> Layout {
+        Layout {
+            rev: 7,
+            options: LayoutOptions { dead_corner_px: 12 },
+            devices: vec![
+                LayoutDevice {
+                    x: 160,
+                    y: -32,
+                    hotkey: Some(2),
+                    ..device(1, "pc-pessoal")
+                },
+                device(2, "notebook-a"),
+            ],
+            links: vec![Link {
+                id: "l1".into(),
+                a: ep(1, "HDMI-1", Edge::Right, 0.5, 1.0),
+                b: ep(2, "eDP-1", Edge::Left, 0.0, 0.1),
+            }],
+        }
+    }
+
+    fn with_links(links: Vec<Link>) -> Layout {
+        Layout { links, ..sample() }
+    }
+
+    fn link(id: &str, a: Endpoint, b: Endpoint) -> Link {
+        Link {
+            id: id.into(),
+            a,
+            b,
+        }
+    }
+
+    #[test]
+    fn roundtrip_keeps_every_field() {
+        let l = sample();
+        let back = Layout::from_toml_str(&l.to_toml_string().unwrap()).unwrap();
+        assert_eq!(back, l);
+    }
+
+    #[test]
+    fn written_fractions_are_clean_decimals() {
+        let s = sample().to_toml_string().unwrap();
+        assert!(s.contains("to = 0.1\n") || s.contains("to = 0.1 "), "{s}");
+        assert!(!s.contains("0.1000"), "{s}");
+    }
+
+    #[test]
+    fn peer_is_written_as_64_hex() {
+        let s = sample().to_toml_string().unwrap();
+        assert!(s.contains(&"01".repeat(32)), "{s}");
+    }
+
+    #[test]
+    fn empty_file_with_version_is_an_empty_layout() {
+        let l = Layout::from_toml_str("version = 1\n").unwrap();
+        assert_eq!(l, Layout::default());
+        assert_eq!(l.options.dead_corner_px, 8);
+    }
+
+    #[test]
+    fn wrong_version_is_refused_with_the_reason() {
+        let e = Layout::from_toml_str("version = 2\n").unwrap_err();
+        assert_eq!(e, LayoutError::UnsupportedVersion(2));
+        assert!(e.to_string().contains("versão 2"));
+    }
+
+    #[test]
+    fn missing_version_is_a_parse_error() {
+        let e = Layout::from_toml_str("rev = 1\n").unwrap_err();
+        assert_eq!(e.code(), "parse");
+    }
+
+    #[test]
+    fn unknown_key_is_refused() {
+        let e = Layout::from_toml_str("version = 1\nfoo = 1\n").unwrap_err();
+        assert_eq!(e.code(), "parse");
+    }
+
+    #[test]
+    fn bad_peer_hex_is_refused() {
+        let toml = "version = 1\n[[device]]\npeer = \"zz\"\nname = \"a\"\n";
+        let e = Layout::from_toml_str(toml).unwrap_err();
+        assert_eq!(e.code(), "invalid_field");
+    }
+
+    #[test]
+    fn link_inside_one_device_is_refused() {
+        let l = with_links(vec![link(
+            "l1",
+            ep(1, "DP-1", Edge::Right, 0.0, 1.0),
+            ep(1, "HDMI-1", Edge::Left, 0.0, 1.0),
+        )]);
+        let e = l.validate().unwrap_err();
+        assert_eq!(e, LayoutError::SameDevice { link: "l1".into() });
+        assert!(e.to_string().contains("mesmo dispositivo"));
+    }
+
+    #[test]
+    fn empty_segment_is_refused_on_either_side() {
+        for (a, b) in [(0.5, 0.5), (0.8, 0.2)] {
+            let on_a = with_links(vec![link(
+                "l1",
+                ep(1, "DP-1", Edge::Right, a, b),
+                ep(2, "eDP-1", Edge::Left, 0.0, 1.0),
+            )]);
+            let on_b = with_links(vec![link(
+                "l1",
+                ep(1, "DP-1", Edge::Right, 0.0, 1.0),
+                ep(2, "eDP-1", Edge::Left, a, b),
+            )]);
+            for l in [on_a, on_b] {
+                assert_eq!(l.validate().unwrap_err().code(), "empty_segment");
+            }
+        }
+    }
+
+    #[test]
+    fn segment_outside_zero_one_or_not_finite_is_refused() {
+        for (from, to) in [
+            (-0.1, 0.5),
+            (0.0, 1.5),
+            (f32::NAN, 0.5),
+            (0.0, f32::INFINITY),
+        ] {
+            let l = with_links(vec![link(
+                "l1",
+                ep(1, "DP-1", Edge::Right, from, to),
+                ep(2, "eDP-1", Edge::Left, 0.0, 1.0),
+            )]);
+            assert_eq!(l.validate().unwrap_err().code(), "segment_out_of_range");
+        }
+    }
+
+    #[test]
+    fn link_to_a_device_missing_from_the_list_is_refused() {
+        let l = with_links(vec![link(
+            "l1",
+            ep(1, "DP-1", Edge::Right, 0.0, 1.0),
+            ep(9, "eDP-1", Edge::Left, 0.0, 1.0),
+        )]);
+        assert_eq!(l.validate().unwrap_err().code(), "unknown_device");
+    }
+
+    #[test]
+    fn repeated_link_id_is_refused() {
+        let l = with_links(vec![
+            link(
+                "l1",
+                ep(1, "DP-1", Edge::Right, 0.0, 0.5),
+                ep(2, "eDP-1", Edge::Left, 0.0, 0.5),
+            ),
+            link(
+                "l1",
+                ep(1, "DP-1", Edge::Right, 0.5, 1.0),
+                ep(2, "eDP-1", Edge::Left, 0.5, 1.0),
+            ),
+        ]);
+        assert_eq!(l.validate().unwrap_err().code(), "duplicate_id");
+    }
+
+    #[test]
+    fn overlap_on_the_same_edge_is_refused_even_on_the_b_side() {
+        let l = with_links(vec![
+            link(
+                "l1",
+                ep(1, "DP-1", Edge::Right, 0.0, 0.6),
+                ep(2, "eDP-1", Edge::Left, 0.0, 0.5),
+            ),
+            link(
+                "l2",
+                ep(1, "DP-1", Edge::Right, 0.6, 1.0),
+                ep(2, "eDP-1", Edge::Left, 0.4, 1.0),
+            ),
+        ]);
+        assert_eq!(
+            l.validate().unwrap_err(),
+            LayoutError::SegmentOverlap {
+                link: "l2".into(),
+                other: "l1".into()
+            }
+        );
+    }
+
+    #[test]
+    fn segments_that_only_touch_or_sit_on_other_edges_are_fine() {
+        let l = with_links(vec![
+            link(
+                "l1",
+                ep(1, "DP-1", Edge::Right, 0.0, 0.5),
+                ep(2, "eDP-1", Edge::Left, 0.0, 0.5),
+            ),
+            link(
+                "l2",
+                ep(1, "DP-1", Edge::Right, 0.5, 1.0),
+                ep(2, "eDP-1", Edge::Left, 0.5, 1.0),
+            ),
+            link(
+                "l3",
+                ep(1, "DP-1", Edge::Bottom, 0.0, 1.0),
+                ep(2, "eDP-1", Edge::Top, 0.0, 1.0),
+            ),
+            link(
+                "l4",
+                ep(1, "HDMI-1", Edge::Right, 0.0, 1.0),
+                ep(2, "eDP-1", Edge::Right, 0.0, 1.0),
+            ),
+        ]);
+        l.validate().unwrap();
+    }
+
+    #[test]
+    fn hotkey_out_of_1_to_9_or_repeated_is_refused() {
+        for bad in [0u8, 10] {
+            let mut l = sample();
+            l.devices[1].hotkey = Some(bad);
+            assert_eq!(l.validate().unwrap_err().code(), "invalid_field");
+        }
+        let mut l = sample();
+        l.devices[1].hotkey = Some(2);
+        assert_eq!(l.validate().unwrap_err().code(), "invalid_field");
+    }
+
+    #[test]
+    fn dead_corner_above_32_is_refused() {
+        let mut l = sample();
+        l.options.dead_corner_px = 33;
+        assert_eq!(l.validate().unwrap_err().code(), "invalid_field");
+        l.options.dead_corner_px = 32;
+        l.validate().unwrap();
+    }
+
+    #[test]
+    fn device_name_must_be_1_to_64_bytes_and_ids_unique() {
+        let mut l = sample();
+        l.devices[0].name = String::new();
+        assert_eq!(l.validate().unwrap_err().code(), "invalid_field");
+        l.devices[0].name = "x".repeat(MAX_NAME_BYTES + 1);
+        assert_eq!(l.validate().unwrap_err().code(), "invalid_field");
+        let mut l = sample();
+        l.devices[1].peer = l.devices[0].peer;
+        assert_eq!(l.validate().unwrap_err().code(), "invalid_field");
+    }
+
+    #[test]
+    fn manual_barriers_with_links_conflict() {
+        let cfg = InputConfig {
+            barriers: vec![BarrierConfig {
+                monitor: "eDP-1".into(),
+                edge: Edge::Right,
+                from: 0.0,
+                to: 0.5,
+                peer: "notebook-b".into(),
+                peer_edge: Edge::Left,
+            }],
+            ..InputConfig::default()
+        };
+        let e = sample().ensure_no_manual_barriers(&cfg).unwrap_err();
+        assert_eq!(e, LayoutError::ManualBarrierConflict);
+        assert!(e.to_string().contains("[[input.barrier]]"));
+    }
+
+    #[test]
+    fn no_conflict_without_links_or_without_manual_barriers() {
+        let manual = InputConfig {
+            barriers: vec![BarrierConfig {
+                monitor: "eDP-1".into(),
+                edge: Edge::Right,
+                from: 0.0,
+                to: 0.5,
+                peer: "notebook-b".into(),
+                peer_edge: Edge::Left,
+            }],
+            ..InputConfig::default()
+        };
+        Layout::default()
+            .ensure_no_manual_barriers(&manual)
+            .unwrap();
+        sample()
+            .ensure_no_manual_barriers(&InputConfig::default())
+            .unwrap();
+    }
+
+    #[test]
+    fn read_of_a_missing_file_is_none() {
+        let d = tempfile::tempdir().unwrap();
+        assert_eq!(Layout::read(&d.path().join("layout.toml")).unwrap(), None);
+    }
+
+    #[test]
+    fn write_then_read_returns_the_same_layout_and_leaves_no_tmp() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("layout.toml");
+        sample().write(&p).unwrap();
+        assert_eq!(Layout::read(&p).unwrap(), Some(sample()));
+        let names: Vec<_> = std::fs::read_dir(d.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("layout.toml")]);
+    }
+
+    #[test]
+    fn write_replaces_the_old_file() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("layout.toml");
+        sample().write(&p).unwrap();
+        let mut l2 = sample();
+        l2.rev = 8;
+        l2.write(&p).unwrap();
+        assert_eq!(Layout::read(&p).unwrap().unwrap().rev, 8);
+    }
+
+    #[test]
+    fn invalid_layout_is_not_written() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("layout.toml");
+        sample().write(&p).unwrap();
+        let bad = with_links(vec![link(
+            "l1",
+            ep(1, "DP-1", Edge::Right, 0.0, 1.0),
+            ep(1, "HDMI-1", Edge::Left, 0.0, 1.0),
+        )]);
+        assert_eq!(bad.write(&p).unwrap_err().code(), "same_device");
+        assert_eq!(Layout::read(&p).unwrap(), Some(sample()));
+    }
+
+    #[test]
+    fn read_of_a_broken_file_names_the_problem() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("layout.toml");
+        std::fs::write(&p, "version = 1\n[[link]]\nid = \"l1\"\n").unwrap();
+        let e = Layout::read(&p).unwrap_err();
+        assert_eq!(e.code(), "parse");
+        assert!(e.to_string().starts_with("layout.toml inválido"));
+    }
+
+    #[test]
+    fn read_applies_validation() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("layout.toml");
+        let h = "01".repeat(32);
+        let toml = format!(
+            "version = 1\n[[device]]\npeer = \"{h}\"\nname = \"a\"\n\
+             [[link]]\nid = \"l1\"\n\
+             a = {{ peer = \"{h}\", monitor = \"DP-1\", edge = \"right\", from = 0.0, to = 1.0 }}\n\
+             b = {{ peer = \"{h}\", monitor = \"HDMI-1\", edge = \"left\", from = 0.0, to = 1.0 }}\n"
+        );
+        std::fs::write(&p, toml).unwrap();
+        assert_eq!(Layout::read(&p).unwrap_err().code(), "same_device");
+    }
+}

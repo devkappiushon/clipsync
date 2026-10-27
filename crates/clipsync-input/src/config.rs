@@ -1,6 +1,6 @@
 use crate::adapter::ZoneRef;
 use clipsync_proto::{Edge, ModuleError};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -10,9 +10,9 @@ pub enum AdapterChoice {
     Fake,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-enum EdgeRaw {
+pub(crate) enum EdgeRaw {
     Left,
     Right,
     Top,
@@ -26,6 +26,17 @@ impl From<EdgeRaw> for Edge {
             EdgeRaw::Right => Edge::Right,
             EdgeRaw::Top => Edge::Top,
             EdgeRaw::Bottom => Edge::Bottom,
+        }
+    }
+}
+
+impl From<Edge> for EdgeRaw {
+    fn from(e: Edge) -> Self {
+        match e {
+            Edge::Left => EdgeRaw::Left,
+            Edge::Right => EdgeRaw::Right,
+            Edge::Top => EdgeRaw::Top,
+            Edge::Bottom => EdgeRaw::Bottom,
         }
     }
 }

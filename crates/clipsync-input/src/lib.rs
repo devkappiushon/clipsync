@@ -3,6 +3,7 @@
 pub mod adapter;
 pub mod config;
 mod diag;
+pub mod layout;
 mod module;
 pub mod msg;
 pub mod probe;
@@ -18,6 +19,7 @@ pub use adapter::{
 pub use adapter::{PortalCapture, PortalEmulate};
 pub use config::{AdapterChoice, BarrierConfig, InputConfig, zone_ref};
 pub use diag::diagnose;
+pub use layout::{Endpoint, Layout, LayoutDevice, LayoutError, LayoutOptions, Link};
 pub use module::build_with_adapters;
 
 /// Builds the module with the adapters picked by `cfg`. `auto` means the Wayland portals.

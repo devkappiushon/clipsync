@@ -42,3 +42,58 @@ pub fn zone_line(i: u32, name: &str, w: u32, h: u32, x: i32, y: i32) -> String {
 pub fn barrier_line(x1: i32, y1: i32, x2: i32, y2: i32) -> String {
     format!("barreira: ({x1},{y1}) até ({x2},{y2})")
 }
+
+pub fn layout_parse(detail: &str) -> String {
+    format!("layout.toml inválido: {detail}")
+}
+pub fn layout_io(detail: &str) -> String {
+    format!("não foi possível ler ou gravar o layout.toml: {detail}")
+}
+pub fn layout_unsupported_version(v: u32) -> String {
+    format!("layout.toml: versão {v} não suportada (esperado 1)")
+}
+pub fn layout_invalid_field(detail: &str) -> String {
+    format!("layout.toml: {detail}")
+}
+pub fn layout_unknown_device(link: &str) -> String {
+    format!("ligação {link}: dispositivo que não está na lista de dispositivos do layout")
+}
+pub fn layout_duplicate_id(id: &str) -> String {
+    format!("layout.toml: id de ligação repetido ({id})")
+}
+pub fn layout_same_device(link: &str) -> String {
+    format!(
+        "ligação {link}: os dois lados estão no mesmo dispositivo; bordas entre monitores da mesma máquina não cruzam"
+    )
+}
+pub fn layout_empty_segment(link: &str) -> String {
+    format!("ligação {link}: trecho vazio (o início deve ser menor que o fim)")
+}
+pub fn layout_out_of_range(link: &str) -> String {
+    format!("ligação {link}: trecho fora do intervalo de 0 a 1")
+}
+pub fn layout_overlap(link: &str, other: &str) -> String {
+    format!("ligação {link}: o trecho se sobrepõe ao da ligação {other} na mesma borda")
+}
+pub const LAYOUT_MANUAL_CONFLICT: &str = "o layout.toml tem ligações e o config.toml também tem [[input.barrier]]: remova um dos dois, os dois juntos são ambíguos";
+pub fn layout_bad_peer(value: &str) -> String {
+    format!("id de dispositivo inválido (esperado 64 hex): {value}")
+}
+pub fn layout_bad_name(peer: &str) -> String {
+    format!("dispositivo {peer}: o nome deve ter de 1 a 64 bytes")
+}
+pub fn layout_dup_device(peer: &str) -> String {
+    format!("dispositivo {peer} repetido")
+}
+pub fn layout_bad_hotkey(peer: &str) -> String {
+    format!("dispositivo {peer}: o atalho deve ficar entre 1 e 9")
+}
+pub fn layout_dup_hotkey(n: u8) -> String {
+    format!("o atalho {n} está em mais de um dispositivo")
+}
+pub fn layout_bad_dead_corner(max: u32) -> String {
+    format!("canto morto fora do intervalo de 0 a {max} px")
+}
+pub fn layout_bad_link_field(link: &str) -> String {
+    format!("ligação {link}: id e monitor não podem ser vazios")
+}
