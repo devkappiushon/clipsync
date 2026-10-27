@@ -29,6 +29,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       # Só actions oficiais e sem cache (contrato §11 regra 9): um cache restaurado
       # de PR poderia envenenar o binário publicado. O rustup do runner instala a
@@ -113,7 +115,7 @@ jobs:
           Binários de linha de comando para Linux e Windows.
 
           - Linux (X11 e XWayland): malha QUIC, pareamento, clipboard e teclado e mouse experimentais.
-          - Windows: malha QUIC, pareamento e clipboard de texto. Teclado e mouse ainda não estão disponíveis nesta versão.
+          - Windows: malha QUIC, pareamento e clipboard de texto (experimental: polling de 250 ms, ainda não testado em máquina real). Teclado e mouse ainda não estão disponíveis nesta versão.
 
           Confira o SHA-256 em SHA256SUMS antes de executar.
           EOF

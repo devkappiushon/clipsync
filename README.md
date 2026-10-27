@@ -25,6 +25,15 @@ Get-FileHash .\clipsync-v0.1.0-windows-x86_64.zip -Algorithm SHA256
 
 Requisitos: no Linux, glibc 2.39 ou mais nova (o binário é compilado no Ubuntu 24.04). No Windows, nenhum pacote extra: o `.exe` leva a biblioteca de execução embutida. O perfil fica em `~/.config/clipsync` no Linux e em `%LOCALAPPDATA%\clipsync` no Windows; não aponte `--profile` para uma pasta compartilhada, porque a chave privada mora nela.
 
+Avisos para Windows (revisão de segurança S5, em `docs/seguranca.md`):
+
+1. O perfil fica em `%LOCALAPPDATA%\clipsync` e guarda a chave privada. Não aponte `--profile` nem `CLIPSYNC_PROFILE` para raiz de disco, `C:\Users\Public`, `C:\ProgramData`, compartilhamento de rede ou pasta sincronizada (OneDrive, Dropbox). Só pasta dentro do seu perfil de usuário.
+2. A proteção da chave é a ACL do seu usuário: qualquer programa que rode como você, e qualquer administrador, lê a chave.
+3. Em máquina com mais de um usuário (compartilhada, RDP), o Windows ainda é experimental. Pare o agente com Ctrl+C; se fechar a janela, rode `clipsync run` de novo antes de usar `clipsync send`.
+4. O clipboard do Windows lê tudo o que é copiado, inclusive o que gerenciadores de senha marcam como sensível. Use `clipsync pause` ao copiar senhas.
+5. O texto recebido de outro dispositivo é gravado com os marcadores que pedem ao Windows para não guardar no histórico (Win+V) nem na nuvem. Isso depende de o Windows respeitar o marcador.
+6. O clipboard do Windows é experimental: polling de 250 ms, só texto, ainda não testado em máquina real.
+
 O que funciona em cada plataforma nesta versão:
 
 | Recurso | Linux (X11 e XWayland) | Windows |
