@@ -128,7 +128,7 @@ Ordem: o Rivet entrega o proto da §12.6 primeiro e marca aqui "proto S6 pronto"
   - core: `init_with` (L1), `recent_blocks` (L6), versão do par no `PeerInfo`, gravação do `[clipboard] mode`;
   - `Ui` com `start`, `call`, `subscribe` e `shutdown`, os comandos das telas 1, 2, 3, 5, 6 e 7, os eventos e o `plan` + `build` duplicados (dívida).
 
-  Pronto: §12.9 itens 1 e 2. Estado: a fazer · proto S6: pendente
+  Pronto: §12.9 itens 1 e 2. Estado: em progresso (clipsync-ui, etapa 1) · proto S6: pronto (06815b7)
 - **Vector · layout e input.** Posse: `crates/clipsync-ui/src/{layout,input}.rs` e `crates/clipsync-input/**`. Faz: `layout.toml`, comandos da tela 4, `InputState`, `InputReload`, `InputLock`, `InputSwitch`, `InputOffer`, `Zones`, `EnterAt`, captura contínua guiada pelas ligações, `self_test` do input (L7). Pronto: §12.9 item 3. Estado: a fazer
 - **Flux · casca Tauri e clipboard.** Posse: `crates/clipsync-app/**` menos `ui/`, `crates/clipsync-ui/src/autostart.rs`, `crates/clipsync-clipboard/**` e `crates/clipsync-cli/**`. Faz: `tauri.conf.json`, capabilities, comando `clipsync`, laço de eventos, bandeja, fechar = esconder, Sair com Bye, ícones, autostart; no clipboard, `ClipApply`, `ClipDiscard`, `ClipSendCurrent` e `self_test` (L5, L7). Pronto: §12.9 item 4. Estado: a fazer
 - **Pixel · frontend.** Posse: `crates/clipsync-app/ui/**`. Faz: as 9 telas (onboarding em 3 passos mais 6), temas claro e escuro, fontes locais OFL, `mock.js` com cenários, estados de carregamento, vazio, erro e "indisponível nesta versão". Pronto: §12.9 item 5. Estado: a fazer
