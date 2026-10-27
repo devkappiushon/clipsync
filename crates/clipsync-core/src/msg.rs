@@ -10,3 +10,11 @@ pub const KEY_CHANGED: &str = "chave do par mudou; repareie";
 pub const VERSION_MISMATCH: &str = "versão de protocolo incompatível";
 /// Dialer log when the peer refused our certificate (rule 6).
 pub const REFUSED_BY_PEER: &str = "recusado pelo par: certificado não confiável";
+/// ControlResponse::Error when a module's channel is closed.
+pub const MODULE_GONE: &str = "módulo encerrado";
+/// ControlResponse::Error / last_block when a module does not answer in time.
+pub const MODULE_TIMEOUT: &str = "módulo não respondeu a tempo";
+/// Pause/resume could not persist state.toml.
+pub const STATE_NOT_SAVED: &str = "não foi possível gravar state.toml";
+/// ReloadPeers could not read peers.toml.
+pub const PEERS_NOT_LOADED: &str = "não foi possível ler peers.toml";

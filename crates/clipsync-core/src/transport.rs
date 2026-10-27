@@ -44,7 +44,10 @@ pub fn close(conn: &Connection, code: CloseCode) {
 
 /// Reads one control frame. Above MAX_CONTROL_FRAME_BYTES the stream is stopped and reset with
 /// CloseCode::Protocol before anything is allocated (rule 10).
-pub async fn read_control(send: &mut SendStream, recv: &mut RecvStream) -> Result<Frame, WireError> {
+pub async fn read_control(
+    send: &mut SendStream,
+    recv: &mut RecvStream,
+) -> Result<Frame, WireError> {
     let res = read_frame(recv, MAX_CONTROL_FRAME_BYTES).await;
     if let Err(WireError::TooLarge { .. }) = res {
         let _ = recv.stop(varint(CloseCode::Protocol));
@@ -116,7 +119,12 @@ struct Active {
 
 impl Slot {
     fn new(entry: PeerEntry) -> Self {
-        Self { entry, state: PeerState::Disconnected, active: None, wake: Arc::new(Notify::new()) }
+        Self {
+            entry,
+            state: PeerState::Disconnected,
+            active: None,
+            wake: Arc::new(Notify::new()),
+        }
     }
 
     fn info(&self) -> PeerInfo {
@@ -153,7 +161,11 @@ impl From<WireError> for HelloFail {
 
 enum Installed {
     Lost,
-    Won { old: Option<Connection>, fresh: bool, info: PeerInfo },
+    Won {
+        old: Option<Connection>,
+        fresh: bool,
+        info: PeerInfo,
+    },
 }
 
 impl Mesh {
@@ -168,7 +180,10 @@ impl Mesh {
         let server = tls::server_config(&opts.identity, server_verifier.clone(), ALPN_MESH)?;
         let endpoint = Endpoint::server(server, opts.listen)
             .map_err(|e| CoreError::Transport(format!("bind {}: {e}", opts.listen)))?;
-        let listen_port = endpoint.local_addr().map(|a| a.port()).unwrap_or(opts.listen.port());
+        let listen_port = endpoint
+            .local_addr()
+            .map(|a| a.port())
+            .unwrap_or(opts.listen.port());
         let hello = Hello {
             version: PROTOCOL_VERSION,
             min_version: MIN_PROTOCOL_VERSION,
@@ -176,8 +191,12 @@ impl Mesh {
             modules: local,
             listen_port,
         };
-        let slots: HashMap<PeerId, Slot> =
-            opts.peers.peer.into_iter().map(|e| (e.id, Slot::new(e))).collect();
+        let slots: HashMap<PeerId, Slot> = opts
+            .peers
+            .peer
+            .into_iter()
+            .map(|e| (e.id, Slot::new(e)))
+            .collect();
         let ids: Vec<PeerId> = slots.keys().copied().collect();
         let inner = Arc::new(Inner {
             id,
@@ -272,7 +291,8 @@ impl Mesh {
             for entry in peers.peer {
                 match slots.get_mut(&entry.id) {
                     Some(slot) => {
-                        let changed = slot.entry.perms != entry.perms || slot.entry.name != entry.name;
+                        let changed =
+                            slot.entry.perms != entry.perms || slot.entry.name != entry.name;
                         let readdressed = slot.entry.addr != entry.addr;
                         slot.entry = entry;
                         if changed && slot.active.is_some() {
@@ -305,12 +325,17 @@ impl Mesh {
         let inner = &self.inner;
         inner.stop.send_replace(true);
         tokio::time::sleep(BYE_GRACE).await;
-        let conns: Vec<Connection> =
-            inner.lock().values().filter_map(|s| s.active.as_ref().map(|a| a.conn.clone())).collect();
+        let conns: Vec<Connection> = inner
+            .lock()
+            .values()
+            .filter_map(|s| s.active.as_ref().map(|a| a.conn.clone()))
+            .collect();
         for c in &conns {
             close(c, CloseCode::Shutdown);
         }
-        inner.endpoint.close(varint(CloseCode::Shutdown), CloseCode::Shutdown.reason());
+        inner
+            .endpoint
+            .close(varint(CloseCode::Shutdown), CloseCode::Shutdown.reason());
         let _ = timeout(Duration::from_secs(2), inner.endpoint.wait_idle()).await;
     }
 }
@@ -350,10 +375,11 @@ impl Inner {
     }
 
     fn set_state(&self, peer: PeerId, state: PeerState) {
-        if let Some(slot) = self.lock().get_mut(&peer) {
-            if slot.active.is_none() && !matches!(slot.state, PeerState::Blocked { .. }) {
-                slot.state = state;
-            }
+        if let Some(slot) = self.lock().get_mut(&peer)
+            && slot.active.is_none()
+            && !matches!(slot.state, PeerState::Blocked { .. })
+        {
+            slot.state = state;
         }
     }
 
@@ -378,27 +404,44 @@ impl Inner {
             return close(&conn, CloseCode::Protocol);
         };
         let hs = timeout(HELLO_TIMEOUT, async {
-            let (mut send, mut recv) =
-                conn.accept_bi().await.map_err(|e| HelloFail::Lost(e.to_string()))?;
+            let (mut send, mut recv) = conn
+                .accept_bi()
+                .await
+                .map_err(|e| HelloFail::Lost(e.to_string()))?;
             let hello = self.read_hello(&mut send, &mut recv).await?;
-            write_frame(&mut send, &Frame::Hello(self.hello.clone()), MAX_CONTROL_FRAME_BYTES)
-                .await?;
+            write_frame(
+                &mut send,
+                &Frame::Hello(self.hello.clone()),
+                MAX_CONTROL_FRAME_BYTES,
+            )
+            .await?;
             Ok::<_, HelloFail>((send, recv, hello))
         })
         .await;
         match hs {
             Ok(Ok((send, recv, hello))) => self.install(peer, conn, peer, hello, send, recv).await,
             Ok(Err(HelloFail::Close(code))) => close(&conn, code),
-            Ok(Err(HelloFail::Lost(e))) => tracing::debug!(peer = %peer, error = %e, "inbound hello failed"),
+            Ok(Err(HelloFail::Lost(e))) => {
+                tracing::debug!(peer = %peer, error = %e, "inbound hello failed")
+            }
             Err(_) => close(&conn, CloseCode::Protocol),
         }
     }
 
-    async fn read_hello(&self, send: &mut SendStream, recv: &mut RecvStream) -> Result<Hello, HelloFail> {
+    async fn read_hello(
+        &self,
+        send: &mut SendStream,
+        recv: &mut RecvStream,
+    ) -> Result<Hello, HelloFail> {
         match read_control(send, recv).await? {
             Frame::Hello(h) if hello_compatible(&h) => Ok(h),
             Frame::Hello(h) => {
-                tracing::warn!(remote = h.version, remote_min = h.min_version, "{}", msg::VERSION_MISMATCH);
+                tracing::warn!(
+                    remote = h.version,
+                    remote_min = h.min_version,
+                    "{}",
+                    msg::VERSION_MISMATCH
+                );
                 Err(HelloFail::Close(CloseCode::Version))
             }
             _ => Err(HelloFail::Close(CloseCode::Protocol)),
@@ -421,7 +464,9 @@ impl Inner {
             if self.stopped() {
                 return;
             }
-            let Some((addr, wake, connected)) = self.dial_target(peer) else { return };
+            let Some((addr, wake, connected)) = self.dial_target(peer) else {
+                return;
+            };
             let Some(addr) = addr.filter(|_| !connected) else {
                 tokio::select! {
                     _ = wake.notified() => {}
@@ -439,7 +484,9 @@ impl Inner {
                 Err(DialFail::KeyChanged(got)) => {
                     tracing::warn!(peer = %peer, got = %got, addr = %addr, "{}", msg::KEY_CHANGED_LOG);
                     if let Some(slot) = self.lock().get_mut(&peer) {
-                        slot.state = PeerState::Blocked { reason: msg::KEY_CHANGED.to_string() };
+                        slot.state = PeerState::Blocked {
+                            reason: msg::KEY_CHANGED.to_string(),
+                        };
                     }
                     return;
                 }
@@ -462,8 +509,10 @@ impl Inner {
         let verifier = PinVerifier::new(VerifyMode::Expect(peer));
         let cfg = tls::client_config(&self.identity, verifier.clone(), ALPN_MESH)
             .map_err(|e| other(&e))?;
-        let connecting =
-            self.endpoint.connect_with(cfg, addr, crate::SERVER_NAME).map_err(|e| other(&e))?;
+        let connecting = self
+            .endpoint
+            .connect_with(cfg, addr, crate::SERVER_NAME)
+            .map_err(|e| other(&e))?;
         let conn = match timeout(DIAL_TIMEOUT, connecting).await {
             Ok(Ok(c)) => c,
             Ok(Err(e)) => {
@@ -475,10 +524,16 @@ impl Inner {
             Err(_) => return Err(DialFail::Other("dial timeout".into())),
         };
         let hs = timeout(HELLO_TIMEOUT, async {
-            let (mut send, mut recv) =
-                conn.open_bi().await.map_err(|e| HelloFail::Lost(e.to_string()))?;
-            write_frame(&mut send, &Frame::Hello(self.hello.clone()), MAX_CONTROL_FRAME_BYTES)
-                .await?;
+            let (mut send, mut recv) = conn
+                .open_bi()
+                .await
+                .map_err(|e| HelloFail::Lost(e.to_string()))?;
+            write_frame(
+                &mut send,
+                &Frame::Hello(self.hello.clone()),
+                MAX_CONTROL_FRAME_BYTES,
+            )
+            .await?;
             let hello = self.read_hello(&mut send, &mut recv).await?;
             Ok::<_, HelloFail>((send, recv, hello))
         })
@@ -493,10 +548,12 @@ impl Inner {
                 Err(DialFail::Other(format!("closed: {code:?}")))
             }
             Ok(Err(HelloFail::Lost(e))) => {
-                if let Some(quinn::ConnectionError::ConnectionClosed(c)) = conn.close_reason() {
-                    if tls::HANDSHAKE_REJECT_REASONS.iter().any(|r| r.as_bytes() == &c.reason[..]) {
-                        tracing::warn!(peer = %peer, "{}", msg::REFUSED_BY_PEER);
-                    }
+                if let Some(quinn::ConnectionError::ConnectionClosed(c)) = conn.close_reason()
+                    && tls::HANDSHAKE_REJECT_REASONS
+                        .iter()
+                        .any(|r| r.as_bytes() == &c.reason[..])
+                {
+                    tracing::warn!(peer = %peer, "{}", msg::REFUSED_BY_PEER);
                 }
                 Err(DialFail::Other(e))
             }
@@ -532,10 +589,18 @@ impl Inner {
                     Some(if replaces {
                         let old = slot.active.take().map(|a| a.conn);
                         let fresh = old.is_none();
-                        slot.active =
-                            Some(Active { conn: conn.clone(), remote: hello.modules, dialed_by, generation });
+                        slot.active = Some(Active {
+                            conn: conn.clone(),
+                            remote: hello.modules,
+                            dialed_by,
+                            generation,
+                        });
                         slot.state = PeerState::Connected;
-                        Installed::Won { old, fresh, info: slot.info() }
+                        Installed::Won {
+                            old,
+                            fresh,
+                            info: slot.info(),
+                        }
                     } else {
                         Installed::Lost
                     })
@@ -568,7 +633,12 @@ impl Inner {
         let lost = {
             let mut slots = self.lock();
             match slots.get_mut(&peer) {
-                Some(slot) if slot.active.as_ref().is_some_and(|a| a.generation == generation) => {
+                Some(slot)
+                    if slot
+                        .active
+                        .as_ref()
+                        .is_some_and(|a| a.generation == generation) =>
+                {
                     slot.active = None;
                     if !matches!(slot.state, PeerState::Blocked { .. }) {
                         slot.state = PeerState::Disconnected;
@@ -586,7 +656,12 @@ impl Inner {
     }
 
     /// Owns the dialer-opened control stream: Ping/Pong, Bye on shutdown.
-    async fn control_task(self: Arc<Self>, conn: Connection, mut send: SendStream, mut recv: RecvStream) {
+    async fn control_task(
+        self: Arc<Self>,
+        conn: Connection,
+        mut send: SendStream,
+        mut recv: RecvStream,
+    ) {
         loop {
             let frame = tokio::select! {
                 f = read_control(&mut send, &mut recv) => f,
@@ -600,13 +675,17 @@ impl Inner {
             match frame {
                 Ok(Frame::Ping { nonce }) => {
                     let pong = Frame::Pong { nonce };
-                    if write_frame(&mut send, &pong, MAX_CONTROL_FRAME_BYTES).await.is_err() {
+                    if write_frame(&mut send, &pong, MAX_CONTROL_FRAME_BYTES)
+                        .await
+                        .is_err()
+                    {
                         return;
                     }
                 }
                 Ok(Frame::Pong { .. }) => {}
                 Ok(Frame::Bye { code }) => return tracing::debug!(?code, "bye"),
-                Ok(_) | Err(WireError::TooLarge { .. } | WireError::Decode | WireError::Invalid(_)) => {
+                Ok(_)
+                | Err(WireError::TooLarge { .. } | WireError::Decode | WireError::Invalid(_)) => {
                     return close(&conn, CloseCode::Protocol);
                 }
                 Err(WireError::Io(_)) => return,
@@ -634,23 +713,46 @@ impl Inner {
     async fn handle_frame(&self, from: PeerId, frame: Frame, conn: &Connection) {
         match frame {
             Frame::Module(m) => {
-                let Some(perms) = self.perms_of(&from) else { return };
+                let Some(perms) = self.perms_of(&from) else {
+                    return;
+                };
                 match authorize_inbound(self.local, &perms, self.paused(), &m) {
-                    Ok(()) => self.deliver(m.kind(), ModuleInput::Reliable { from, msg: m }).await,
+                    Ok(()) => {
+                        self.deliver(m.kind(), ModuleInput::Reliable { from, msg: m })
+                            .await
+                    }
                     Err(reason) => {
-                        let reply = Frame::Rejected { kind: m.kind(), ref_id: offer_id(&m), reason };
+                        let reply = Frame::Rejected {
+                            kind: m.kind(),
+                            ref_id: offer_id(&m),
+                            reason,
+                        };
                         if let Err(e) = send_uni(conn, &reply).await {
                             tracing::debug!(peer = %from, error = %e, "could not send Rejected");
                         }
                     }
                 }
             }
-            Frame::Rejected { kind, ref_id, reason } => {
-                self.deliver(kind, ModuleInput::Rejected { from, ref_id, reason }).await;
+            Frame::Rejected {
+                kind,
+                ref_id,
+                reason,
+            } => {
+                self.deliver(
+                    kind,
+                    ModuleInput::Rejected {
+                        from,
+                        ref_id,
+                        reason,
+                    },
+                )
+                .await;
             }
             // Pairing frames on a mesh connection are a protocol error (§4).
             Frame::Pair(_) => close(conn, CloseCode::Protocol),
-            other => tracing::debug!(peer = %from, frame = ?other, "unexpected frame on a uni stream"),
+            other => {
+                tracing::debug!(peer = %from, frame = ?other, "unexpected frame on a uni stream")
+            }
         }
     }
 
@@ -665,9 +767,10 @@ impl Inner {
                 .perms_of(&from)
                 .is_some_and(|p| authorize_inbound_datagram(self.local, &p, self.paused()).is_ok());
             let delivered = allowed
-                && self.modules.get(&ModuleKind::Input).is_some_and(|tx| {
-                    tx.try_send(ModuleInput::Datagram { from, dg }).is_ok()
-                });
+                && self
+                    .modules
+                    .get(&ModuleKind::Input)
+                    .is_some_and(|tx| tx.try_send(ModuleInput::Datagram { from, dg }).is_ok());
             if !delivered {
                 dropped += 1;
             }
