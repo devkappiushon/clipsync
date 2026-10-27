@@ -1,0 +1,26 @@
+# Maestri (metadados do workspace)
+.maestri/
+
+# Rust
+/target/
+**/target/
+
+# Node / Tauri (quando entrar)
+node_modules/
+dist/
+apps/desktop/src-tauri/target/
+
+# Perfis e logs de teste
+/profiles/
+*.log
+
+# Segredos e ambiente
+.env
+.env.*
+*.pem
+*.key
+
+# Editores e SO
+.idea/
+.vscode/
+.DS_Store
