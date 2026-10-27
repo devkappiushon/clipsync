@@ -22,6 +22,7 @@
   --warn-soft: #fbf0d4;
   --err: #b4232c;
   --err-soft: #fbe5e6;
+  --err-text: #ffffff;
 
   --focus: #1f4e8c;
   --overlay: rgba(14, 18, 26, 0.48);
@@ -78,6 +79,7 @@
     --warn-soft: #33290f;
     --err: #f07178;
     --err-soft: #3a1b1e;
+    --err-text: #2a0a0c;
 
     --focus: #98c0f4;
     --overlay: rgba(0, 0, 0, 0.6);
@@ -107,6 +109,7 @@
   --warn-soft: #33290f;
   --err: #f07178;
   --err-soft: #3a1b1e;
+  --err-text: #2a0a0c;
 
   --focus: #98c0f4;
   --overlay: rgba(0, 0, 0, 0.6);

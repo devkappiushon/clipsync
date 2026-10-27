@@ -1,4 +1,6 @@
 import { api } from "./api.js";
+import { comCarregamento, selo } from "./componentes.js";
+import { icone } from "./icones.js";
 
 const ROTAS = [
   {
@@ -139,29 +141,22 @@ function pintarRodape() {
   el.maquinaNome.textContent = maquina.nome;
   el.maquinaImpressao.textContent = maquina.impressao;
 
-  el.malha.className = "selo " + (pausado ? "selo--aviso" : "selo--ok");
-  el.malha.textContent = pausado
-    ? "Pausada"
-    : `${malha.conectados} de ${malha.total} conectados`;
+  el.malha.replaceChildren(
+    pausado ? selo("aviso", "Pausada") : selo("ok", `${malha.conectados} de ${malha.total} conectados`),
+  );
 
   el.pausar.disabled = false;
   el.pausar.setAttribute("aria-pressed", String(pausado));
+  el.pausar.querySelector(".icone")?.remove();
+  el.pausar.prepend(icone(pausado ? "retomar" : "pausa"));
   el.pausarRotulo.textContent = pausado ? "Retomar tudo" : "Pausar tudo";
 }
 
-async function alternarPausa() {
-  const alvo = !estadoGeral.pausado;
-  el.pausar.disabled = true;
-  el.pausar.setAttribute("aria-busy", "true");
-  try {
-    estadoGeral = await api.pausarTudo(alvo);
+function alternarPausa() {
+  return comCarregamento(el.pausar, async () => {
+    estadoGeral = await api.pausarTudo(!estadoGeral.pausado);
     pintarRodape();
-  } catch (erro) {
-    console.error("falha ao alternar a pausa", erro);
-  } finally {
-    el.pausar.disabled = false;
-    el.pausar.removeAttribute("aria-busy");
-  }
+  });
 }
 
 async function iniciar() {

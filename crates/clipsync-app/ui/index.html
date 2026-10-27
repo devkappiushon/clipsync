@@ -18,15 +18,6 @@
 </head>
 <body>
 
-<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
-  <symbol id="i-dispositivos" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
-  <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="4" width="10" height="8" rx="1.5"/><rect x="15" y="9" width="6" height="11" rx="1.5"/><rect x="3" y="14" width="10" height="6" rx="1.5"/></symbol>
-  <symbol id="i-clipboard" viewBox="0 0 24 24"><rect x="6" y="5" width="12" height="16" rx="2"/><path d="M9 5V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1M9 11h6M9 15h4"/></symbol>
-  <symbol id="i-diagnostico" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
-  <symbol id="i-preferencias" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></symbol>
-  <symbol id="i-pausa" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
-</svg>
-
 <a class="pular" href="#conteudo">Ir para o conteúdo</a>
 
 <div class="app" id="app" data-lateral="visivel">
@@ -54,12 +45,11 @@
         </div>
         <div>
           <dt>Malha</dt>
-          <dd><span class="selo selo--neutro" id="malha" role="status">Carregando</span></dd>
+          <dd><span id="malha" role="status"><span class="esqueleto"></span></span></dd>
         </div>
       </dl>
-      <button class="btn btn--bloco" id="pausar" type="button" aria-pressed="false" disabled>
-        <svg class="icone" aria-hidden="true"><use href="#i-pausa"/></svg>
-        <span id="pausar-rotulo">Pausar tudo</span>
+      <button class="btn btn--secundario btn--bloco" id="pausar" type="button" aria-pressed="false" disabled>
+        <span class="btn__rotulo" id="pausar-rotulo">Pausar tudo</span>
         <kbd>Win+Alt+P</kbd>
       </button>
     </div>
