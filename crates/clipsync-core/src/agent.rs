@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use clipsync_proto::{
@@ -25,6 +25,7 @@ const MODULE_QUEUE: usize = 1024;
 const MODULE_STOP_GRACE: Duration = Duration::from_secs(3);
 const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 const CLIP_SEND_TIMEOUT: Duration = Duration::from_secs(15);
+const INPUT_OFFER_TIMEOUT: Duration = Duration::from_secs(5);
 const LOOPBACK_SLACK: Duration = Duration::from_secs(30);
 
 /// Runs until `shutdown` completes: then modules get `Shutdown`, peers get Bye and the
@@ -94,6 +95,7 @@ pub async fn run(
         mesh: mesh.clone(),
         channels: channels.clone(),
         adapters,
+        seen_blocks: Mutex::new(HashMap::new()),
     });
     let served = control::serve(&socket, handler, shutdown).await;
 
@@ -116,6 +118,8 @@ struct Agent {
     mesh: Arc<Mesh>,
     channels: HashMap<ModuleKind, mpsc::Sender<ModuleInput>>,
     adapters: HashMap<ModuleKind, String>,
+    /// Last `last_block` seen per module: a different one joins `recent_blocks`.
+    seen_blocks: Mutex<HashMap<ModuleKind, String>>,
 }
 
 impl Agent {
@@ -133,8 +137,19 @@ impl Agent {
             ModuleCommand::InputLoopback { seconds, .. } => {
                 Duration::from_secs(u64::from(*seconds)) + LOOPBACK_SLACK
             }
-            ModuleCommand::ClipSend { .. } => CLIP_SEND_TIMEOUT,
-            ModuleCommand::Status | ModuleCommand::ClipInbox => STATUS_TIMEOUT,
+            ModuleCommand::ClipSend { .. } | ModuleCommand::ClipSendCurrent { .. } => {
+                CLIP_SEND_TIMEOUT
+            }
+            ModuleCommand::InputOffer { .. } => INPUT_OFFER_TIMEOUT,
+            ModuleCommand::Status
+            | ModuleCommand::ClipInbox
+            | ModuleCommand::ClipApply { .. }
+            | ModuleCommand::ClipDiscard { .. }
+            | ModuleCommand::InputState
+            | ModuleCommand::InputReload
+            | ModuleCommand::InputLock { .. }
+            | ModuleCommand::InputSwitch { .. }
+            | ModuleCommand::InputOfferClear => STATUS_TIMEOUT,
         };
         let (reply, rx) = oneshot::channel();
         tx.send(ModuleInput::Command { cmd, reply })
@@ -172,7 +187,10 @@ impl Agent {
             };
         }
         match self.ask_module(kind, ModuleCommand::Status).await {
-            Ok(ModuleReply::Status(s)) => s,
+            Ok(ModuleReply::Status(s)) => {
+                self.note_block(kind, s.last_block.as_deref());
+                s
+            }
             _ => ModuleStatus {
                 kind,
                 enabled: true,
@@ -181,6 +199,20 @@ impl Agent {
                 last_event: None,
                 last_block: Some(msg::MODULE_TIMEOUT.to_string()),
             },
+        }
+    }
+
+    /// A module's `last_block` that differs from the one seen before is a new block. Only the
+    /// latest one between two `Status` requests is seen (the UI asks every second).
+    fn note_block(&self, kind: ModuleKind, last_block: Option<&str>) {
+        let Some(reason) = last_block else { return };
+        let mut seen = self
+            .seen_blocks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if seen.get(&kind).map(String::as_str) != Some(reason) {
+            seen.insert(kind, reason.to_string());
+            self.mesh.record_module_block(kind, reason.to_string());
         }
     }
 

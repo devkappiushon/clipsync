@@ -255,6 +255,11 @@ async fn mesh_connects_after_hello_both_ways() {
     let up_b = next_peer_up(&mut rb.clip).await;
     assert_eq!((up_a.id, up_a.name.as_str(), up_a.perms), (b.id, "b", ALL));
     assert_eq!(up_b.id, a.id);
+    // The version of the peer's Hello reaches the modules and the status.
+    assert_eq!(
+        (up_a.remote_version, up_b.remote_version),
+        (PROTOCOL_VERSION, PROTOCOL_VERSION)
+    );
     assert_eq!(
         up_a.remote_modules,
         ModuleSet {
@@ -266,6 +271,7 @@ async fn mesh_connects_after_hello_both_ways() {
     let pb = sa.peers.iter().find(|p| p.id == b.id).unwrap();
     assert_eq!(pb.state, PeerState::Connected);
     assert_eq!(pb.perms, ALL);
+    assert_eq!(pb.remote_version, PROTOCOL_VERSION);
     assert_eq!(sa.listen, a.addr);
     assert!(
         sa.modules
@@ -367,7 +373,7 @@ async fn mesh_changed_key_is_blocked_with_constant_reason() {
     .await;
     let blocks = status(&a.profile).await.unwrap().recent_blocks;
     assert!(
-        matches!(&blocks[..], [r] if r.peer == b.id && r.peer_name == "b" && r.cause == BlockCause::KeyChanged && r.at_unix_ms > 0),
+        matches!(&blocks[..], [r] if r.peer == Some(b.id) && r.peer_name.as_deref() == Some("b") && r.module.is_none() && r.reason == "chave do par mudou; repareie" && r.at_unix_ms > 0),
         "{blocks:?}"
     );
     // Blocked: A does not dial again.
@@ -410,13 +416,13 @@ async fn mesh_inbound_refusals_are_recorded_newest_first_and_capped() {
     .await;
     let s = status(&b.profile).await.unwrap();
     for r in &s.recent_blocks {
-        assert_eq!((r.peer, r.peer_name.as_str()), (a.id, "a"));
+        assert_eq!((r.peer, r.peer_name.as_deref()), (Some(a.id), Some("a")));
         assert_eq!(
-            r.cause,
-            BlockCause::Inbound {
-                kind: ModuleKind::Clipboard,
-                reason: RejectReason::NotAuthorized
-            }
+            (r.module, r.reason.as_str()),
+            (
+                Some(ModuleKind::Clipboard),
+                RejectReason::NotAuthorized.pt()
+            )
         );
     }
     assert!(
@@ -607,4 +613,226 @@ async fn pause_fails_closed_when_state_cannot_be_saved() {
         "nothing was persisted"
     );
     stop(ra).await;
+}
+
+/// §12.9 item 1 (e): a 0.1.0 agent accepts a Hello when `version >= 1 && 1 >= min_version`
+/// (its MIN and PROTOCOL were both 1). Ours passes, and we still accept a 0.1.0 Hello.
+#[test]
+fn hello_v2_passes_the_0_1_0_compatibility_rule() {
+    let v010 = |h: &Hello| h.version >= 1 && 1 >= h.min_version;
+    let ours = Hello {
+        version: PROTOCOL_VERSION,
+        min_version: MIN_PROTOCOL_VERSION,
+        device_name: "a".into(),
+        modules: ModuleSet::default(),
+        listen_port: 47800,
+    };
+    assert!(v010(&ours));
+    assert!(clipsync_core::transport::hello_compatible(&ours));
+    let old = Hello {
+        version: 1,
+        min_version: 1,
+        ..ours.clone()
+    };
+    assert!(clipsync_core::transport::hello_compatible(&old));
+    let future = Hello {
+        version: 3,
+        min_version: 3,
+        ..ours
+    };
+    assert!(!clipsync_core::transport::hello_compatible(&future));
+}
+
+/// §12.9 item 1 (d), on real QUIC: B is a 0.1.0 agent written by hand (Hello version 1). It
+/// connects, but Zones, LayoutOffer and EnterAt never leave for it: `RemoteTooOld`, no stream.
+#[tokio::test(flavor = "multi_thread")]
+async fn mesh_never_sends_a_protocol_2_message_to_a_version_1_peer() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (node(&dir, "a"), node(&dir, "b"));
+    trust(&a, &b, "b", ALL);
+    let b_identity = b.profile.load_identity().unwrap();
+    let pins = Arc::new(PinSet::new([a.id]));
+    let server = tls::server_config(
+        &b_identity,
+        PinVerifier::new(VerifyMode::Mesh(pins)),
+        ALPN_MESH,
+    )
+    .unwrap();
+    let ep = quinn::Endpoint::server(server, b.addr).unwrap();
+    let mut ra = start(&a, false);
+    let conn = tokio::time::timeout(WAIT, async { ep.accept().await.unwrap().await.unwrap() })
+        .await
+        .unwrap();
+    let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+    let Frame::Hello(h) = read_control(&mut send, &mut recv).await.unwrap() else {
+        panic!("expected Hello");
+    };
+    assert_eq!(
+        (h.version, h.min_version),
+        (PROTOCOL_VERSION, MIN_PROTOCOL_VERSION)
+    );
+    let old = Hello {
+        version: 1,
+        min_version: 1,
+        device_name: "b".into(),
+        modules: ModuleSet {
+            clipboard: true,
+            input: true,
+        },
+        listen_port: b.addr.port(),
+    };
+    write_frame(&mut send, &Frame::Hello(old), MAX_CONTROL_FRAME_BYTES)
+        .await
+        .unwrap();
+    let up = next_peer_up(&mut ra.input).await;
+    assert_eq!((up.id, up.remote_version), (b.id, 1));
+    let pb = status(&a.profile).await.unwrap().peers;
+    assert_eq!(pb.iter().find(|p| p.id == b.id).unwrap().remote_version, 1);
+
+    let host = (&mut ra.input_host).await.unwrap();
+    let endpoint = |peer: PeerId| OfferEndpoint {
+        peer,
+        monitor: "HDMI-1".into(),
+        edge: Edge::Right,
+        from: 0.0,
+        to: 1.0,
+    };
+    let newer = [
+        InputMsg::Zones {
+            zones: vec![ZoneInfo {
+                index: 0,
+                name: Some("eDP-1".into()),
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+                scale: 1.0,
+            }],
+        },
+        InputMsg::LayoutOffer(LayoutOffer {
+            rev: 1,
+            devices: vec![],
+            links: vec![OfferLink {
+                a: endpoint(a.id),
+                b: endpoint(b.id),
+            }],
+        }),
+        InputMsg::EnterAt {
+            session: 1,
+            edge: Edge::Left,
+            monitor: None,
+            pos: 0.5,
+        },
+    ];
+    for m in newer {
+        assert_eq!(
+            host.send_reliable(b.id, ModuleMsg::Input(m)).await,
+            Err(SendError::RemoteTooOld)
+        );
+    }
+    let nothing = tokio::time::timeout(Duration::from_secs(1), conn.accept_uni()).await;
+    assert!(nothing.is_err(), "no stream may open for a refused message");
+    // A protocol-1 message still reaches the old peer.
+    let enter = InputMsg::Enter {
+        session: 1,
+        edge: Edge::Left,
+        pos: 0.5,
+    };
+    host.send_reliable(b.id, ModuleMsg::Input(enter))
+        .await
+        .unwrap();
+    let mut uni = tokio::time::timeout(WAIT, conn.accept_uni())
+        .await
+        .unwrap()
+        .unwrap();
+    let got = read_frame(&mut uni, MAX_FRAME_BYTES).await.unwrap();
+    assert!(
+        matches!(got, Frame::Module(ModuleMsg::Input(InputMsg::Enter { .. }))),
+        "{got:?}"
+    );
+    stop(ra).await;
+    ep.close(0u32.into(), b"");
+}
+
+/// A module whose `Status` reports a settable `last_block`.
+struct Blocking {
+    last_block: Arc<std::sync::Mutex<Option<String>>>,
+}
+
+#[async_trait::async_trait]
+impl Module for Blocking {
+    fn kind(&self) -> ModuleKind {
+        ModuleKind::Clipboard
+    }
+
+    fn adapter_name(&self) -> String {
+        "blocking".into()
+    }
+
+    async fn run(
+        self: Box<Self>,
+        _host: Arc<dyn ModuleHost>,
+        mut rx: mpsc::Receiver<ModuleInput>,
+    ) -> Result<(), ModuleError> {
+        while let Some(input) = rx.recv().await {
+            match input {
+                ModuleInput::Shutdown => break,
+                ModuleInput::Command { reply, .. } => {
+                    let last_block = self.last_block.lock().unwrap().clone();
+                    let _ = reply.send(ModuleReply::Status(ModuleStatus {
+                        kind: ModuleKind::Clipboard,
+                        enabled: true,
+                        adapter: Some("blocking".into()),
+                        authorized_peers: vec![],
+                        last_event: None,
+                        last_block,
+                    }));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+}
+
+/// §12.6 core item 3: a NEW `last_block` of a module joins `recent_blocks`, without a peer.
+#[tokio::test(flavor = "multi_thread")]
+async fn module_last_block_joins_recent_blocks_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = node(&dir, "a");
+    let last_block = Arc::new(std::sync::Mutex::new(None));
+    let modules: Vec<Box<dyn Module>> = vec![Box::new(Blocking {
+        last_block: last_block.clone(),
+    })];
+    let (stop_tx, stop_rx) = oneshot::channel::<()>();
+    let profile = a.profile.clone();
+    let task = tokio::spawn(async move {
+        agent::run(&profile, modules, async move {
+            let _ = stop_rx.await;
+        })
+        .await
+    });
+    wait_until("agent up", || async { status(&a.profile).await.is_some() }).await;
+    assert!(status(&a.profile).await.unwrap().recent_blocks.is_empty());
+    *last_block.lock().unwrap() = Some("texto grande demais".into());
+    status(&a.profile).await.unwrap();
+    let blocks = status(&a.profile).await.unwrap().recent_blocks;
+    assert_eq!(blocks.len(), 1, "the same last_block counts once: {blocks:?}");
+    assert_eq!(
+        (
+            blocks[0].peer,
+            blocks[0].peer_name.as_deref(),
+            blocks[0].module,
+            blocks[0].reason.as_str()
+        ),
+        (None, None, Some(ModuleKind::Clipboard), "texto grande demais")
+    );
+    *last_block.lock().unwrap() = Some("pausado".into());
+    let blocks = status(&a.profile).await.unwrap().recent_blocks;
+    assert_eq!(
+        blocks.iter().map(|b| b.reason.as_str()).collect::<Vec<_>>(),
+        ["pausado", "texto grande demais"]
+    );
+    let _ = stop_tx.send(());
+    task.await.unwrap().unwrap();
 }

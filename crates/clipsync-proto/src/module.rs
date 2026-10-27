@@ -9,6 +9,7 @@ use crate::clip::ClipMsg;
 use crate::control::{ModuleCommand, ModuleReply};
 use crate::ids::{EventId, ModuleKind, ModuleSet, PeerId};
 use crate::input::{InputDatagram, InputMsg};
+use crate::limits::MIN_PROTOCOL_VERSION;
 use crate::wire::{ModuleMsg, RejectReason};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +26,8 @@ pub struct PeerInfo {
     pub perms: PeerPerms,
     pub remote_modules: ModuleSet,
     pub connected: bool,
+    /// `Hello::version` of the peer's current connection (0 while not connected).
+    pub remote_version: u16,
 }
 
 /// Short English messages. Portuguese text lives in the `msg.rs` of whoever displays it.
@@ -44,6 +47,27 @@ pub enum SendError {
     TooLarge,
     #[error("transport: {0}")]
     Transport(String),
+    /// The peer's protocol version predates the message (`min_version`): nothing was sent.
+    #[error("peer too old")]
+    RemoteTooOld,
+}
+
+/// Lowest protocol version that understands `msg`. A 0.1.0 peer closes the connection on a
+/// module frame it cannot decode, so the core sends nothing newer than the peer's Hello.
+pub fn min_version(msg: &ModuleMsg) -> u16 {
+    match msg {
+        ModuleMsg::Input(
+            InputMsg::Zones { .. } | InputMsg::LayoutOffer(_) | InputMsg::EnterAt { .. },
+        ) => 2,
+        ModuleMsg::Clip(_)
+        | ModuleMsg::Input(
+            InputMsg::Enter { .. }
+            | InputMsg::Leave { .. }
+            | InputMsg::ReleaseAll { .. }
+            | InputMsg::StatsRequest { .. }
+            | InputMsg::Stats(_),
+        ) => MIN_PROTOCOL_VERSION,
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -109,18 +133,27 @@ pub trait Module: Send + 'static {
     ) -> Result<(), ModuleError>;
 }
 
-/// Messages gated by permission and pause. Everything else (Ack, Stats, StatsRequest,
+/// Messages gated by permission and/or pause. Everything else (Ack, Stats, StatsRequest,
 /// Leave, ReleaseAll) only needs the local module enabled.
 enum Gate {
+    /// Out: clipboard_out. In: clipboard_in. Pause blocks.
     ClipOffer,
+    /// `Enter` and `EnterAt`. Out: no local permission. In: input_in. Pause blocks.
     InputEnter,
+    /// Out: input_in (I only reveal my monitors to whoever may control me). In: open.
+    /// Pause ignored.
+    Zones,
+    /// Out: no local permission. In: input_in. Pause ignored.
+    LayoutOffer,
     Open,
 }
 
 fn gate(msg: &ModuleMsg) -> Gate {
     match msg {
         ModuleMsg::Clip(ClipMsg::Offer(_)) => Gate::ClipOffer,
-        ModuleMsg::Input(InputMsg::Enter { .. }) => Gate::InputEnter,
+        ModuleMsg::Input(InputMsg::Enter { .. } | InputMsg::EnterAt { .. }) => Gate::InputEnter,
+        ModuleMsg::Input(InputMsg::Zones { .. }) => Gate::Zones,
+        ModuleMsg::Input(InputMsg::LayoutOffer(_)) => Gate::LayoutOffer,
         ModuleMsg::Clip(ClipMsg::Ack(_))
         | ModuleMsg::Input(
             InputMsg::Leave { .. }
@@ -133,9 +166,11 @@ fn gate(msg: &ModuleMsg) -> Gate {
 
 /// Outbound, checked in THIS ORDER, first failure wins:
 /// LocalModuleDisabled -> RemoteModuleDisabled -> NotAuthorized -> Paused.
-/// NotAuthorized on the way out only exists for Clip::Offer (perms.clipboard_out); Input::Enter
-/// has no local outbound permission (control permission is checked at the DESTINATION).
+/// NotAuthorized on the way out exists for Clip::Offer (perms.clipboard_out) and Input::Zones
+/// (perms.input_in); Enter, EnterAt and LayoutOffer have no local outbound permission (control
+/// permission is checked at the DESTINATION). Zones and LayoutOffer ignore pause.
 /// Ack, Stats, StatsRequest, Leave and ReleaseAll ignore pause and permission.
+/// The protocol version (`min_version`, `RemoteTooOld`) is checked by the host, after this.
 pub fn authorize_outbound(
     local: ModuleSet,
     perms: &PeerPerms,
@@ -147,10 +182,12 @@ pub fn authorize_outbound(
     if !local.contains(kind) {
         return Err(SendError::LocalModuleDisabled);
     }
-    let needs_perm = match gate(msg) {
+    let (needs_perm, pausable) = match gate(msg) {
         Gate::Open => return Ok(()),
-        Gate::ClipOffer => !perms.clipboard_out,
-        Gate::InputEnter => false,
+        Gate::ClipOffer => (!perms.clipboard_out, true),
+        Gate::InputEnter => (false, true),
+        Gate::Zones => (!perms.input_in, false),
+        Gate::LayoutOffer => (false, false),
     };
     if !remote.contains(kind) {
         return Err(SendError::RemoteModuleDisabled);
@@ -158,7 +195,7 @@ pub fn authorize_outbound(
     if needs_perm {
         return Err(SendError::NotAuthorized);
     }
-    if paused {
+    if paused && pausable {
         return Err(SendError::Paused);
     }
     Ok(())
@@ -182,7 +219,8 @@ pub fn authorize_outbound_datagram(
 }
 
 /// Inbound, checked in THIS ORDER: ModuleDisabled -> NotAuthorized -> Paused.
-/// Clip::Offer needs perms.clipboard_in; Input::Enter needs perms.input_in. Ack, Stats,
+/// Clip::Offer needs perms.clipboard_in; Enter, EnterAt and LayoutOffer need perms.input_in.
+/// Pause blocks Offer, Enter and EnterAt; LayoutOffer ignores it. Zones, Ack, Stats,
 /// StatsRequest, Leave and ReleaseAll ignore pause and permission, so the MODULE only acts on
 /// them if the session/id belongs to the sender.
 pub fn authorize_inbound(
@@ -194,15 +232,16 @@ pub fn authorize_inbound(
     if !local.contains(msg.kind()) {
         return Err(RejectReason::ModuleDisabled);
     }
-    let allowed = match gate(msg) {
-        Gate::Open => return Ok(()),
-        Gate::ClipOffer => perms.clipboard_in,
-        Gate::InputEnter => perms.input_in,
+    let (allowed, pausable) = match gate(msg) {
+        Gate::Open | Gate::Zones => return Ok(()),
+        Gate::ClipOffer => (perms.clipboard_in, true),
+        Gate::InputEnter => (perms.input_in, true),
+        Gate::LayoutOffer => (perms.input_in, false),
     };
     if !allowed {
         return Err(RejectReason::NotAuthorized);
     }
-    if paused {
+    if paused && pausable {
         return Err(RejectReason::Paused);
     }
     Ok(())

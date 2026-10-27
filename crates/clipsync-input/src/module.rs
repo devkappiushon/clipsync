@@ -437,6 +437,10 @@ impl State {
                 }
                 _ => self.ignored += 1,
             },
+            // S6 (proto v2): Vector's. Until then they are counted and ignored.
+            InputMsg::Zones { .. } | InputMsg::LayoutOffer(_) | InputMsg::EnterAt { .. } => {
+                self.ignored += 1
+            }
         }
     }
 

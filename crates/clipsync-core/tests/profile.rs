@@ -273,3 +273,34 @@ fn profile_device_name_with_formatting_characters_is_refused_at_init() {
         assert!(matches!(p.init(o), Err(CoreError::Config(_))), "{bad:?}");
     }
 }
+
+/// §12.6 core item 5: `[clipboard] mode` is rewritten in place; every other key survives.
+#[test]
+fn profile_set_clipboard_mode_keeps_the_rest_of_the_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    let p = Profile::resolve(Some(tmp.path().join("a"))).unwrap();
+    p.init(opts(true, true)).unwrap();
+    let before = p.load_config().unwrap();
+    p.set_clipboard_mode("manual").unwrap();
+    let after = p.load_config().unwrap();
+    let clip = after.clipboard.as_ref().unwrap();
+    assert_eq!(clip.get("mode").and_then(|v| v.as_str()), Some("manual"));
+    assert_eq!(clip.get("adapter").and_then(|v| v.as_str()), Some("fake"));
+    assert_eq!(
+        (after.device_name, after.listen, after.modules, after.input),
+        (
+            before.device_name,
+            before.listen,
+            before.modules,
+            before.input
+        )
+    );
+    #[cfg(unix)]
+    assert_eq!(mode(&p.config_path()), 0o600);
+    assert!(matches!(
+        p.set_clipboard_mode("confirmar"),
+        Err(CoreError::Config(_))
+    ));
+    let q = Profile::resolve(Some(tmp.path().join("vazio"))).unwrap();
+    assert!(q.set_clipboard_mode("auto").is_err());
+}

@@ -2,9 +2,10 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::limits::MAX_EVENTS_PER_DATAGRAM;
+use crate::ids::PeerId;
+use crate::limits::{MAX_EVENTS_PER_DATAGRAM, MAX_LAYOUT_LINKS, MAX_ZONES};
 use crate::redact::Redacted;
-use crate::wire::{Validate, WireError};
+use crate::wire::{Validate, WireError, validate_monitor_name};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Edge {
@@ -79,6 +80,61 @@ pub enum InputMsg {
     ReleaseAll { session: u32 },
     StatsRequest { session: u32 },
     Stats(LoopbackStats),
+    // ---- protocol 2 (S6); new variants only at the end: postcard tags are positional ----
+    /// My monitors, sent only to peers I granted `input_in` (they may control me).
+    Zones { zones: Vec<ZoneInfo> },
+    /// "Copy the layout to the other devices": the receiver decides whether to apply it.
+    LayoutOffer(LayoutOffer),
+    /// `Enter` that names the destination monitor (`Enter` keeps its 0.1.0 shape).
+    EnterAt {
+        session: u32,
+        edge: Edge,
+        monitor: Option<String>,
+        pos: f32,
+    },
+}
+
+/// One local monitor, in logical px of the desktop.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ZoneInfo {
+    pub index: u32,
+    /// Connector name ("DP-1") when the platform knows it.
+    pub name: Option<String>,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub scale: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct LayoutOffer {
+    pub rev: u64,
+    pub devices: Vec<OfferDevice>,
+    pub links: Vec<OfferLink>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct OfferDevice {
+    pub peer: PeerId,
+    pub x: i32,
+    pub y: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct OfferLink {
+    pub a: OfferEndpoint,
+    pub b: OfferEndpoint,
+}
+
+/// A segment of one monitor edge; `from` and `to` are fractions of the edge, `from < to`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct OfferEndpoint {
+    pub peer: PeerId,
+    pub monitor: String,
+    pub edge: Edge,
+    pub from: f32,
+    pub to: f32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -118,11 +174,15 @@ impl Validate for InputDatagram {
     }
 }
 
+fn unit_fraction(v: f32) -> bool {
+    v.is_finite() && (0.0..=1.0).contains(&v)
+}
+
 impl Validate for InputMsg {
     fn validate(&self) -> Result<(), WireError> {
         match self {
             InputMsg::Enter { pos, .. } => {
-                if pos.is_finite() && (0.0..=1.0).contains(pos) {
+                if unit_fraction(*pos) {
                     Ok(())
                 } else {
                     Err(WireError::Invalid("pos outside 0..=1"))
@@ -132,6 +192,54 @@ impl Validate for InputMsg {
             | InputMsg::ReleaseAll { .. }
             | InputMsg::StatsRequest { .. }
             | InputMsg::Stats(_) => Ok(()),
+            InputMsg::Zones { zones } => {
+                if zones.len() > MAX_ZONES {
+                    return Err(WireError::Invalid("too many zones"));
+                }
+                zones.iter().try_for_each(Validate::validate)
+            }
+            InputMsg::LayoutOffer(o) => o.validate(),
+            InputMsg::EnterAt { monitor, pos, .. } => {
+                if !unit_fraction(*pos) {
+                    return Err(WireError::Invalid("pos outside 0..=1"));
+                }
+                monitor.as_deref().map_or(Ok(()), validate_monitor_name)
+            }
         }
+    }
+}
+
+impl Validate for ZoneInfo {
+    fn validate(&self) -> Result<(), WireError> {
+        if self.width == 0 || self.height == 0 {
+            return Err(WireError::Invalid("empty zone"));
+        }
+        if !(self.scale.is_finite() && self.scale > 0.0) {
+            return Err(WireError::Invalid("zone scale not finite and positive"));
+        }
+        self.name.as_deref().map_or(Ok(()), validate_monitor_name)
+    }
+}
+
+impl Validate for LayoutOffer {
+    fn validate(&self) -> Result<(), WireError> {
+        if self.devices.len() > MAX_ZONES {
+            return Err(WireError::Invalid("too many devices in offer"));
+        }
+        if self.links.len() > MAX_LAYOUT_LINKS {
+            return Err(WireError::Invalid("too many links in offer"));
+        }
+        self.links
+            .iter()
+            .try_for_each(|l| l.a.validate().and_then(|()| l.b.validate()))
+    }
+}
+
+impl Validate for OfferEndpoint {
+    fn validate(&self) -> Result<(), WireError> {
+        if !(unit_fraction(self.from) && unit_fraction(self.to) && self.from < self.to) {
+            return Err(WireError::Invalid("segment not 0 <= from < to <= 1"));
+        }
+        validate_monitor_name(&self.monitor)
     }
 }

@@ -8,10 +8,10 @@ use tokio::sync::mpsc;
 use crate::clip::ClipMsg;
 use crate::ids::{EventId, ModuleSet, PeerId};
 use crate::input::InputDatagram;
-use crate::limits::MAX_FRAME_BYTES;
+use crate::limits::{MAX_FRAME_BYTES, PROTOCOL_VERSION};
 use crate::module::{
     ModuleHost, ModuleInput, PeerInfo, PeerPerms, SendError, authorize_inbound,
-    authorize_inbound_datagram, authorize_outbound, authorize_outbound_datagram,
+    authorize_inbound_datagram, authorize_outbound, authorize_outbound_datagram, min_version,
 };
 use crate::wire::{Datagram, Frame, ModuleMsg, WireError, encode_datagram, encode_frame};
 
@@ -40,6 +40,8 @@ struct NodeState {
     name: String,
     modules: ModuleSet,
     paused: bool,
+    /// Protocol version the node announces; PROTOCOL_VERSION unless a test sets another.
+    version: u16,
     tx: mpsc::Sender<ModuleInput>,
 }
 
@@ -53,6 +55,7 @@ impl HubState {
             perms,
             remote_modules: node.modules,
             connected: true,
+            remote_version: node.version,
         })
     }
 }
@@ -84,6 +87,7 @@ impl MemHub {
                 name: name.to_string(),
                 modules,
                 paused: false,
+                version: PROTOCOL_VERSION,
                 tx: tx.clone(),
             },
         );
@@ -115,6 +119,14 @@ impl MemHub {
         if let Some(n) = s.nodes.get_mut(&node) {
             n.paused = paused;
             let _ = n.tx.try_send(ModuleInput::Paused(paused));
+        }
+    }
+
+    /// The protocol version `node` announces (a 0.1.0 peer is 1). Call before `link`: the
+    /// PeerUp of `link` carries it, and `send_reliable` refuses newer messages with RemoteTooOld.
+    pub fn set_remote_version(&self, node: PeerId, version: u16) {
+        if let Some(n) = lock(&self.state).nodes.get_mut(&node) {
+            n.version = version;
         }
     }
 
@@ -195,6 +207,9 @@ impl ModuleHost for MemHost {
                 return Err(SendError::NotConnected);
             };
             authorize_outbound(me.modules, mine, peer.modules, me.paused, &msg)?;
+            if peer.version < min_version(&msg) {
+                return Err(SendError::RemoteTooOld);
+            }
             match authorize_inbound(peer.modules, theirs, peer.paused, &msg) {
                 Ok(()) => Route::Deliver(peer.tx.clone()),
                 Err(reason) => Route::Reject(me.tx.clone(), reason),

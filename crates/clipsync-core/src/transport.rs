@@ -12,12 +12,12 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clipsync_proto::{
-    ALPN_MESH, BlockCause, BlockRecord, ClipMsg, CloseCode, Datagram, EventId, Frame, Hello,
-    InputDatagram, MAX_CONTROL_FRAME_BYTES, MAX_FRAME_BYTES, MAX_RECENT_BLOCKS,
-    MIN_PROTOCOL_VERSION, ModuleHost, ModuleInput, ModuleKind, ModuleMsg, ModuleSet,
-    PROTOCOL_VERSION, PeerId, PeerInfo, PeerPerms, PeerState, PeerStatus, SendError, WireError,
-    authorize_inbound, authorize_inbound_datagram, authorize_outbound, authorize_outbound_datagram,
-    decode_datagram, encode_datagram, encode_frame, read_frame, write_frame,
+    ALPN_MESH, BlockRecord, ClipMsg, CloseCode, Datagram, EventId, Frame, Hello, InputDatagram,
+    MAX_CONTROL_FRAME_BYTES, MAX_FRAME_BYTES, MAX_RECENT_BLOCKS, MIN_PROTOCOL_VERSION, ModuleHost,
+    ModuleInput, ModuleKind, ModuleMsg, ModuleSet, PROTOCOL_VERSION, PeerId, PeerInfo, PeerPerms,
+    PeerState, PeerStatus, SendError, WireError, authorize_inbound, authorize_inbound_datagram,
+    authorize_outbound, authorize_outbound_datagram, decode_datagram, encode_datagram,
+    encode_frame, min_version, read_frame, write_frame,
 };
 use quinn::{Connection, Endpoint, RecvStream, SendStream, VarInt};
 use tokio::sync::{Notify, mpsc, watch};
@@ -117,6 +117,8 @@ struct Slot {
 struct Active {
     conn: Connection,
     remote: ModuleSet,
+    /// `Hello::version` of the peer on this connection.
+    version: u16,
     dialed_by: PeerId,
     generation: u64,
 }
@@ -138,6 +140,7 @@ impl Slot {
             perms: self.entry.perms,
             remote_modules: self.active.as_ref().map(|a| a.remote).unwrap_or_default(),
             connected: self.active.is_some(),
+            remote_version: self.active.as_ref().map_or(0, |a| a.version),
         }
     }
 }
@@ -267,10 +270,16 @@ impl Mesh {
                 state: s.state.clone(),
                 perms: s.entry.perms,
                 remote_modules: s.active.as_ref().map(|a| a.remote).unwrap_or_default(),
+                remote_version: s.active.as_ref().map_or(0, |a| a.version),
             })
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
         out
+    }
+
+    /// A module reported a new `last_block` (no peer attached): it joins `recent_blocks`.
+    pub fn record_module_block(&self, module: ModuleKind, reason: String) {
+        self.inner.push_block(None, Some(module), reason);
     }
 
     /// What the mesh refused lately, newest first.
@@ -379,11 +388,12 @@ impl Inner {
     }
 
     /// Call with `peers` unlocked: the name is read from it.
-    fn record_block(&self, peer: PeerId, cause: BlockCause) {
-        let peer_name = self
-            .lock()
-            .get(&peer)
-            .map_or_else(|| peer.short(), |s| s.entry.name.clone());
+    fn push_block(&self, peer: Option<PeerId>, module: Option<ModuleKind>, reason: String) {
+        let peer_name = peer.map(|id| {
+            self.lock()
+                .get(&id)
+                .map_or_else(|| id.short(), |s| s.entry.name.clone())
+        });
         let at_unix_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
@@ -392,7 +402,8 @@ impl Inner {
             at_unix_ms,
             peer,
             peer_name,
-            cause,
+            module,
+            reason,
         });
         blocks.truncate(MAX_RECENT_BLOCKS);
     }
@@ -537,7 +548,7 @@ impl Inner {
                             reason: msg::KEY_CHANGED.to_string(),
                         };
                     }
-                    self.record_block(peer, BlockCause::KeyChanged);
+                    self.push_block(Some(peer), None, msg::KEY_CHANGED.to_string());
                     return;
                 }
                 Err(DialFail::Other(e)) => {
@@ -642,6 +653,7 @@ impl Inner {
                         slot.active = Some(Active {
                             conn: conn.clone(),
                             remote: hello.modules,
+                            version: hello.version,
                             dialed_by,
                             generation,
                         });
@@ -772,13 +784,7 @@ impl Inner {
                             .await
                     }
                     Err(reason) => {
-                        self.record_block(
-                            from,
-                            BlockCause::Inbound {
-                                kind: m.kind(),
-                                reason,
-                            },
-                        );
+                        self.push_block(Some(from), Some(m.kind()), reason.pt().to_string());
                         let reply = Frame::Rejected {
                             kind: m.kind(),
                             ref_id: offer_id(&m),
@@ -853,12 +859,24 @@ async fn send_uni(conn: &Connection, frame: &Frame) -> Result<(), SendError> {
 /// The core's side of the module contract.
 struct MeshHost(Arc<Inner>);
 
+struct Route {
+    conn: Connection,
+    perms: PeerPerms,
+    remote: ModuleSet,
+    version: u16,
+}
+
 impl MeshHost {
-    fn route(&self, to: &PeerId) -> Result<(Connection, PeerPerms, ModuleSet), SendError> {
+    fn route(&self, to: &PeerId) -> Result<Route, SendError> {
         let slots = self.0.lock();
         let slot = slots.get(to).ok_or(SendError::NotConnected)?;
         let active = slot.active.as_ref().ok_or(SendError::NotConnected)?;
-        Ok((active.conn.clone(), slot.entry.perms, active.remote))
+        Ok(Route {
+            conn: active.conn.clone(),
+            perms: slot.entry.perms,
+            remote: active.remote,
+            version: active.version,
+        })
     }
 }
 
@@ -883,13 +901,17 @@ impl ModuleHost for MeshHost {
     }
 
     async fn send_reliable(&self, to: PeerId, msg: ModuleMsg) -> Result<(), SendError> {
-        let (conn, perms, remote) = self.route(&to)?;
-        authorize_outbound(self.0.local, &perms, remote, self.0.paused(), &msg)?;
-        send_uni(&conn, &Frame::Module(msg)).await
+        let r = self.route(&to)?;
+        authorize_outbound(self.0.local, &r.perms, r.remote, self.0.paused(), &msg)?;
+        // A 0.1.0 peer closes the connection on a frame it cannot decode: send nothing newer.
+        if r.version < min_version(&msg) {
+            return Err(SendError::RemoteTooOld);
+        }
+        send_uni(&r.conn, &Frame::Module(msg)).await
     }
 
     fn send_datagram(&self, to: PeerId, dg: InputDatagram) -> Result<(), SendError> {
-        let (conn, _, remote) = self.route(&to)?;
+        let Route { conn, remote, .. } = self.route(&to)?;
         authorize_outbound_datagram(self.0.local, remote, self.0.paused())?;
         let buf = encode_datagram(&Datagram::Input(dg)).map_err(|e| match e {
             WireError::TooLarge { .. } => SendError::TooLarge,

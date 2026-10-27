@@ -166,6 +166,7 @@ fn send_error_state(e: &SendError) -> DeliveryState {
         SendError::Paused => DeliveryState::Rejected(RejectReason::Paused),
         SendError::TooLarge => DeliveryState::Rejected(RejectReason::TooLarge),
         SendError::NotConnected | SendError::Transport(_) => DeliveryState::Unreachable,
+        SendError::RemoteTooOld => DeliveryState::Rejected(RejectReason::VersionMismatch),
     }
 }
 
@@ -600,7 +601,18 @@ impl State {
                 ));
             }
             ModuleCommand::ClipSend { text, to } => self.clip_send(text, to, reply),
-            ModuleCommand::InputLoopback { .. } => {
+            // S6 (proto v2): ClipApply, ClipDiscard and ClipSendCurrent are Flux's (L5); until
+            // then they answer like any command this module does not serve.
+            ModuleCommand::InputLoopback { .. }
+            | ModuleCommand::ClipApply { .. }
+            | ModuleCommand::ClipDiscard { .. }
+            | ModuleCommand::ClipSendCurrent { .. }
+            | ModuleCommand::InputState
+            | ModuleCommand::InputReload
+            | ModuleCommand::InputLock { .. }
+            | ModuleCommand::InputSwitch { .. }
+            | ModuleCommand::InputOffer { .. }
+            | ModuleCommand::InputOfferClear => {
                 let _ = reply.send(ModuleReply::Error(msg::UNSUPPORTED_COMMAND.into()));
             }
         }

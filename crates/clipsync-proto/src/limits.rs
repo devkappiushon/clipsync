@@ -1,4 +1,6 @@
-pub const PROTOCOL_VERSION: u16 = 1;
+/// 2 since S6: `Zones`, `LayoutOffer` and `EnterAt` exist. A 0.1.0 peer (1) still connects:
+/// the core never sends it a message newer than its version (`min_version`, `RemoteTooOld`).
+pub const PROTOCOL_VERSION: u16 = 2;
 pub const MIN_PROTOCOL_VERSION: u16 = 1;
 pub const ALPN_MESH: &[u8] = b"clipsync/1";
 pub const ALPN_PAIR: &[u8] = b"clipsync-pair/1";
@@ -22,3 +24,6 @@ pub const CLIP_TTL_MS: u32 = 600_000;
 pub const SEEN_EVENTS_CAP: usize = 1_024;
 pub const PAIR_WINDOW_SECS: u64 = 120;
 pub const MAX_INPUT_DATAGRAMS_PER_SEC: u32 = 2_000;
+/// Monitors in one `Zones`, and devices in one `LayoutOffer`.
+pub const MAX_ZONES: usize = 16;
+pub const MAX_LAYOUT_LINKS: usize = 64;

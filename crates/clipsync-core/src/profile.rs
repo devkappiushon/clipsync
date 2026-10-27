@@ -478,6 +478,24 @@ impl Profile {
         })
     }
 
+    /// Sets `[clipboard] mode` ("auto" or "manual") in config.toml, keeping every other key.
+    /// Written through a temp file and a rename; the running agent reads it on restart.
+    pub fn set_clipboard_mode(&self, mode: &str) -> Result<(), CoreError> {
+        if !matches!(mode, "auto" | "manual") {
+            return Err(CoreError::Config(format!(
+                "[clipboard] mode inválido: {mode} (use auto ou manual)"
+            )));
+        }
+        self.load_config()?; // the same checks as a normal read
+        let mut raw: RawConfig = toml::from_str(&read_text(&self.config_path())?)
+            .map_err(|e| CoreError::Config(format!("config.toml: {e}")))?;
+        raw.clipboard
+            .get_or_insert_with(toml::Table::new)
+            .insert("mode".into(), toml::Value::String(mode.into()));
+        let text = toml::to_string(&raw).map_err(|e| CoreError::Config(e.to_string()))?;
+        write_private(&self.config_path(), text.as_bytes())
+    }
+
     pub fn load_identity(&self) -> Result<Identity, CoreError> {
         self.load_config()?; // also proves the profile exists
         let key_path = self.dir.join(KEY_FILE);

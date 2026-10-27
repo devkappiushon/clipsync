@@ -199,18 +199,45 @@ impl Validate for Datagram {
 /// invisible or bidi formatting characters. A peer's name is printed next to the pairing code,
 /// so anything that moves the cursor or reorders text could forge the code on screen (S1-01).
 pub fn validate_device_name(name: &str) -> Result<(), WireError> {
-    if name.is_empty() {
-        return Err(WireError::Invalid("empty device name"));
-    }
-    if name.len() > MAX_NAME_BYTES {
-        return Err(WireError::Invalid("device name too long"));
-    }
-    if name.chars().any(|c| c.is_control() || is_format_char(c)) {
-        return Err(WireError::Invalid(
+    match name_fault(name) {
+        None => Ok(()),
+        Some(NameFault::Empty) => Err(WireError::Invalid("empty device name")),
+        Some(NameFault::TooLong) => Err(WireError::Invalid("device name too long")),
+        Some(NameFault::BadChar) => Err(WireError::Invalid(
             "control or formatting character in device name",
-        ));
+        )),
     }
-    Ok(())
+}
+
+/// Monitor names (`ZoneInfo`, `OfferEndpoint`, `EnterAt`) follow the device-name rule: they are
+/// shown on the layout screen next to the peer's name.
+pub fn validate_monitor_name(name: &str) -> Result<(), WireError> {
+    match name_fault(name) {
+        None => Ok(()),
+        Some(NameFault::Empty) => Err(WireError::Invalid("empty monitor name")),
+        Some(NameFault::TooLong) => Err(WireError::Invalid("monitor name too long")),
+        Some(NameFault::BadChar) => Err(WireError::Invalid(
+            "control or formatting character in monitor name",
+        )),
+    }
+}
+
+enum NameFault {
+    Empty,
+    TooLong,
+    BadChar,
+}
+
+fn name_fault(name: &str) -> Option<NameFault> {
+    if name.is_empty() {
+        Some(NameFault::Empty)
+    } else if name.len() > MAX_NAME_BYTES {
+        Some(NameFault::TooLong)
+    } else if name.chars().any(|c| c.is_control() || is_format_char(c)) {
+        Some(NameFault::BadChar)
+    } else {
+        None
+    }
 }
 
 /// Zero-width and bidi formatting characters.
