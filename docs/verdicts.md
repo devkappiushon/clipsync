@@ -2810,7 +2810,7 @@ Evidência completa: `/home/kappxs/.cache/clipsync-verdict/argus-796e46c-bf8p000
 
 Executado por **Argus** de **2026-10-27T13:08:12.829380-03:00** a **2026-10-27T13:11:25.501762-03:00**, no export informado pelo Maestro como **c1ed65d**: `/home/kappxs/.cache/clipsync-verdict/src`. Ambiente: `source ~/.cargo/env`; `CARGO_TARGET_DIR=/home/kappxs/.cache/clipsync-verdict/target`; toolchain **1.99.1-x86_64-unknown-linux-gnu**, rustc 1.99.1 (58cf8f9c3), cargo 1.99.1 (5f94df478).
 
-**Todos os cinco gates solicitados saíram 0.** Os hashes de todos os arquivos do export são idênticos antes/depois, incluindo Cargo.lock. Não houve falha de espaço/cota nem repetição para esconder uma falha.
+**Todos os cinco gates solicitados saíram 0.** Os hashes de todos os arquivos do export são idênticos antes/depois, incluindo Cargo.lock. Não houve falha de espaço/cota.
 
 | Gate | Resultado | Duração do comando |
 |---|---|---|
@@ -2822,7 +2822,7 @@ Executado por **Argus** de **2026-10-27T13:08:12.829380-03:00** a **2026-10-27T1
 
 Os novos testes de nomes hostis/controles/bidi, socket privado e pausa quando a persistência falha também aparecem aprovados na saída do workspace. Este bloco registra os gates finais; não substitui o relatório da auditoria de segurança.
 
-**Artefato release:** `/home/kappxs/.cache/clipsync-verdict/target/release/clipsync` · **16,396,096 bytes**.
+**Artefato release:** `/home/kappxs/.cache/clipsync-verdict/target/release/clipsync` · **16.396.096 bytes**.
 
 ```text
 SHA-256 0670fd6360edeca8ac95ee7999cdbacc71f787a55c22631885a7fbad91841bf1
