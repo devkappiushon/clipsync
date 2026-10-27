@@ -1,7 +1,9 @@
-# Contrato · ClipSync MVP de hoje (v1.2, Keel, 2026-10-27)
+# Contrato · ClipSync MVP de hoje (v1.4, Keel, 2026-10-27)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
+v1.3: `DeliveryState::Unreachable` novo (§4, Rivet); ClipSent lista TODO par alvo (§7 regra 9, Flux); código de saída do `send` (§6, Rivet); ttl conta do recebimento local e vale para a caixa (§7 regra 6); ClipSend avança Lamport sem contar como cópia local (§7 regra 12).
+v1.4: `CloseCode::ALL` (§4, já entregue pelo Rivet); spike input 2 do Vector no §8 (regras 7 a 11): barreira em x = largura da zona, Enter por movimento relativo, restore_token do RemoteDesktop em `DIR/portal-tokens.toml`, proibido `supported_capabilities()`, P4c automatizado com retry; §3 ganha `portal-tokens.toml`; §9 S3 ganha itens 6 e 7.
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -56,7 +58,9 @@ DIR/
   peers.toml          pares confiáveis + permissões (escrito por pair; usuário pode editar)
   state.toml          estado persistido pelo agente: paused
   agent.sock          socket de controle (Unix, 0600) enquanto `run` está de pé
+  portal-tokens.toml  restore_token do portal RemoteDesktop, modo 0600; escrito e lido SÓ por clipsync-input (Vector)
 ```
+`portal-tokens.toml`: `version = 1` · `remote_desktop = "<token>"`. Token inválido ou recusado: apaga a chave e pede o diálogo de novo. InputCapture v1 não tem token: 1 diálogo por sessão do agente (documentado na matriz).
 Segredo em arquivo 0600 é provisório (cofre da plataforma fica para depois; registrado em Aberto).
 
 ### config.toml
@@ -182,6 +186,7 @@ pub enum PairMsg { Commit { h_nb: [u8; 32] }, Nonce { na: [u8; 32] }, Reveal { n
 pub enum CloseCode { Normal = 0, Version = 1, UnknownPeer = 2, Duplicate = 3, Protocol = 4,
                      Shutdown = 5, PairFailed = 6, KeyChanged = 7 }
 impl CloseCode {
+    pub const ALL: [CloseCode; 8]; // os 8 códigos em ordem; usado nos testes de TLS (§9 S1 item 6c)
     pub fn code(self) -> u32;
     pub fn reason(self) -> &'static [u8]; // b"normal", b"version", b"unknown-peer", b"duplicate", b"protocol", b"shutdown", b"pair-failed", b"key-changed"
     pub fn from_code(c: u64) -> Option<Self>;
@@ -223,7 +228,9 @@ pub struct ClipOffer { pub id: EventId, pub lamport: u64, pub mime: String, pub 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ClipAck { pub id: EventId, pub state: DeliveryState }
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeliveryState { Received, Applied, InInbox, Rejected(RejectReason), Expired }
+pub enum DeliveryState { Received, Applied, InInbox, Rejected(RejectReason), Expired,
+                         /// Só local, nunca vai no fio: par alvo não conectado, erro de transporte, ou sem Ack em 5 s.
+                         Unreachable }
 
 // input.rs
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -421,7 +428,7 @@ pair host [--port P] [--timeout 120s] [--allow LISTA]
 pair join ADDR [--allow LISTA]       LISTA: clipboard-in,clipboard-out,input-in (pré-responde permissões; o CÓDIGO sempre é confirmado por stdin "s/N")
 run [--listen ADDR]       foreground até Ctrl-C
 pause | resume            via socket; resume não reenvia nada copiado durante a pausa
-send --stdin [--to PAR]   lê stdin (<= max), ModuleCommand::ClipSend; imprime estado por par; recusado -> sai 3 com motivo
+send --stdin [--to PAR]   lê stdin (<= max), ModuleCommand::ClipSend; imprime uma linha por par alvo (inclusive "não alcançado"); sai 0 só se TODOS ficaram Applied ou InInbox, senão sai 3; ModuleReply::Error (nenhum par autorizado, --to desconhecido) sai 1
 inbox                     lista InboxItem (id curto, de, hora, bytes, estado, preview)
 diagnose                  core::diag::system() + clipboard::diagnose() + input::diagnose()
 probe clipboard ...       -> clipsync_clipboard::probe::run(args)
@@ -474,11 +481,12 @@ Regras do módulo:
 3. **Conteúdo inalterado não é cópia nova**: o módulo guarda o hash do conteúdo atual conhecido (última leitura ou última escrita nossa). ChangeEvent cujo hash é igual ao atual é descartado, a qualquer tempo. Cobre a tomada de posse do Mutter quando o app de origem morre (segundo evento, mesmo conteúdo) e o eco. Consequência aceita: copiar X duas vezes seguidas = 1 oferta; X, Y, X = 3 ofertas. Reenvio forçado é `clipsync send`.
 4. Vazio (read_text = None) nunca gera oferta e não altera o hash atual.
 5. Dedupe por EventId no recebimento (vistos, SEEN_EVENTS_CAP, TTL CLIP_TTL_MS): repetido -> Ack Rejected(Duplicate). Hashes ficam só em memória, nunca em log.
-6. Ordem: relógio de Lamport. Cópia local: lamport = max_visto + 1. Oferta só é aplicada se (lamport, origem PeerId) > último aplicado/copiado; senão vai para a caixa com Rejected(Stale). Expirada (ttl) -> Expired.
+6. Ordem: relógio de Lamport. Cópia local: lamport = max_visto + 1. Oferta só é aplicada se (lamport, origem PeerId) > último aplicado/copiado; senão vai para a caixa com Rejected(Stale). **ttl conta do recebimento local, em relógio monotônico do receptor** (created_unix_ms é só exibição, relógio de parede não decide nada): ttl_ms == 0 -> Expired ao chegar; item na caixa com idade > ttl_ms passa a Expired e o texto/preview é descartado da memória (nada de fila esquecida).
 7. Antes de aplicar: reavalia pausa e hash atual; se o usuário copiou depois da oferta, não sobrescreve (caixa).
 8. mode auto: aplica e registra na caixa como Applied; manual: só caixa (InInbox). Caixa em memória, MAX_INBOX_ITEMS.
-9. Ack ao remetente com o estado final. `ClipSend` espera Acks por até 5 s; sem ack -> estado Received ou erro de transporte.
+9. Ack ao remetente com o estado final. `ClipSend` espera Acks por até 5 s. `ClipSent` traz **todo par alvo** (`to: Some` = esse par; `None` = todos com clipboard_out = true): não conectado, erro de transporte ou sem Ack em 5 s = `Unreachable`; recusa local de authorize = `Rejected(motivo)`. Par alvo nunca some da lista. `ModuleReply::Error` só quando não há alvo (nenhum par autorizado, ou --to desconhecido).
 10. Pausa: não oferece, não aplica; resume não reenvia o que foi copiado durante a pausa (atualiza o hash atual em silêncio).
+12. `ClipSend` (envio explícito) avança o Lamport (lamport = max_visto + 1, para o destino aplicar como mais novo) mas não conta como cópia local: não escreve no clipboard local e não muda o hash atual.
 11. Adaptador síncrono roda em thread própria (`spawn_blocking`), ponte por canal. Escopo validado: só texto UTF-8 no CLIPBOARD. Imagem, arquivos e PRIMARY: fora de hoje.
 
 ## 8. clipsync-input (Vector)
@@ -536,6 +544,11 @@ Regras do módulo:
 4. Probe `--capture`: lista zonas (nome via Mutter DisplayConfig ou wl_output quando o portal não der nome), barreira só na metade superior da borda direita, imprime contagem de eventos por tipo e latência, nunca tecla; `Esc` (KEY_ESC lido, não impresso) ou `--seconds` libera.
 5. Probe `--emulate`: pede confirmação "s/N" (pula com `--yes`), espera 5 s, move o cursor num quadrado e digita "ção" (dead keys/compose conforme keymap) na janela focada.
 6. Nunca loga código de tecla. Debug de InputEvent::Key e Button é `<redacted>`.
+7. **Coordenada da barreira (provado no spike input 2):** borda direita usa `x = zone.x + zone.width` (zona 1920 de largura: x = 1920; x = 1919 é RECUSADO pelo portal). Por analogia, borda inferior usa `y = zone.y + zone.height`; esquerda `x = zone.x`; superior `y = zone.y`. Só a direita foi provada: as outras três têm teste manual antes de "pronto". Segmento parcial: `from..to` vira `offset + round(from*len) ..= offset + round(to*len) - 1`.
+8. **Sem ponteiro absoluto:** o EIS do RemoteDesktop só oferece movimento relativo. No `Enter`, o destino leva o cursor a uma posição conhecida (rajada relativa até saturar no canto da borda de entrada) e depois anda por movimento relativo até `pos` ao longo da borda.
+9. **Diálogos do portal:** RemoteDesktop com `persist_mode = ExplicitlyRevoked` e `restore_token` guardado em `DIR/portal-tokens.toml` (0600); com token válido, nenhum diálogo. `persist_mode = DoNot` é proibido (2 diálogos por rodada). InputCapture v1 não tem token: 1 diálogo por sessão do agente.
+10. **Proibido chamar `ashpd ... supported_capabilities()`**: o portal do GNOME 50 devolve 15, com bit desconhecido, e o parse quebra. Pedir as capacidades direto (Keyboard | Pointer) em `create_session`/`select_devices`.
+11. **P4c automatizado:** emulação via RemoteDesktop dispara a barreira da captura, então o loopback pode rodar sem mão humana. Uma em três tentativas não ativou no spike: o teste tenta até 3 vezes e só falha se as 3 falharem, registrando quantas precisou.
 
 ## 9. Critérios de pronto (passa/não passa)
 Todos os comandos rodam de `/home/kappxs/Documentos/ANTIGOS/clipsync` com `source ~/.cargo/env`. "M" = manual em sessão gráfica (usuário/Maestro executa; builder entrega o comando e a saída esperada).
@@ -551,9 +564,7 @@ Todos os comandos rodam de `/home/kappxs/Documentos/ANTIGOS/clipsync` com `sourc
 
 ### S1 · Rivet (base)
 1. Proto: `cargo test -p clipsync-proto` verde com: frame acima do máx recusado ANTES de alocar; datagrama > 1200 bytes recusado; validate recusa float NaN, pos 1.5, 33 eventos, nome de 65 bytes; Debug redigido de ClipOffer, InputEvent::Key, ControlRequest; tabela de authorize_* (módulo desligado -> ModuleDisabled, sem perm -> NotAuthorized, pausado -> Paused, Ack passa pausado); MemHub entrega e recusa com as mesmas regras.
-2. Roteiro 1: `printf 'notebook-a
-n
-' | cargo run -q -p clipsync-cli -- init --profile /tmp/cs-a` (e variante com flags) cria config.toml, identity.key.pem modo 600 (`stat -c %a`), peers.toml vazio; `init` sem resposta de clipboard grava `clipboard = false`; config com os dois módulos false é recusada com motivo.
+2. Roteiro 1: `printf 'notebook-a\nn\n' | cargo run -q -p clipsync-cli -- init --profile /tmp/cs-a` (e variante com flags) cria config.toml, identity.key.pem modo 600 (`stat -c %a`), peers.toml vazio; `init` sem resposta de clipboard grava `clipboard = false`; config com os dois módulos false é recusada com motivo.
 3. Roteiro 2: `cargo test -p clipsync-cli --test roteiro pair_` verde: host e join em 127.0.0.1, stdout dos dois contém o mesmo `Código: NNN NNN`; aceitar dos dois lados grava peers.toml nos dois com as permissões de `--allow`; recusar em um lado não grava em nenhum.
 4. Pareamento seguro: `cargo test -p clipsync-core pairing_` verde com: (a) Reveal com nB que não bate com o Commit -> PairFailed, nada gravado, host encerra; (b) segunda conexão durante a tentativa recusada; (c) após uma falha, a mesma janela não aceita nova tentativa; (d) o código depende de nA e nB (mesma sessão TLS, nonces diferentes = código diferente).
 5. Roteiro 3: `cargo test -p clipsync-cli --test roteiro mesh_` verde: dois `clipsync run` filhos, `status` dos dois mostra o par Connected, módulos e permissões; terceira identidade desconhecida recusada (status do servidor ou log com "par desconhecido"); matar e subir B de novo reconecta; trocar identity de B (novo init no mesmo dir/addr) gera PeerState::Blocked com "chave do par mudou".
@@ -571,11 +582,13 @@ n
 5. clippy e fmt verdes no crate.
 
 ### S3 · Vector (input)
-1. `cargo test -p clipsync-input` verde com `FakeCapture` + `FakeEmulate` + `MemHub`: (a) loopback: 200 eventos, Stats.received = 200, p50 <= p95; (b) destino sem input_in: Enter recusado NotAuthorized, emulador nunca inicia; (c) Leave e PeerDown chamam release_all (pressed_now = 0); (d) limite de taxa descarta excedente e conta; (e) pausado no destino: datagrama descartado; (f) Debug de InputEvent::Key/Button e CaptureEvent sem código; (g) barreira "metade superior da borda direita" de uma Zone 1920x1080 em (0,0) vira o segmento x=1920, y 0..539.
+1. `cargo test -p clipsync-input` verde com `FakeCapture` + `FakeEmulate` + `MemHub`: (a) loopback: 200 eventos, Stats.received = 200, p50 <= p95; (b) destino sem input_in: Enter recusado NotAuthorized, emulador nunca inicia; (c) Leave e PeerDown chamam release_all (pressed_now = 0); (d) limite de taxa descarta excedente e conta; (e) pausado no destino: datagrama descartado; (f) Debug de InputEvent::Key/Button e CaptureEvent sem código; (g) barreira "metade superior da borda direita" de uma Zone 1920x1080 em (0,0) vira o segmento x=1920, y 0..539 (nunca 1919); (h) arquivo de token gravado com modo 0600 (`stat -c %a` = 600) e token inválido é descartado.
 2. Roteiro 5a (M): `cargo run -q -p clipsync-cli -- probe input --capture` lista zona com `eDP-1`, cria só a barreira da metade superior direita, encostar o mouse ali imprime `Activated`, contagens por tipo e latência; encostar na metade inferior não ativa; Esc devolve o cursor.
 3. Roteiro 5b (M): `cargo run -q -p clipsync-cli -- probe input --emulate` pede confirmação, move em quadrado e digita "ção" no gedit aberto pelo usuário.
 4. Roteiro 5c (M, depende de S1 integrado): perfis a (capture=portal) e b (emulate=fake, input_in concedido a a) rodando; `clipsync probe input --loopback --profile /tmp/cs-a --to notebook-b --seconds 20` imprime contagem, perdidos, p50 e p95 em ms.
 5. clippy e fmt verdes no crate.
+6. P4c sem mão humana (sessão gráfica): `cargo test -p clipsync-input -- --ignored portal_loopback` verde, com até 3 tentativas (regra 11), imprimindo eventos recebidos > 0, p50, p95 e o número de tentativas.
+7. Token (M): rodar `probe input --emulate --yes` duas vezes seguidas; a segunda não abre diálogo do RemoteDesktop. Teclado na captura e posição do cursor após Release: registrar resultado na matriz (não verificados no spike).
 
 ### I · Integração (Rivet, depois de S2 e S3 entregarem)
 1. Roteiro 4 automático: `cargo test -p clipsync-cli --test roteiro clip_` verde: perfis com `--fake-adapters`, A e B com clipboard, B concede clipboard_in; `printf 'olá ção' | clipsync send --stdin --profile A` sai 0 com `notebook-b: aplicado`; `clipsync inbox --profile B` lista o item com `bytes=10` e preview `olá ção`; com `clipboard = false` em B, mesmo send sai 3 com "recusado: módulo clipboard desligado em notebook-b".

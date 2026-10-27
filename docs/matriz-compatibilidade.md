@@ -5,7 +5,7 @@ Cada célula aponta a evidência. Nada aqui vale para outra máquina até rodar 
 
 | Plataforma | Clipboard: observar | Clipboard: ler | Clipboard: escrever | Input: captura | Input: emulação |
 |---|---|---|---|---|---|
-| Ubuntu 26.04.1 · GNOME 50.1 · Wayland · x86_64 (notebook `kappxs-Aspire-A515-57`) | validada [C1] | validada [C2] | validada [C3] | parcial [I1] | validada [I2] |
+| Ubuntu 26.04.1 · GNOME 50.1 · Wayland · x86_64 (notebook `kappxs-Aspire-A515-57`) | validada [C1] | validada [C2] | validada [C3] | validada para ponteiro [I1] | validada para movimento [I2] |
 | Windows (PC servidor do Input Leap, versão a confirmar) | não testada | não testada | não testada | não testada | não testada |
 | PC de casa (SO a confirmar) | não testada | não testada | não testada | não testada | não testada |
 
@@ -23,17 +23,22 @@ Cada célula aponta a evidência. Nada aqui vale para outra máquina até rodar 
 **[C3] Escrever.** Escreve via arboard (X11). A leitura de volta é idêntica e apps Wayland leem o texto (relato do spike do Flux).
 - Só texto UTF-8. Imagem, arquivos e PRIMARY não foram testados.
 
-**[I1] Captura (parcial).** Portal InputCapture v1 (`/tmp/clipsync-spike-input/capture.log`, `cap_*.log`).
+**[I1] Captura (validada para ponteiro).** Portal InputCapture v1. Spike 1: `capture.log`, `cap_*.log`. Spike 2: relato do Vector e `cap_1919_539.log`, todos em `/tmp/clipsync-spike-input/`.
 - Funcionou:
-  - sessão criada com Keyboard e Pointer concedidos, depois do diálogo, aceito pelo usuário em 8 a 47 s;
+  - sessão criada com Keyboard e Pointer concedidos, depois do diálogo, aceito pelo usuário em 7 a 47 s;
   - 1 zona 1920x1080 em (0,0);
-  - barreira só na metade superior da borda direita (`x=1920 y=0..539`) aceita, com `failed=[]`;
-  - handshake EIS ok, Enable ok, dispositivos EIS virtuais recebidos.
-- Pendente:
-  - o evento `Activated` não chegou em 3 tentativas ("nunca ativou"). Numa delas o RemoteDesktop empurrou o ponteiro até a barreira. Hipótese a provar: o Mutter não dispara barreira com ponteiro emulado, e só o mouse físico ativa;
-  - eventos por EIS depois de ativar e latência.
+  - barreira só na metade superior da borda direita (`x=1920 y=0..539`): aceita e **dispara `Activated`**. Foram 448 eventos de ponteiro em 5 s, e o Release devolveu o controle sem erro (spike 2, relato do Vector);
+  - barreira na borda direita inteira: 795 eventos de ponteiro. Latência do frame EIS até o app: p50 132 µs, p95 214 µs. 1º frame 2,7 ms depois do `Activated` (relato do Vector, ainda não visto por mim em log);
+  - a emulação via RemoteDesktop + EIS também dispara a barreira, em 2 de 3 tentativas. Por isso o P4c pode ser automatizado com até 3 tentativas.
+- Recusado:
+  - barreira em `x=1919` (dentro da zona): `failed=[1]` (`cap_1919_539.log`). Na borda direita, a barreira usa x = largura da zona (contrato §8 regra 7).
+- Não verificado:
+  - eventos de teclado durante a captura;
+  - posição do cursor depois do Release;
+  - barreiras nas bordas esquerda, superior e inferior.
 - O portal não dá nome à zona. O nome `eDP-1` precisa vir de outra fonte (contrato §10, item 3).
-- InputCapture v1 não tem token de restauração. O diálogo deve voltar a cada sessão de login (a medir).
+- InputCapture v1 não tem token de restauração: 1 diálogo por sessão do agente.
+- `supported_capabilities()` do ashpd quebra: o portal devolve 15, com um bit desconhecido. O contrato proíbe a chamada (§8 regra 10).
 
 **[I2] Emulação (validada para movimento).** Portal RemoteDesktop v2 (`/tmp/clipsync-spike-input/emit.log`).
 - Funcionou:
@@ -41,9 +46,9 @@ Cada célula aponta a evidência. Nada aqui vale para outra máquina até rodar 
   - handshake EIS como emissor ok;
   - 486 movimentos relativos enviados (dx +50 por 5 s).
 - Limitações:
-  - o dispositivo não oferece PointerAbsolute. A posição de entrada na borda tem de ser alcançada com movimento relativo;
+  - o EIS do RemoteDesktop só oferece ponteiro relativo, sem absoluto (confirmado no spike 2). O destino posiciona o cursor saturando num canto conhecido e depois andando por movimento relativo (contrato §8 regra 8);
   - digitação ainda não testada ("ção" com dead keys e AltGr, ABNT2). Fica para a P4b;
-  - o token de restauração do RemoteDesktop v2 ainda não foi usado (diálogo uma vez por máquina, a provar).
+  - com `persist_mode = DoNot`, aparecem 2 diálogos por rodada. O contrato manda guardar o `restore_token` em `DIR/portal-tokens.toml` (§8 regra 9). Diálogo uma vez por máquina: ainda a provar (§9 S3 item 7).
 
 ## Base (independe da plataforma, só loopback nesta máquina)
 

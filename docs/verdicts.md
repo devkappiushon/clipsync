@@ -280,7 +280,303 @@ Limitações e requisitos ainda não comprovados: ...
 Publicar achados detalhados em `## Findings` e comunicar o veredito ao Maestro por `maestri ask`. Repetir teste só por mudança, falha ou lacuna de evidência. Nenhuma fatia está aprovada por esta publicação do plano.
 
 ## Verdicts
-(um bloco por revisão: fatia, data, comandos rodados, saída relevante, passa/não passa)
+### S0 · 2026-10-27 12:04:33–12:04:36 -03:00 · Não passa no checkout atual
+
+Solicitação: revisar os sete critérios da §9 S0; commit informado pelo Maestro: `79be293`. **Não consultei git e não certifiquei o conteúdo desse commit.** A evidência abaixo é do checkout compartilhado, que já contém implementação de S1/S2. As falhas localizadas nesses crates não são atribuídas ao trabalho do Bolt sem comparação com uma cópia estável de S0.
+
+Diretório: `/home/kappxs/Documentos/ANTIGOS/clipsync`. Cada comando abaixo foi executado em zsh após `source ~/.cargo/env`. Hashes dos arquivos antes/depois dos 13 comandos foram idênticos; não houve mudança detectada durante essa janela. Os cinco crates têm `[lints] workspace = true`; as 25 dependências de workspace têm versões iniciadas por `=`. Manifestos conferidos por leitura e parse de TOML. Código-fonte não foi editado.
+
+| §9 S0 | Resultado observado |
+|---|---|
+| 1 · toolchain | Passa: 1.99.1, rustfmt e clippy declarados. |
+| 2 · build e crates | Passa: build=0, cinco crates e lints herdados; build emite três warnings no ledger de clipboard. |
+| 3 · cinco smoke | Não passa: test=101 na compilação de proto; nenhum teste chegou a executar, cinco smoke aprovados não comprovados. |
+| 4 · clippy e fmt | Não passa: clippy=101 pelo módulo testing ausente; fmt=1 pelo mesmo módulo e diferenças de formatação em clipboard. |
+| 5 · lints | Passa: unsafe_code=forbid, unwrap_used=deny, demais lints da §2 declarados; três allow-*-in-tests=true. |
+| 6 · CI | Passa na verificação local exigida: YAML parseia (0); jobs.check usa ubuntu-latest e declara fmt, clippy -D warnings e test --workspace. Não executei GitHub Actions. |
+| 7 · dependências | Passa: 25 versões exatas; ring 0.17.14 presente; aws-lc-sys/aws-lc-rs ausentes com erro esperado 101; x11rb sem duplicação reportada. |
+
+#### Saídas reais
+
+Comando: `cat rust-toolchain.toml`. Início: `2026-10-27T12:04:33.593894-03:00`. Exit code: **0**.
+
+stdout:
+
+```text
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
+```
+
+Comando: `rustup show active-toolchain`. Início: `2026-10-27T12:04:33.598252-03:00`. Exit code: **0**.
+
+stdout:
+
+```text
+1.99.1-x86_64-unknown-linux-gnu (overridden by '/home/kappxs/Documentos/ANTIGOS/clipsync/rust-toolchain.toml')
+```
+
+Comando: `cargo build --workspace`. Início: `2026-10-27T12:04:33.621930-03:00`. Exit code: **0**.
+
+stderr:
+
+```text
+   Compiling clipsync-proto v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-proto)
+   Compiling clipsync-core v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-core)
+   Compiling clipsync-input v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-input)
+   Compiling clipsync-clipboard v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard)
+warning: method `forget` is never used
+  --> crates/clipsync-clipboard/src/ledger.rs:30:12
+   |
+20 | impl WriteLedger {
+   | ---------------- method in this implementation
+...
+30 |     pub fn forget(&mut self, h: &Hash) {
+   |            ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `SeenEvents` is never constructed
+  --> crates/clipsync-clipboard/src/ledger.rs:42:12
+   |
+42 | pub struct SeenEvents {
+   |            ^^^^^^^^^^
+
+warning: associated items `new` and `insert_new` are never used
+  --> crates/clipsync-clipboard/src/ledger.rs:49:12
+   |
+48 | impl SeenEvents {
+   | --------------- associated items in this implementation
+49 |     pub fn new(ttl: Duration) -> Self {
+   |            ^^^
+...
+53 |     pub fn insert_new(&mut self, id: EventId, now: Instant) -> bool {
+   |            ^^^^^^^^^^
+
+warning: `clipsync-clipboard` (lib) generated 3 warnings
+   Compiling clipsync-cli v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.21s
+```
+
+Comando: `cargo test --workspace`. Início: `2026-10-27T12:04:34.877864-03:00`. Exit code: **101**.
+
+stderr:
+
+```text
+   Compiling clipsync-proto v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-proto)
+error[E0583]: file not found for module `testing`
+  --> crates/clipsync-proto/src/lib.rs:16:1
+   |
+16 | pub mod testing;
+   | ^^^^^^^^^^^^^^^^
+   |
+   = help: to create the module `testing`, create file "crates/clipsync-proto/src/testing.rs" or "crates/clipsync-proto/src/testing/mod.rs"
+   = note: if there is a `mod testing` elsewhere in the crate already, import it with `use crate::...` instead
+
+warning: unused import: `testing::*`
+  --> crates/clipsync-proto/src/lib.rs:28:9
+   |
+28 | pub use testing::*;
+   |         ^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+For more information about this error, try `rustc --explain E0583`.
+warning: `clipsync-proto` (lib) generated 1 warning
+error: could not compile `clipsync-proto` (lib) due to 1 previous error; 1 warning emitted
+```
+
+Comando: `cargo clippy --workspace --all-targets -- -D warnings`. Início: `2026-10-27T12:04:35.547266-03:00`. Exit code: **101**.
+
+stderr:
+
+```text
+    Checking clipsync-proto v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-proto)
+error[E0583]: file not found for module `testing`
+  --> crates/clipsync-proto/src/lib.rs:16:1
+   |
+16 | pub mod testing;
+   | ^^^^^^^^^^^^^^^^
+   |
+   = help: to create the module `testing`, create file "crates/clipsync-proto/src/testing.rs" or "crates/clipsync-proto/src/testing/mod.rs"
+   = note: if there is a `mod testing` elsewhere in the crate already, import it with `use crate::...` instead
+
+error: unused import: `testing::*`
+  --> crates/clipsync-proto/src/lib.rs:28:9
+   |
+28 | pub use testing::*;
+   |         ^^^^^^^^^^
+   |
+   = note: `-D unused-imports` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(unused_imports)]`
+
+For more information about this error, try `rustc --explain E0583`.
+error: could not compile `clipsync-proto` (lib) due to 2 previous errors
+```
+
+Comando: `cargo fmt --all --check`. Início: `2026-10-27T12:04:36.249759-03:00`. Exit code: **1**.
+
+Trecho literal inicial de stdout:
+
+```diff
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:1:
+ use super::{ChangeEvent, ClipError, ClipSnapshot, ClipboardAdapter, WatchMode};
+-use clipsync_proto::{mono_us, MIME_TEXT_UTF8};
++use clipsync_proto::{MIME_TEXT_UTF8, mono_us};
+ use std::collections::VecDeque;
+```
+
+Locais reportados por rustfmt (extraídos de stdout, sem inventar diferenças):
+
+```text
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:1:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:25:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:43:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:51:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:95:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:102:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:106:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/mod.rs:30:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:1:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:8:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:11:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:42:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:49:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:61:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:69:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:74:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:133:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:140:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:151:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/config.rs:1:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/config.rs:33:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/config.rs:40:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/config.rs:48:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:9:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:16:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:22:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:30:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:43:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:56:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:63:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:67:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:79:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:98:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/ledger.rs:33:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/ledger.rs:47:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/ledger.rs:54:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/lib.rs:6:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/msg.rs:14:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/probe.rs:1:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/probe.rs:41:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/probe.rs:54:
+Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/probe.rs:78:
+```
+
+stderr integral:
+
+```text
+Error writing files: failed to resolve mod `testing`: /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-proto/src/testing.rs does not exist
+```
+
+Stdout completo preservado em `/tmp/clipsync-argus-s0-miuoxq64/results.json`; o trecho acima não é a saída completa de fmt.
+
+Comando: `grep -n 'unwrap_used\|unsafe_code' Cargo.toml`. Início: `2026-10-27T12:04:36.314486-03:00`. Exit code: **0**.
+
+stdout:
+
+```text
+13:unsafe_code = "forbid"
+16:unwrap_used = "deny"
+```
+
+Comando: `cat clippy.toml`. Início: `2026-10-27T12:04:36.317643-03:00`. Exit code: **0**.
+
+stdout:
+
+```text
+# Testes podem usar unwrap/expect/panic; produção, não (§2.4 do contrato).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+```
+
+Comando: `python3 -c "import yaml,sys;yaml.safe_load(open('.github/workflows/ci.yml'))"`. Início: `2026-10-27T12:04:36.322298-03:00`. Exit code: **0**.
+
+stdout/stderr vazios.
+
+Comando: `cargo tree -i ring`. Início: `2026-10-27T12:04:36.354791-03:00`. Exit code: **0**.
+
+stdout:
+
+```text
+ring v0.17.14
+├── quinn-proto v0.11.19
+│   └── quinn v0.11.12
+│       └── clipsync-core v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-core)
+│           └── clipsync-cli v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-cli)
+├── rcgen v0.14.10
+│   └── clipsync-core v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-core) (*)
+├── rustls v0.23.46
+│   ├── clipsync-core v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-core) (*)
+│   ├── quinn v0.11.12 (*)
+│   └── quinn-proto v0.11.19 (*)
+└── rustls-webpki v0.103.16
+    └── rustls v0.23.46 (*)
+```
+
+Comando: `cargo tree -i aws-lc-sys`. Início: `2026-10-27T12:04:36.455366-03:00`. Exit code: **101**.
+
+stderr:
+
+```text
+error: package ID specification `aws-lc-sys` did not match any packages
+```
+
+Comando: `cargo tree -i aws-lc-rs`. Início: `2026-10-27T12:04:36.536871-03:00`. Exit code: **101**.
+
+stderr:
+
+```text
+error: package ID specification `aws-lc-rs` did not match any packages
+```
+
+Comando: `cargo tree -d -i x11rb`. Início: `2026-10-27T12:04:36.618969-03:00`. Exit code: **0**.
+
+stderr:
+
+```text
+warning: nothing to print.
+
+To find dependencies that require specific target platforms, try to use option `--target all` first, and then narrow your search scope accordingly.
+```
+
+#### Base da revisão e limites
+
+Hashes SHA-256 registrados antes/depois:
+
+```text
+749632b923347fd19aa3ccde1a4315adf68299679cf91491655a9761d79c20fb  Cargo.toml
+18fb92a17a34a262de222fedc3343dbe81be50f61b51a8fda1f22b139a3d2fdf  Cargo.lock
+b9c8d2d59f6f46474c0cfa0b8b77bea21d94fc73a30ad93d5bf6385c422197d2  rust-toolchain.toml
+7e1ef5bd22265ce84691bfc66ba1e4bdf1f077ca570be5d130c1ee41eb69f2ab  clippy.toml
+a17fc31e789ac923ae55a5b2e620b7f561bb62d53fa6bebc968e07353d68e69c  rustfmt.toml
+23e47e9f8427f5dba0a7989c5eb40b6d9df69c8ad918cf69dffebefc1236db66  .github/workflows/ci.yml
+a9ecc94912ead31e1ce3301812c47e3b72f9c0b98df15faa127681c4a42fef73  docs/contrato.md
+4b0f4ef8bb42bd81ad2e4a7d15ee5257b969a98b8336a1af5e05f587135d6770  crates/clipsync-proto/Cargo.toml
+fe701bf856be6c9f91bc7283d3f372bb810b8b61c3f21e384c03e15e49e2c70b  crates/clipsync-proto/src/lib.rs
+192d459fbd5a3179644574fef00565aef0e8b3dd21d159002c6a08ac4e889c7c  crates/clipsync-clipboard/src/adapter/fake.rs
+```
+
+Logs integrais e inventários: `/tmp/clipsync-argus-s0-miuoxq64/{results,before,after}.json`. Resultados pertinentes estão transcritos acima para não depender só de arquivos temporários. Não houve instalação fria adicional, início de servidor, validação gráfica ou execução do vertical slice; o pedido desta revisão foi os sete gates S0, e test/clippy/fmt já impedem aprovação. Reconferir esses gates numa base S0 estável ou após os donos concluírem as alterações que bloqueiam o workspace.
+
 
 ## Findings
-(divergências por severidade; nada é corrigido até o Maestro ou o usuário aprovar)
+### S0 · achados do checkout revisado em 2026-10-27 12:04 -03:00
+
+1. **P1 · `crates/clipsync-proto/src/lib.rs:16`** declara `pub mod testing` com feature testing, mas o arquivo `testing.rs`/`testing/mod.rs` estava ausente. A dev-dependency da própria crate em `crates/clipsync-proto/Cargo.toml:26` habilita a feature. `cargo test --workspace` e `cargo clippy --workspace --all-targets -- -D warnings` retornaram 101 com E0583; nenhum smoke foi executado. Bloqueia critérios S0.3/S0.4 e a revisão dos módulos dependentes. Posse atual: Rivet/S1; sem atribuição ao commit S0 informado, que não foi inspecionado.
+2. **P2 · `crates/clipsync-clipboard/src/adapter/fake.rs:2` e demais locais na saída de fmt** divergem de rustfmt (primeiro exemplo: ordenação do import de `mono_us`/`MIME_TEXT_UTF8`). `cargo fmt --all --check` retornou 1 e também informou o módulo testing ausente. Bloqueia S0.4 no checkout compartilhado; diferenças de clipboard pertencem à fatia S2 ainda em trabalho. Não rodei fmt que escreve arquivos.
+
+Achados são observações do estado/hash revisado; não constituem pedido para interromper builders ou corrigir código de outro dono.
+
