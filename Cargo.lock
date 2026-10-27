@@ -329,12 +329,16 @@ dependencies = [
  "anyhow",
  "arboard",
  "async-trait",
+ "clap",
  "clipsync-proto",
+ "hex",
  "humantime",
  "serde",
+ "sha2",
  "tempfile",
  "thiserror",
  "tokio",
+ "toml",
  "tracing",
  "x11rb",
 ]
@@ -382,12 +386,14 @@ name = "clipsync-proto"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "clipsync-proto",
  "hex",
  "postcard",
  "rand",
  "rustix",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
  "tokio",
 ]

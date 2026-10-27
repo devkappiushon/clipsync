@@ -1,0 +1,335 @@
+//! §9 S2 item 1: module tests over MemHub + FakeClipboard.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // helpers outside #[test] fns
+use clipsync_clipboard::{
+    ClipMode, ClipSnapshot, ClipboardConfig, FakeClipboard, FakeClipboardHandle, build_with_adapter,
+};
+use clipsync_proto::*;
+use std::time::{Duration, Instant};
+use tokio::sync::{mpsc, oneshot};
+
+const ALL: PeerPerms = PeerPerms {
+    clipboard_in: true,
+    clipboard_out: true,
+    input_in: false,
+};
+const BOTH: ModuleSet = ModuleSet {
+    clipboard: true,
+    input: false,
+};
+
+struct Clip {
+    id: PeerId,
+    fake: FakeClipboardHandle,
+    tx: mpsc::Sender<ModuleInput>,
+}
+
+async fn spawn_clip(hub: &MemHub, name: &str, mode: ClipMode) -> Clip {
+    let node = hub.add_node(name, BOTH);
+    let (fake_ad, fake) = FakeClipboard::new();
+    let cfg = ClipboardConfig {
+        mode,
+        ..ClipboardConfig::default()
+    };
+    let module = build_with_adapter(cfg, Box::new(fake_ad));
+    let (host, rx) = (node.host.clone(), node.rx);
+    tokio::spawn(module.run(host, rx));
+    let c = Clip {
+        id: node.id,
+        fake,
+        tx: node.tx,
+    };
+    // a Status round trip proves the module finished its startup read
+    let ModuleReply::Status(_) = command(&c, ModuleCommand::Status).await else {
+        panic!("status")
+    };
+    c
+}
+
+async fn until(what: &str, cond: impl Fn() -> bool) {
+    let end = Instant::now() + Duration::from_secs(3);
+    while !cond() {
+        assert!(Instant::now() < end, "timeout waiting for: {what}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+async fn settle() {
+    tokio::time::sleep(Duration::from_millis(400)).await;
+}
+
+fn offer(lamport: u64, text: &str) -> ClipOffer {
+    ClipOffer {
+        id: EventId::random(),
+        lamport,
+        mime: MIME_TEXT_UTF8.into(),
+        text: text.into(),
+        created_unix_ms: 0,
+        ttl_ms: CLIP_TTL_MS,
+    }
+}
+
+async fn send_offer(from: &MemNode, to: PeerId, o: ClipOffer) {
+    from.host
+        .send_reliable(to, ModuleMsg::Clip(ClipMsg::Offer(o)))
+        .await
+        .unwrap();
+}
+
+async fn next_ack(n: &mut MemNode) -> ClipAck {
+    loop {
+        let i = tokio::time::timeout(Duration::from_secs(3), n.rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let ModuleInput::Reliable {
+            msg: ModuleMsg::Clip(ClipMsg::Ack(a)),
+            ..
+        } = i
+        {
+            return a;
+        }
+    }
+}
+
+async fn command(c: &Clip, cmd: ModuleCommand) -> ModuleReply {
+    let (reply, rx) = oneshot::channel();
+    c.tx.send(ModuleInput::Command { cmd, reply })
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(8), rx)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_mesh_one_copy_two_offers_no_reoffer() {
+    let hub = MemHub::new();
+    let (a, b, c) = (
+        spawn_clip(&hub, "a", ClipMode::Auto).await,
+        spawn_clip(&hub, "b", ClipMode::Auto).await,
+        spawn_clip(&hub, "c", ClipMode::Auto).await,
+    );
+    hub.link(a.id, b.id, ALL, ALL);
+    hub.link(a.id, c.id, ALL, ALL);
+    hub.link(b.id, c.id, ALL, ALL);
+    a.fake.user_copy("texto sintético 1");
+    until("b and c apply", || {
+        b.fake.contents().is_some() && c.fake.contents().is_some()
+    })
+    .await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        (b.fake.writes(), c.fake.writes(), a.fake.writes()),
+        (1, 1, 0)
+    );
+    assert_eq!(
+        (hub.sent_count(a.id, b.id), hub.sent_count(a.id, c.id)),
+        (1, 1),
+        "2 offers in total"
+    );
+    assert_eq!(
+        (hub.sent_count(b.id, c.id), hub.sent_count(c.id, b.id)),
+        (0, 0),
+        "no relay"
+    );
+    assert_eq!(
+        (hub.sent_count(b.id, a.id), hub.sent_count(c.id, a.id)),
+        (1, 1),
+        "acks only"
+    );
+}
+
+#[tokio::test]
+async fn b_duplicate_event_id_applies_once_and_acks_duplicate() {
+    let hub = MemHub::new();
+    let mut a = hub.add_node("a", BOTH);
+    let b = spawn_clip(&hub, "b", ClipMode::Auto).await;
+    hub.link(a.id, b.id, ALL, ALL);
+    let o = offer(1, "dup");
+    send_offer(&a, b.id, o.clone()).await;
+    send_offer(&a, b.id, o).await;
+    assert_eq!(next_ack(&mut a).await.state, DeliveryState::Applied);
+    assert_eq!(
+        next_ack(&mut a).await.state,
+        DeliveryState::Rejected(RejectReason::Duplicate)
+    );
+    settle().await;
+    assert_eq!(b.fake.writes(), 1);
+}
+
+#[tokio::test]
+async fn c_old_lamport_after_new_is_stale_and_goes_to_inbox() {
+    let hub = MemHub::new();
+    let mut a = hub.add_node("a", BOTH);
+    let b = spawn_clip(&hub, "b", ClipMode::Auto).await;
+    hub.link(a.id, b.id, ALL, ALL);
+    send_offer(&a, b.id, offer(5, "novo")).await;
+    assert_eq!(next_ack(&mut a).await.state, DeliveryState::Applied);
+    send_offer(&a, b.id, offer(3, "antigo")).await;
+    assert_eq!(
+        next_ack(&mut a).await.state,
+        DeliveryState::Rejected(RejectReason::Stale)
+    );
+    assert_eq!(b.fake.contents().as_deref(), Some("novo"));
+    let ModuleReply::ClipInbox(items) = command(&b, ModuleCommand::ClipInbox).await else {
+        panic!("inbox")
+    };
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].state, DeliveryState::Rejected(RejectReason::Stale));
+}
+
+#[tokio::test]
+async fn d_x_y_x_makes_three_offers_x_x_makes_one() {
+    let hub = MemHub::new();
+    let (a, b) = (
+        spawn_clip(&hub, "a", ClipMode::Auto).await,
+        spawn_clip(&hub, "b", ClipMode::Auto).await,
+    );
+    hub.link(a.id, b.id, ALL, ALL);
+    for (i, t) in ["X", "Y", "X"].into_iter().enumerate() {
+        a.fake.user_copy(t);
+        until("offer delivered", || hub.sent_count(a.id, b.id) == i + 1).await;
+        until("applied", || {
+            b.fake.contents().as_deref() == Some(t) && b.fake.writes() == i + 1
+        })
+        .await;
+    }
+    assert_eq!(hub.sent_count(a.id, b.id), 3);
+    let hub = MemHub::new();
+    let (a, b) = (
+        spawn_clip(&hub, "a", ClipMode::Auto).await,
+        spawn_clip(&hub, "b", ClipMode::Auto).await,
+    );
+    hub.link(a.id, b.id, ALL, ALL);
+    a.fake.user_copy("X");
+    until("first", || hub.sent_count(a.id, b.id) == 1).await;
+    a.fake.user_copy("X");
+    settle().await;
+    assert_eq!(hub.sent_count(a.id, b.id), 1);
+}
+
+#[tokio::test]
+async fn e_own_write_echo_takeover_and_empty_do_not_offer() {
+    let hub = MemHub::new();
+    let mut a = hub.add_node("a", BOTH);
+    let b = spawn_clip(&hub, "b", ClipMode::Auto).await;
+    let c = hub.add_node("c", BOTH); // observer of B's outbound traffic
+    hub.link(a.id, b.id, ALL, ALL);
+    hub.link(b.id, c.id, ALL, ALL);
+    send_offer(&a, b.id, offer(1, "eco")).await;
+    assert_eq!(next_ack(&mut a).await.state, DeliveryState::Applied);
+    send_offer(&a, b.id, offer(2, "eco")).await; // identical re-write
+    assert_eq!(next_ack(&mut a).await.state, DeliveryState::Applied);
+    assert_eq!(b.fake.writes(), 2);
+    // e2: the compositor takes ownership; e3: clear and empty copy
+    b.fake.owner_takeover();
+    b.fake.clear();
+    b.fake.user_copy("");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(hub.sent_count(b.id, c.id), 0, "B never offered anything");
+    // an empty clipboard does not reset the known hash: copying "eco" again by hand is unchanged content
+    b.fake.user_copy("eco");
+    settle().await;
+    assert_eq!(hub.sent_count(b.id, c.id), 0);
+}
+
+#[tokio::test]
+async fn f_remote_module_disabled_is_reported() {
+    let hub = MemHub::new();
+    let a = spawn_clip(&hub, "a", ClipMode::Auto).await;
+    let b = hub.add_node(
+        "b",
+        ModuleSet {
+            clipboard: false,
+            input: true,
+        },
+    );
+    hub.link(a.id, b.id, ALL, ALL);
+    let ModuleReply::ClipSent(out) = command(
+        &a,
+        ModuleCommand::ClipSend {
+            text: "oi".into(),
+            to: None,
+        },
+    )
+    .await
+    else {
+        panic!("sent")
+    };
+    assert_eq!(out.len(), 1);
+    assert_eq!(
+        out[0].state,
+        DeliveryState::Rejected(RejectReason::ModuleDisabled)
+    );
+    // a Rejected frame from the wire resolves the pending send the same way
+    a.fake.user_copy("auto");
+    settle().await;
+    assert_eq!(
+        hub.sent_count(a.id, b.id),
+        0,
+        "no offers to a peer without the module"
+    );
+}
+
+#[tokio::test]
+async fn g_paused_neither_sends_nor_applies_and_resume_does_not_resend() {
+    let hub = MemHub::new();
+    let (a, b) = (
+        spawn_clip(&hub, "a", ClipMode::Auto).await,
+        spawn_clip(&hub, "b", ClipMode::Auto).await,
+    );
+    hub.link(a.id, b.id, ALL, ALL);
+    hub.set_paused(a.id, true);
+    settle().await;
+    a.fake.user_copy("durante a pausa");
+    settle().await;
+    assert_eq!(hub.sent_count(a.id, b.id), 0);
+    hub.set_paused(a.id, false);
+    settle().await;
+    assert_eq!(hub.sent_count(a.id, b.id), 0, "resume does not resend");
+    assert_eq!(b.fake.writes(), 0);
+    // destination paused: nothing applied
+    hub.set_paused(b.id, true);
+    settle().await;
+    a.fake.user_copy("b pausado");
+    settle().await;
+    assert_eq!(b.fake.writes(), 0);
+}
+
+#[tokio::test]
+async fn h_manual_mode_only_fills_the_inbox() {
+    let hub = MemHub::new();
+    let mut a = hub.add_node("a", BOTH);
+    let b = spawn_clip(&hub, "b", ClipMode::Manual).await;
+    hub.link(a.id, b.id, ALL, ALL);
+    send_offer(&a, b.id, offer(1, "só caixa")).await;
+    assert_eq!(next_ack(&mut a).await.state, DeliveryState::InInbox);
+    assert_eq!((b.fake.writes(), b.fake.contents()), (0, None));
+    let ModuleReply::ClipInbox(items) = command(&b, ModuleCommand::ClipInbox).await else {
+        panic!("inbox")
+    };
+    assert_eq!(
+        (items.len(), items[0].bytes, items[0].preview.as_str()),
+        (1, "só caixa".len(), "só caixa")
+    );
+}
+
+#[test]
+fn i_debug_never_shows_content() {
+    let s = ClipSnapshot {
+        mime: MIME_TEXT_UTF8.into(),
+        text: "segredo-xyz".into(),
+    };
+    assert!(!format!("{s:?}").contains("segredo-xyz"));
+    let item = InboxItem {
+        id: EventId::random(),
+        from: "a".into(),
+        received_unix_ms: 0,
+        mime: "m".into(),
+        bytes: 11,
+        preview: "segredo-xyz".into(),
+        state: DeliveryState::Applied,
+    };
+    assert!(!format!("{item:?}").contains("segredo-xyz"));
+}
