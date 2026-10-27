@@ -34,6 +34,9 @@ tokio = { version = "=1.54.1", features = [
     "signal",
 ] }
 quinn = { version = "=0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+# Mesma versão que o quinn já resolve. Sem features próprias: quinn liga
+# rustls-ring/log/bloom no grafo; aqui só expomos os tipos aos crates.
+quinn-proto = { version = "=0.11.19", default-features = false }
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "logging"] }
 rcgen = { version = "=0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
 arboard = { version = "=3.7.0", default-features = false }

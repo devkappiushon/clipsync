@@ -350,6 +350,7 @@ dependencies = [
  "clipsync-proto",
  "hex",
  "quinn",
+ "quinn-proto",
  "rand",
  "rcgen",
  "rustix",
