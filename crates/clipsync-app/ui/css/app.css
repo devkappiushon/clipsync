@@ -215,6 +215,19 @@ h1:focus {
   font-weight: 600;
 }
 
+/* "Pausar tudo" em uma linha; a tecla de atalho desce para a segunda linha, alinhada à esquerda, se não couber */
+
+.estado-lateral .btn {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  row-gap: var(--s-1);
+  text-align: left;
+}
+
+.estado-lateral .btn__rotulo {
+  white-space: nowrap;
+}
+
 /* Conteúdo */
 
 .conteudo {

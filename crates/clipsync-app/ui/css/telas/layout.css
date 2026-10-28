@@ -1,1 +1,238 @@
 /* Tela: layout. Só tokens de tokens.css; classes prefixadas com .layout. */
+
+.layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.layout__canvas {
+  min-height: 320px;
+  overflow: hidden;
+  border-radius: var(--raio) var(--raio) 0 0;
+  background: var(--bg);
+}
+
+.layout__canvas--inerte {
+  min-height: 240px;
+  opacity: 0.55;
+  background: var(--bg) radial-gradient(circle, var(--line-strong) 1px, transparent 1.5px) 0 0 / 16px 16px;
+}
+
+.layout__svg {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.layout__ponto {
+  fill: var(--line-strong);
+}
+
+.layout__fundo {
+  stroke: none;
+}
+
+.layout__legenda {
+  padding: var(--s-2) var(--s-4) var(--s-3);
+}
+
+/* Dispositivos e monitores */
+
+.layout__dispositivo {
+  cursor: grab;
+  outline: none;
+}
+
+.layout__dispositivo--arrastando {
+  cursor: grabbing;
+}
+
+.layout__dispositivo:focus-visible .layout__monitor {
+  stroke: var(--focus);
+  stroke-width: 3;
+}
+
+.layout__monitor {
+  fill: var(--panel);
+  stroke: var(--line-strong);
+  stroke-width: 2;
+  transition: stroke var(--dur) var(--ease);
+}
+
+.layout__dispositivo--eu .layout__monitor {
+  stroke: var(--accent);
+}
+
+.layout__dispositivo--fora .layout__monitor {
+  stroke-dasharray: 6 4;
+  fill: var(--bg);
+}
+
+.layout__dispositivo--selecionado .layout__monitor {
+  fill: var(--accent-soft);
+}
+
+.layout__monitor--fantasma {
+  stroke-dasharray: 4 4;
+  fill: transparent;
+}
+
+.layout__nome {
+  fill: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.layout__texto {
+  fill: var(--text);
+  pointer-events: none;
+}
+
+.layout__texto--fraco {
+  fill: var(--muted);
+}
+
+/* Bordas clicáveis, travadas e seleção */
+
+.layout__borda {
+  fill: transparent;
+  cursor: crosshair;
+  outline: none;
+  transition: fill var(--dur) var(--ease);
+}
+
+.layout__borda:hover,
+.layout__borda:focus-visible {
+  fill: var(--accent-soft);
+}
+
+.layout__borda--selecionada {
+  fill: var(--accent-soft);
+}
+
+.layout__travada {
+  stroke: var(--warn);
+  stroke-width: 4;
+  stroke-dasharray: 2 6;
+  stroke-linecap: round;
+  pointer-events: stroke;
+  cursor: not-allowed;
+}
+
+.layout__segmento {
+  stroke: var(--accent);
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+
+.layout__segmento--selecionado {
+  stroke: var(--accent);
+  stroke-width: 6;
+  pointer-events: none;
+}
+
+.layout__alca {
+  fill: var(--panel);
+  stroke: var(--accent);
+  stroke-width: 2;
+  cursor: ew-resize;
+  outline: none;
+}
+
+.layout__alca:hover,
+.layout__alca:focus-visible {
+  fill: var(--accent);
+}
+
+.layout__alca:focus-visible {
+  stroke: var(--focus);
+  stroke-width: 3;
+}
+
+/* Ligações */
+
+.layout__ligacao {
+  cursor: pointer;
+}
+
+.layout__fio {
+  stroke: var(--accent);
+  stroke-width: 2;
+  opacity: 0.7;
+}
+
+.layout__no {
+  fill: var(--accent);
+}
+
+.layout__ligacao--ativa .layout__fio {
+  opacity: 1;
+  stroke-width: 3;
+}
+
+.layout__ligacao--problema .layout__fio,
+.layout__ligacao--problema .layout__segmento {
+  stroke: var(--err);
+}
+
+.layout__ligacao--problema .layout__no {
+  fill: var(--err);
+}
+
+/* Painel, lista e rodapé */
+
+.layout__painel:empty {
+  display: none;
+}
+
+.layout__trecho {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.layout__pct {
+  width: 88px;
+}
+
+.layout__atalho {
+  width: auto;
+  min-width: 160px;
+}
+
+.layout__estatisticas {
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+}
+
+.layout__vazio .estado {
+  border: 0;
+  padding: var(--s-3) 0 0;
+}
+
+.layout__rodape {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--s-4);
+}
+
+.layout__grupo {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-2);
+}
+
+.layout__resultados {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
