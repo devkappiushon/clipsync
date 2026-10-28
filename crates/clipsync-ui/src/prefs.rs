@@ -188,12 +188,16 @@ pub(crate) fn get(ctx: &Ctx) -> Prefs {
     current(ctx, stored)
 }
 
-/// Autostart first: when the system refuses it, `ui.toml` is left as it was.
+/// Autostart first: when the system refuses it, `ui.toml` is left as it was. When `ui.toml` then
+/// fails to save, the autostart goes back to what it was, so an error never leaves the login entry
+/// changed (it is the explicit-consent item, §12.5).
 pub(crate) fn set(ctx: &Ctx, args: PrefsSetArgs) -> Result<PrefsReply, UiError> {
     let prefs = {
         let mut stored = lock(&ctx.prefs);
+        let dir = ctx.opts.autostart_dir.as_deref();
+        let was_on = autostart::is_enabled(dir);
         if let Some(on) = args.autostart {
-            autostart::set(on, ctx.opts.autostart_dir.as_deref())
+            autostart::set(on, dir)
                 .map_err(|why| UiError::new(code::IO, why).with_field("autostart"))?;
         }
         let mut next = *stored;
@@ -204,7 +208,9 @@ pub(crate) fn set(ctx: &Ctx, args: PrefsSetArgs) -> Result<PrefsReply, UiError> 
             next.appearance = a;
         }
         if next != *stored {
-            save(&ctx.profile.dir, &next)?;
+            if let Err(error) = save(&ctx.profile.dir, &next) {
+                return Err(undo_autostart(args.autostart, was_on, dir, error));
+            }
             *stored = next;
         }
         current(ctx, *stored)
@@ -213,6 +219,26 @@ pub(crate) fn set(ctx: &Ctx, args: PrefsSetArgs) -> Result<PrefsReply, UiError> 
         prefs: prefs.clone(),
     }));
     Ok(PrefsReply { prefs })
+}
+
+/// Puts the autostart back after a failed save. `asked` is what `prefs_set` sent. If even that
+/// fails the error says so, and the entry stays as the failed attempt left it.
+fn undo_autostart(
+    asked: Option<bool>,
+    was_on: bool,
+    dir: Option<&Path>,
+    error: UiError,
+) -> UiError {
+    if asked.is_none() {
+        return error;
+    }
+    match autostart::set(was_on, dir) {
+        Ok(()) => error,
+        Err(why) => {
+            tracing::warn!("autostart could not be put back after a failed save");
+            error.with_details(serde_json::json!({ "autostart_restored": false, "reason": why }))
+        }
+    }
 }
 
 #[cfg(test)]
