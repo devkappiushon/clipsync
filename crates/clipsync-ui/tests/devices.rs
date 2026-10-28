@@ -297,3 +297,115 @@ async fn revoke_and_set_perms_in_parallel_lose_nothing() {
     }
     ui.shutdown().await;
 }
+
+/// An agent "outside the app" that answers `Status` and refuses every `ReloadPeers`.
+struct RefusesReload {
+    status: clipsync_proto::AgentStatus,
+    reloads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+// What `#[async_trait]` writes; the crate has no async-trait dependency of its own.
+impl control::ControlHandler for RefusesReload {
+    fn handle<'life0, 'async_trait>(
+        &'life0 self,
+        req: ControlRequest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ControlResponse> + Send + 'async_trait>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            match req {
+                ControlRequest::Status => ControlResponse::Status(self.status.clone()),
+                ControlRequest::ReloadPeers => {
+                    self.reloads
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    ControlResponse::Error {
+                        message: "não foi possível ler peers.toml: teste".into(),
+                    }
+                }
+                _ => ControlResponse::Error {
+                    message: "não suportado".into(),
+                },
+            }
+        })
+    }
+}
+
+/// S6-09: the write happened but the agent did not apply it. One retry, then `config` saying
+/// it is saved and not applied, with `details.saved`; peers.toml has the change.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reload_that_fails_after_the_write_says_the_change_was_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let (pa, ida) = init_profile(dir.path(), "a", CLIPBOARD_ONLY);
+    let (pb, idb) = init_profile(dir.path(), "b", CLIPBOARD_ONLY);
+    pair_files(&pa, &pb, NONE, NONE);
+    let reloads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let handler = RefusesReload {
+        status: clipsync_proto::AgentStatus {
+            device_name: "a".into(),
+            id: ida,
+            listen: pa.load_config().unwrap().listen,
+            paused: false,
+            peers: vec![],
+            modules: vec![],
+            recent_blocks: vec![],
+            recent_removals: vec![],
+        },
+        reloads: reloads.clone(),
+    };
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let socket = pa.socket_path();
+    let server = tokio::spawn(async move {
+        control::serve(&socket, std::sync::Arc::new(handler), async {
+            let _ = stopped.await;
+        })
+        .await
+    });
+    wait_until("the fake agent answers", || async {
+        control::request(&pa, ControlRequest::Status).await.is_ok()
+    })
+    .await;
+
+    let ui = start(dir.path(), "a").await;
+    assert_eq!(app_state(&ui).await["agent"], json!("external"));
+    let e = err(
+        &ui,
+        json!({ "cmd": "device_set_perms", "args": {
+            "peer_id": idb.to_hex(),
+            "perms": { "clipboard_in": true, "clipboard_out": false, "input_in": false } } }),
+    )
+    .await;
+    assert_eq!(e.code, "config", "{e:?}");
+    assert!(
+        e.message
+            .starts_with("salvo, mas o agente ainda não aplicou"),
+        "{}",
+        e.message
+    );
+    assert_eq!(e.details, Some(json!({ "saved": true })));
+    assert!(
+        pa.load_peers()
+            .unwrap()
+            .get(&idb)
+            .unwrap()
+            .perms
+            .clipboard_in
+    );
+    assert_eq!(
+        reloads.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "one retry"
+    );
+
+    let e = err(
+        &ui,
+        json!({ "cmd": "device_revoke", "args": { "peer_id": idb.to_hex(), "typed_name": "b" } }),
+    )
+    .await;
+    assert_eq!(e.details, Some(json!({ "saved": true })));
+    assert!(pa.load_peers().unwrap().get(&idb).is_none());
+    ui.shutdown().await;
+    let _ = stop.send(());
+    server.await.unwrap().unwrap();
+}

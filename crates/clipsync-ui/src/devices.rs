@@ -142,6 +142,18 @@ pub(crate) async fn reload_peers(ctx: &Ctx) -> Result<(), UiError> {
     }
 }
 
+/// After a write the agent must apply the file. One retry; when it still fails, the file stays
+/// saved and the error says so (S6-09), the way `layout.rs` does it.
+async fn reload_after_save(ctx: &Ctx) -> Result<(), UiError> {
+    if reload_peers(ctx).await.is_ok() {
+        return Ok(());
+    }
+    reload_peers(ctx).await.map_err(|e| {
+        UiError::new(code::CONFIG, msg::saved_not_applied(&e.message))
+            .with_details(serde_json::json!({ "saved": true }))
+    })
+}
+
 pub(crate) async fn list(ctx: &Ctx) -> Result<DevicesList, UiError> {
     ctx.require_profile()?;
     let peers = ctx.profile.load_peers()?;
@@ -206,7 +218,7 @@ pub(crate) async fn set_perms(ctx: &Ctx, args: DeviceSetPermsArgs) -> Result<Dev
             Ok::<_, UiError>(e.clone())
         })?
     };
-    reload_peers(ctx).await?;
+    reload_after_save(ctx).await?;
     let live = status::agent_status(ctx).await;
     let l = live
         .as_ref()
@@ -233,7 +245,7 @@ pub(crate) async fn revoke(ctx: &Ctx, args: DeviceRevokeArgs) -> Result<Removed,
             Ok(())
         })?;
     }
-    reload_peers(ctx).await?;
+    reload_after_save(ctx).await?;
     Ok(Removed { removed: true })
 }
 

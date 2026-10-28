@@ -27,6 +27,10 @@ pub const MODULE_OFF: &str = "o módulo dessa permissão está desligado neste d
 pub const FULL_TRUST: &str = "permitir que esse dispositivo controle o teclado e o mouse daqui é confiança total: confirme para continuar";
 pub const NAME_MISMATCH: &str = "o nome digitado não confere com o nome do dispositivo";
 
+pub fn saved_not_applied(why: &str) -> String {
+    format!("salvo, mas o agente ainda não aplicou: reinicie o agente ({why})")
+}
+
 // 3 · pareamento
 pub const NO_ATTEMPT: &str = "nenhum pareamento em andamento com esse número";
 pub const WRONG_STEP: &str = "essa ação não vale nesta etapa do pareamento";
