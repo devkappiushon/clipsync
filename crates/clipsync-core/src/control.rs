@@ -132,18 +132,6 @@ async fn connect(socket: &Path) -> Result<NamedPipeClient, CoreError> {
     }
 }
 
-/// True when an agent answers on the control channel of `socket`'s profile.
-#[cfg(unix)]
-pub(crate) async fn agent_alive(socket: &Path) -> bool {
-    socket.exists() && UnixStream::connect(socket).await.is_ok()
-}
-
-/// True when an agent answers on the control channel of `socket`'s profile.
-#[cfg(windows)]
-pub(crate) async fn agent_alive(socket: &Path) -> bool {
-    matches!(probe(socket), Ok(PipeProbe::Live))
-}
-
 #[cfg(any(windows, test))]
 const PIPE_PREFIX: &str = r"\\.\pipe\clipsync-";
 
@@ -196,14 +184,43 @@ fn probe(file: &Path) -> Result<PipeProbe, CoreError> {
     }
 }
 
-/// Serves the control socket until `shutdown` completes, then removes the socket file.
-/// A live agent already on `socket` gives `AgentAlreadyRunning`; a stale file is replaced.
+/// The control channel, bound and published but not answering yet: `agent::run` binds it BEFORE
+/// the mesh starts, so whoever sees a peer come up (a module, a test, the UI) already finds the
+/// agent on `socket`. Requests that arrive before `serve` wait for it. Dropped without serving,
+/// it unpublishes `socket` like `serve` does on exit.
+pub struct ControlListener {
+    #[cfg(unix)]
+    listener: UnixListener,
+    #[cfg(windows)]
+    name: String,
+    #[cfg(windows)]
+    server: tokio::net::windows::named_pipe::NamedPipeServer,
+    published: Published,
+}
+
+/// Removes the published file on drop. Windows: only while it still holds our pipe name (a file
+/// another agent rewrote is left alone).
+struct Published {
+    socket: std::path::PathBuf,
+    #[cfg(windows)]
+    name: String,
+}
+
+impl Drop for Published {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        let _ = std::fs::remove_file(&self.socket);
+        #[cfg(windows)]
+        if matches!(read_pipe_name(&self.socket), Ok(Some(n)) if n == self.name) {
+            let _ = std::fs::remove_file(&self.socket);
+        }
+    }
+}
+
+/// Binds the control socket. A live agent already on `socket` gives `AgentAlreadyRunning`; a stale
+/// file is replaced.
 #[cfg(unix)]
-pub async fn serve(
-    socket: &Path,
-    handler: Arc<dyn ControlHandler>,
-    shutdown: impl Future<Output = ()> + Send,
-) -> Result<(), CoreError> {
+pub async fn bind(socket: &Path) -> Result<ControlListener, CoreError> {
     // Only "nobody answers" proves the socket is stale. Any other connect error (a full backlog, say)
     // means a live agent may be there, and its socket must not be deleted.
     if socket.exists() {
@@ -214,33 +231,20 @@ pub async fn serve(
         }
     }
     let listener = bind_private(socket)?;
-    let mut tasks = tokio::task::JoinSet::new();
-    tokio::pin!(shutdown);
-    loop {
-        tokio::select! {
-            () = &mut shutdown => break,
-            accepted = listener.accept() => match accepted {
-                Ok((stream, _)) => { tasks.spawn(serve_one(stream, handler.clone())); }
-                Err(e) => tracing::warn!(error = %e, "control socket accept failed"),
-            },
-            Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
-        }
-    }
-    tasks.abort_all();
-    let _ = std::fs::remove_file(socket);
-    Ok(())
+    Ok(ControlListener {
+        listener,
+        published: Published {
+            socket: socket.to_path_buf(),
+        },
+    })
 }
 
-/// Serves a fresh named pipe until `shutdown` completes. `socket` is `DIR\agent.pipe`: a live agent named
-/// there gives `AgentAlreadyRunning`, a stale name is replaced, and the file is removed on exit.
+/// Creates a fresh named pipe and publishes its name in `socket` (`DIR\agent.pipe`): a live agent
+/// named there gives `AgentAlreadyRunning`, a stale name is replaced.
 /// Access: remote clients are refused; the default pipe DACL lets no other user create an instance or
 /// connect for writing; `agent.pipe` is readable only through the profile's ACL.
 #[cfg(windows)]
-pub async fn serve(
-    socket: &Path,
-    handler: Arc<dyn ControlHandler>,
-    shutdown: impl Future<Output = ()> + Send,
-) -> Result<(), CoreError> {
+pub async fn bind(socket: &Path) -> Result<ControlListener, CoreError> {
     if let PipeProbe::Live = probe(socket)? {
         return Err(CoreError::AgentAlreadyRunning);
     }
@@ -251,12 +255,71 @@ pub async fn serve(
         .create(&name)?;
     // Published only once the pipe exists: whoever reads the file finds a server.
     crate::profile::write_private(socket, name.as_bytes())?;
-    let served = accept_pipes(&name, server, handler, shutdown).await;
-    // Only our own name is removed; a file another agent rewrote is left alone.
-    if matches!(read_pipe_name(socket), Ok(Some(n)) if n == name) {
-        let _ = std::fs::remove_file(socket);
+    Ok(ControlListener {
+        name: name.clone(),
+        server,
+        published: Published {
+            socket: socket.to_path_buf(),
+            name,
+        },
+    })
+}
+
+impl ControlListener {
+    /// Answers requests until `shutdown` completes, then unpublishes the socket.
+    #[cfg(unix)]
+    pub async fn serve(
+        self,
+        handler: Arc<dyn ControlHandler>,
+        shutdown: impl Future<Output = ()> + Send,
+    ) -> Result<(), CoreError> {
+        let ControlListener {
+            listener,
+            published,
+        } = self;
+        let mut tasks = tokio::task::JoinSet::new();
+        tokio::pin!(shutdown);
+        loop {
+            tokio::select! {
+                () = &mut shutdown => break,
+                accepted = listener.accept() => match accepted {
+                    Ok((stream, _)) => { tasks.spawn(serve_one(stream, handler.clone())); }
+                    Err(e) => tracing::warn!(error = %e, "control socket accept failed"),
+                },
+                Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
+            }
+        }
+        tasks.abort_all();
+        drop(published);
+        Ok(())
     }
-    served
+
+    /// Answers requests until `shutdown` completes, then unpublishes the pipe name.
+    #[cfg(windows)]
+    pub async fn serve(
+        self,
+        handler: Arc<dyn ControlHandler>,
+        shutdown: impl Future<Output = ()> + Send,
+    ) -> Result<(), CoreError> {
+        let ControlListener {
+            name,
+            server,
+            published,
+        } = self;
+        let served = accept_pipes(&name, server, handler, shutdown).await;
+        drop(published);
+        served
+    }
+}
+
+/// `bind` then `ControlListener::serve`: serves until `shutdown` completes, then removes the
+/// socket file (Windows: the `agent.pipe` file, while it still names our pipe).
+pub async fn serve(
+    socket: &Path,
+    handler: Arc<dyn ControlHandler>,
+    shutdown: impl Future<Output = ()> + Send,
+) -> Result<(), CoreError> {
+    bind(socket).await?.serve(handler, shutdown).await
 }
 
 #[cfg(windows)]

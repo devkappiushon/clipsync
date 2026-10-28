@@ -39,11 +39,10 @@ pub async fn run(
     let identity = p.load_identity()?;
     let peers = p.load_peers()?;
     let state = p.load_state()?;
-    // Fail before binding the QUIC port if another agent owns this profile.
-    let socket = p.socket_path();
-    if control::agent_alive(&socket).await {
-        return Err(CoreError::AgentAlreadyRunning);
-    }
+    // The control channel is bound before the QUIC port, so a second agent on this profile fails
+    // here, and a peer coming up (PeerUp to the modules) always finds `status` answering: requests
+    // that arrive before `serve` below wait for it.
+    let control = control::bind(&p.socket_path()).await?;
 
     let mut channels = HashMap::new();
     let mut adapters = HashMap::new();
@@ -97,7 +96,7 @@ pub async fn run(
         adapters,
         seen_blocks: Mutex::new(HashMap::new()),
     });
-    let served = control::serve(&socket, handler, shutdown).await;
+    let served = control.serve(handler, shutdown).await;
 
     for tx in channels.values() {
         let _ = tx.send(ModuleInput::Shutdown).await;

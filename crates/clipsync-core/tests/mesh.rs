@@ -142,6 +142,62 @@ impl Module for Probe {
     }
 }
 
+/// Asks the agent for its status the moment it starts, like a module reacting to its first
+/// PeerUp: the control channel must already answer by then.
+struct AskOnStart {
+    profile: Profile,
+    answered: Option<oneshot::Sender<bool>>,
+}
+
+#[async_trait::async_trait]
+impl Module for AskOnStart {
+    fn kind(&self) -> ModuleKind {
+        ModuleKind::Clipboard
+    }
+
+    fn adapter_name(&self) -> String {
+        "probe".into()
+    }
+
+    async fn run(
+        mut self: Box<Self>,
+        _host: Arc<dyn ModuleHost>,
+        mut rx: mpsc::Receiver<ModuleInput>,
+    ) -> Result<(), ModuleError> {
+        // First thing, no await: the control channel is already published.
+        let published = self.profile.socket_path().exists();
+        // Asked from a task: the agent's Status asks this module for its own status in turn.
+        let (profile, answered) = (self.profile.clone(), self.answered.take());
+        tokio::spawn(async move {
+            let ok = published
+                && matches!(
+                    control::request(&profile, ControlRequest::Status).await,
+                    Ok(ControlResponse::Status(_))
+                );
+            if let Some(tx) = answered {
+                let _ = tx.send(ok);
+            }
+        });
+        while let Some(input) = rx.recv().await {
+            match input {
+                ModuleInput::Shutdown => break,
+                ModuleInput::Command { reply, .. } => {
+                    let _ = reply.send(ModuleReply::Status(ModuleStatus {
+                        kind: ModuleKind::Clipboard,
+                        enabled: true,
+                        adapter: Some("probe".into()),
+                        authorized_peers: vec![],
+                        last_event: None,
+                        last_block: None,
+                    }));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+}
+
 struct Running {
     task: JoinHandle<Result<(), CoreError>>,
     stop: oneshot::Sender<()>,
@@ -280,6 +336,37 @@ async fn mesh_connects_after_hello_both_ways() {
     );
     stop(ra).await;
     stop(rb).await;
+}
+
+/// The control channel is bound before the mesh and the modules start (CI Windows, 4edfe23: a
+/// `Status` right after PeerUp found no agent, because the pipe was published only after the
+/// mesh had connected). On Linux the old order passed too (binding a Unix socket is immediate);
+/// on Windows publishing the pipe name takes a file write with fsync, and the mesh won the race.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_control_channel_answers_before_the_modules_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = node(&dir, "a");
+    let (tx, answered) = oneshot::channel();
+    let modules: Vec<Box<dyn Module>> = vec![Box::new(AskOnStart {
+        profile: a.profile.clone(),
+        answered: Some(tx),
+    })];
+    let (stop, stop_rx) = oneshot::channel::<()>();
+    let p = a.profile.clone();
+    let task = tokio::spawn(async move {
+        agent::run(&p, modules, async move {
+            let _ = stop_rx.await;
+        })
+        .await
+    });
+    let ok = tokio::time::timeout(WAIT, answered).await.unwrap().unwrap();
+    assert!(
+        ok,
+        "a module that just started must find the agent answering status"
+    );
+    let _ = stop.send(());
+    task.await.unwrap().unwrap();
+    assert!(!a.profile.socket_path().exists(), "unpublished on exit");
 }
 
 #[tokio::test(flavor = "multi_thread")]
