@@ -22,16 +22,25 @@ const INBOX_SWEEP: Duration = Duration::from_secs(5);
 // ---- adapter thread (rule 11) ----
 
 enum Cmd {
-    /// Atomic "apply": refuses when the clipboard no longer holds what we last knew (rule 7).
     Write {
         text: String,
-        expected: Option<Hash>,
+        guard: WriteGuard,
         reply: oneshot::Sender<WriteResult>,
     },
     Read {
         reply: oneshot::Sender<Option<ClipSnapshot>>,
     },
     Stop,
+}
+
+/// What may still stop a write between the decision and the adapter call.
+enum WriteGuard {
+    /// Automatic apply of an offer: refused if the agent paused meanwhile or the clipboard no
+    /// longer holds what we last knew (rule 7). Both are judged right before the write.
+    Offer { expected: Option<Hash> },
+    /// Explicit user action (`ClipApply`, contrato §12.6): writes even under pause and over
+    /// newer content.
+    Explicit,
 }
 
 enum WriteResult {
@@ -71,32 +80,36 @@ fn handle_cmd(ad: &mut dyn ClipboardAdapter, host: &dyn ModuleHost, cmd: Cmd) ->
         Cmd::Read { reply } => {
             let _ = reply.send(read_with_retries(ad).ok().flatten());
         }
-        Cmd::Write {
-            text,
-            expected,
-            reply,
-        } => {
-            let res = match read_with_retries(ad) {
-                Err(e) => WriteResult::Failed(e),
-                // The read can be slow. Pause and the known content are judged AFTER it, right
-                // before the write, because both may have changed since the offer was authorized.
-                Ok(cur) => {
-                    if host.paused() {
-                        WriteResult::Paused
-                    } else if cur.is_some_and(|c| Some(hash_text(&c.text)) != expected) {
-                        WriteResult::Conflict
-                    } else {
-                        match ad.write_text(&text) {
-                            Ok(()) => WriteResult::Written,
-                            Err(e) => WriteResult::Failed(e),
+        Cmd::Write { text, guard, reply } => {
+            let res = match guard {
+                WriteGuard::Explicit => write_now(ad, &text),
+                WriteGuard::Offer { expected } => match read_with_retries(ad) {
+                    Err(e) => WriteResult::Failed(e),
+                    // The read can be slow. Pause and the known content are judged AFTER it,
+                    // right before the write, because both may have changed since the offer
+                    // was authorized.
+                    Ok(cur) => {
+                        if host.paused() {
+                            WriteResult::Paused
+                        } else if cur.is_some_and(|c| Some(hash_text(&c.text)) != expected) {
+                            WriteResult::Conflict
+                        } else {
+                            write_now(ad, &text)
                         }
                     }
-                }
+                },
             };
             let _ = reply.send(res);
         }
     }
     true
+}
+
+fn write_now(ad: &mut dyn ClipboardAdapter, text: &str) -> WriteResult {
+    match ad.write_text(text) {
+        Ok(()) => WriteResult::Written,
+        Err(e) => WriteResult::Failed(e),
+    }
 }
 
 fn adapter_thread(
@@ -209,6 +222,20 @@ struct InboxEntry {
     item: InboxItem,
     received: Instant,
     ttl: Duration,
+    /// Full text, kept only while the item can still be applied by hand (`in_inbox` or stale):
+    /// until the ttl, a discard or the apply (contrato §12.6). Memory only: no Debug, no log.
+    text: Option<String>,
+    /// Origin of the offer, so a manual apply advances the local ordering like an automatic one.
+    lamport: u64,
+    from: PeerId,
+}
+
+/// Only items in the inbox or stale ones can be applied by hand, so only they keep the text.
+fn keeps_text(state: DeliveryState) -> bool {
+    matches!(
+        state,
+        DeliveryState::InInbox | DeliveryState::Rejected(RejectReason::Stale)
+    )
 }
 
 // ---- the module ----
@@ -367,7 +394,7 @@ impl State {
                     }
                 }
             }
-            ModuleInput::Command { cmd, reply } => self.on_command(cmd, reply),
+            ModuleInput::Command { cmd, reply } => self.on_command(cmd, reply).await,
             _ => {}
         }
     }
@@ -487,24 +514,27 @@ impl State {
             _ => msg::REFUSED,
         };
         lock(&self.status).last_event = Some(msg::received_from(&name, label));
-        self.push_inbox(&o, name, state);
+        self.push_inbox(from, &o, name, state);
         self.ack(from, id, state).await;
+    }
+
+    /// One write through the adapter thread; a dead thread counts as a failed write.
+    async fn write(&self, text: String, guard: WriteGuard) -> WriteResult {
+        let (reply, rx) = oneshot::channel();
+        let sent = self.cmd_tx.send(Cmd::Write { text, guard, reply });
+        match (sent, rx.await) {
+            (Ok(()), Ok(r)) => r,
+            _ => WriteResult::Failed(ClipError::Other("adapter thread gone".into())),
+        }
     }
 
     async fn apply(&mut self, from: PeerId, o: &ClipOffer) -> DeliveryState {
         let h = hash_text(&o.text);
         self.ledger.register(h, Instant::now()); // BEFORE the write (rule 2)
-        let (reply, rx) = oneshot::channel();
-        let sent = self.cmd_tx.send(Cmd::Write {
-            text: o.text.clone(),
+        let guard = WriteGuard::Offer {
             expected: self.current,
-            reply,
-        });
-        let res = match (sent, rx.await) {
-            (Ok(()), Ok(r)) => r,
-            _ => WriteResult::Failed(ClipError::Other("adapter thread gone".into())),
         };
-        match res {
+        match self.write(o.text.clone(), guard).await {
             WriteResult::Written => {
                 self.current = Some(h);
                 self.last = Some((o.lamport, from));
@@ -530,12 +560,15 @@ impl State {
         }
     }
 
-    fn push_inbox(&mut self, o: &ClipOffer, from: String, state: DeliveryState) {
+    fn push_inbox(&mut self, from: PeerId, o: &ClipOffer, name: String, state: DeliveryState) {
         let expired = state == DeliveryState::Expired;
         self.inbox.push_front(InboxEntry {
+            text: keeps_text(state).then(|| o.text.clone()),
+            lamport: o.lamport,
+            from,
             item: InboxItem {
                 id: o.id,
-                from,
+                from: name,
                 received_unix_ms: now_unix_ms(),
                 mime: o.mime.clone(),
                 bytes: o.text.len(),
@@ -560,6 +593,7 @@ impl State {
             if e.item.state != DeliveryState::Expired && now.duration_since(e.received) > e.ttl {
                 e.item.state = DeliveryState::Expired;
                 e.item.preview = String::new();
+                e.text = None;
             }
         }
     }
@@ -576,7 +610,7 @@ impl State {
 
     // ---- control commands ----
 
-    fn on_command(&mut self, cmd: ModuleCommand, reply: oneshot::Sender<ModuleReply>) {
+    async fn on_command(&mut self, cmd: ModuleCommand, reply: oneshot::Sender<ModuleReply>) {
         match cmd {
             ModuleCommand::Status => {
                 let peers = self.host.peers();
@@ -601,12 +635,14 @@ impl State {
                 ));
             }
             ModuleCommand::ClipSend { text, to } => self.clip_send(text, to, reply),
-            // S6 (proto v2): ClipApply, ClipDiscard and ClipSendCurrent are Flux's (L5); until
-            // then they answer like any command this module does not serve.
+            ModuleCommand::ClipApply { id } => {
+                let _ = reply.send(self.apply_item(id).await);
+            }
+            ModuleCommand::ClipDiscard { id } => {
+                let _ = reply.send(self.discard_item(id));
+            }
+            ModuleCommand::ClipSendCurrent { to } => self.send_current(to, reply).await,
             ModuleCommand::InputLoopback { .. }
-            | ModuleCommand::ClipApply { .. }
-            | ModuleCommand::ClipDiscard { .. }
-            | ModuleCommand::ClipSendCurrent { .. }
             | ModuleCommand::InputState
             | ModuleCommand::InputReload
             | ModuleCommand::InputLock { .. }
@@ -661,5 +697,65 @@ impl State {
             }
             let _ = reply.send(ModuleReply::ClipSent(outcomes));
         });
+    }
+
+    // ---- inbox actions and explicit send (contrato §12.6, L5) ----
+
+    /// `ClipApply`: writes an inbox item to the clipboard by hand. Works under pause, never offers
+    /// (the echo is dropped by the ledger) and drops the stored text once applied. A failed write
+    /// leaves the item as it was, so the user can try again.
+    async fn apply_item(&mut self, id: EventId) -> ModuleReply {
+        self.expire_inbox();
+        let Some(index) = self.inbox.iter().position(|e| e.item.id == id) else {
+            return ModuleReply::Error(msg::NO_ITEM.into());
+        };
+        let Some(text) = self.inbox[index].text.clone() else {
+            return ModuleReply::Error(msg::WRONG_STATE.into());
+        };
+        let h = hash_text(&text);
+        self.ledger.register(h, Instant::now()); // BEFORE the write (rule 2)
+        let state = match self.write(text, WriteGuard::Explicit).await {
+            WriteResult::Written => DeliveryState::Applied,
+            WriteResult::Failed(ClipError::Busy) => DeliveryState::Rejected(RejectReason::Locked),
+            WriteResult::Failed(_) | WriteResult::Paused | WriteResult::Conflict => {
+                DeliveryState::Rejected(RejectReason::ApplyFailed)
+            }
+        };
+        if state != DeliveryState::Applied {
+            self.ledger.forget(&h);
+            return ModuleReply::ClipApplied(state);
+        }
+        self.current = Some(h);
+        let entry = &mut self.inbox[index];
+        entry.item.state = DeliveryState::Applied;
+        entry.text = None;
+        let origin = (entry.lamport, entry.from);
+        let name = entry.item.from.clone();
+        if self.last.is_none_or(|l| origin > l) {
+            self.last = Some(origin);
+        }
+        lock(&self.status).last_event = Some(msg::applied_from_inbox(&name));
+        ModuleReply::ClipApplied(state)
+    }
+
+    /// `ClipDiscard`: the item leaves the inbox and its text leaves memory.
+    fn discard_item(&mut self, id: EventId) -> ModuleReply {
+        match self.inbox.iter().position(|e| e.item.id == id) {
+            Some(index) => {
+                self.inbox.remove(index);
+                ModuleReply::Done
+            }
+            None => ModuleReply::Error(msg::NO_ITEM.into()),
+        }
+    }
+
+    /// `ClipSendCurrent`: what the clipboard holds now, down the `ClipSend` path (rule 12).
+    async fn send_current(&mut self, to: Option<PeerId>, reply: oneshot::Sender<ModuleReply>) {
+        match self.read_now().await {
+            Some(snap) => self.clip_send(snap.text, to, reply),
+            None => {
+                let _ = reply.send(ModuleReply::Error(msg::EMPTY_CLIPBOARD.into()));
+            }
+        }
     }
 }

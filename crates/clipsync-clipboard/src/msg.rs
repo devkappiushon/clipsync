@@ -40,6 +40,13 @@ pub const NO_TARGET: &str = "nenhum par autorizado a receber (ou par desconhecid
 pub const EMPTY_TEXT: &str = "texto vazio não é enviado";
 pub const TOO_LARGE: &str = "texto acima do limite configurado";
 pub const UNSUPPORTED_COMMAND: &str = "comando não suportado pelo módulo clipboard";
+// Caixa de recebidos e envio explícito (contrato §12.6): o crate da UI mapeia por estas consts.
+pub const NO_ITEM: &str = "item não encontrado na caixa de recebidos";
+pub const WRONG_STATE: &str = "só um item na caixa ou antigo, ainda com texto, pode ser aplicado";
+pub const EMPTY_CLIPBOARD: &str = "o clipboard está vazio";
+pub fn applied_from_inbox(peer: &str) -> String {
+    format!("aplicado da caixa: texto de {peer}")
+}
 pub const APPLIED: &str = "aplicado";
 pub const IN_INBOX: &str = "na caixa de recebidos";
 pub const STALE: &str = "antigo, só na caixa";
