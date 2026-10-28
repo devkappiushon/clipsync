@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.20, Keel, 2026-10-28)
+# Contrato · ClipSync MVP de hoje (v1.21, Keel, 2026-10-28)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -25,6 +25,7 @@ v1.17 (decisões do Maestro, 2026-10-28, rodada de correções da S6): §12.7 ca
 v1.18 (Maestro, a partir do 7c770ef do Rivet): §12.6, item 6 da revogação. Com B offline, quem é recusado registra: um par conhecido que rejeita o certificado deste dispositivo deixa uma entrada em `recent_blocks` com o motivo "recusou a conexão: este dispositivo não está mais pareado lá"; quem recusa não registra. §12.7 item 3 ganha a lista final das capabilities (c68d980).
 v1.19 (decisões do Maestro, 2026-10-28, achados S6-18 e S6-19 do Sentinel em 0f0b312): §12.5, o `layout_offer_answer` recebe `from_peer_id` e `rev` da oferta exibida, e oferta trocada dá `stale_offer` (490335f do Vector). §12.6, teto de 1.000.000 em `x` e `y` no `Layout::validate` (e4e6308).
 v1.20 (decisão do Maestro, 2026-10-28): até o usuário escolher a licença, o texto exibido é "Todos os direitos reservados" no `Prefs.license` (§12.5) e no README, no lugar de "a definir" (§11 regra 9).
+v1.21 (Keel, a partir do d43a13b do Rivet, S6-21 do Sentinel): §12.6, item 6 da revogação. O registro "recusou a conexão" só vale quando o par provou a identidade; um texto de fechamento sem essa prova não registra nada.
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -1130,7 +1131,7 @@ pub struct BlockRecord { pub at_unix_ms: u64, pub peer: Option<PeerId>, pub peer
 3. Só par com `remote_version >= 2` recebe `Bye{Revoked}` (decisão 7 da §12.10: o 0.1.0 não decodifica a variante nova e fecharia com `Protocol`). Com par v1, A só fecha.
 4. B, ao receber `Bye{Revoked}` de par autenticado (malha, ALPN_MESH, pino conferido), remove A do próprio `peers.toml` pelo caminho do revoke local: grava e recarrega como no `ReloadPeers`. Quem faz é o core, então vale com agente in_app e external. Fora da malha (ALPN_PAIR), nada é removido.
 5. A `Ui` de B emite `peer_disconnected` e uma `notification {kind: "device_removed", title: "Dispositivo removido", body: "<nome> removeu este dispositivo"}`, com o nome limpo de A como estava no `peers.toml`. A notificação segue a preferência `notifications.block` e sai uma vez só: a remoção não gera também `peer_blocked`. Como o crate fica sabendo da remoção é escolha do Rivet.
-6. B offline na hora do revoke (v1.18, 7c770ef): quando B volta, A recusa o certificado de B, e B não remove A. Registra quem foi recusado: quando um par conhecido rejeita o certificado deste dispositivo (CONNECTION_CLOSE com um dos textos fixos de certificado inválido do rustls, `tls::HANDSHAKE_REJECT_REASONS`, no connect ou já no Hello), entra em `recent_blocks` uma entrada com o par, `module: null` e o motivo "recusou a conexão: este dispositivo não está mais pareado lá" (`msg::PEER_REFUSED_US` do core). É uma por par até uma conexão com ele voltar. Quem recusa não registra nada, porque uma chave desconhecida pode ser qualquer um na rede. Falha de rede não conta.
+6. B offline na hora do revoke (v1.18, 7c770ef): quando B volta, A recusa o certificado de B, e B não remove A. Registra quem foi recusado: quando um par conhecido rejeita o certificado deste dispositivo (CONNECTION_CLOSE com um dos textos fixos de certificado inválido do rustls, `tls::HANDSHAKE_REJECT_REASONS`, no connect ou já no Hello), entra em `recent_blocks` uma entrada com o par, `module: null` e o motivo "recusou a conexão: este dispositivo não está mais pareado lá" (`msg::PEER_REFUSED_US` do core). É uma por par até uma conexão com ele voltar. Quem recusa não registra nada, porque uma chave desconhecida pode ser qualquer um na rede. Falha de rede não conta. Só conta par que provou a identidade (v1.21, d43a13b, S6-21): o texto do CONNECTION_CLOSE não é autenticado antes do fim do handshake, então, no erro de conexão, o servidor precisa ter passado no pino e assinado o handshake com a chave dele (`PinVerifier::proven`). Depois do handshake, no Hello, a identidade já está provada. Fechamento com o texto certo e sem essa prova não registra nada.
 
 **Clipboard (Flux):**
 1. Itens `in_inbox` e `rejected` (Stale) guardam o texto completo até o ttl, o descarte ou a aplicação. Debug redigido.
@@ -1262,3 +1263,4 @@ Comandos da raiz, com `export PATH=$HOME/.cargo/bin:$PATH`.
 15. Maestro (v1.18): com B offline na hora do revoke, quem é recusado registra o par em `recent_blocks`, uma vez por par, e quem recusa não registra (§12.6 revogação, item 6).
 16. Maestro (v1.19): a resposta à oferta de layout diz qual oferta o usuário viu (`from_peer_id` e `rev`), e oferta trocada dá `stale_offer` (código do Vector). O teto de posição de 1.000.000 fica no `Layout::validate`, para valer em todo caminho.
 17. Maestro (v1.20): até o usuário escolher a licença, o app e o README exibem "Todos os direitos reservados" (Flux no `prefs.rs`, Pixel no mock, Maestro no README).
+18. Keel (v1.21): o registro do lado recusado (decisão 15) exige par com identidade provada, pino e assinatura do handshake (S6-21, d43a13b).
