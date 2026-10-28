@@ -253,6 +253,13 @@ impl CaptureAdapter for PortalCapture {
         ic.release(session, opts).await.map_err(map_err)
     }
 
+    /// The InputCapture portal activates a capture only when the pointer crosses a barrier: there
+    /// is no call that starts one. A switch by button would hand the other machine the control
+    /// while the keyboard and the mouse stayed here, so it is refused (`can_begin`).
+    fn can_begin(&self) -> bool {
+        false
+    }
+
     async fn stop(&mut self) -> Result<(), InputError> {
         self.stop = None;
         if let Some(t) = self.thread.take() {

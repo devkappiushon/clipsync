@@ -113,6 +113,19 @@ pub trait CaptureAdapter: Send + 'static {
     ) -> Result<mpsc::Receiver<CaptureEvent>, InputError>;
     /// Gives the cursor back to the local desktop.
     async fn release(&mut self) -> Result<(), InputError>;
+    /// Starts capturing now, as if the cursor had crossed `barrier` at `pos` (0 to 1 along the
+    /// edge): a switch by shortcut or by the "Ir para dispositivo" button, not by a crossing.
+    /// From here on the local keyboard and mouse belong to the destination until `release`.
+    /// Default: nothing to do.
+    async fn begin(&mut self, barrier: usize, pos: f32) -> Result<(), InputError> {
+        let _ = (barrier, pos);
+        Ok(())
+    }
+    /// False when the platform only starts a capture by a crossing (the Wayland portal): a switch
+    /// would leave the keyboard and the mouse on this machine, so it is refused.
+    fn can_begin(&self) -> bool {
+        true
+    }
     /// Swaps the barriers without recreating the session (on the portal, no new dialog).
     async fn set_barriers(&mut self, barriers: &[BarrierSpec]) -> Result<(), InputError> {
         let _ = barriers;

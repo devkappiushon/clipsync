@@ -21,6 +21,8 @@ struct CapState {
     resume_refused: AtomicBool,
     resume_tx: Mutex<Option<mpsc::Sender<CaptureEvent>>>,
     released_at: Mutex<Vec<(usize, f32)>>,
+    begins: Mutex<Vec<(usize, f32)>>,
+    cannot_begin: AtomicBool,
 }
 
 pub struct FakeCapture {
@@ -123,6 +125,14 @@ impl FakeCaptureHandle {
     pub fn released_at(&self) -> Vec<(usize, f32)> {
         lock(&self.cap.released_at).clone()
     }
+    /// `(barrier, pos)` of every `begin` call: a switch by shortcut or button, never a crossing.
+    pub fn begins(&self) -> Vec<(usize, f32)> {
+        lock(&self.cap.begins).clone()
+    }
+    /// The adapter cannot start a capture without a crossing (the Wayland portal).
+    pub fn set_can_begin(&self, on: bool) {
+        self.cap.cannot_begin.store(!on, Ordering::SeqCst);
+    }
     /// True while the module listens for the resume combination (`watch_resume`).
     pub fn resume_watching(&self) -> bool {
         lock(&self.cap.resume_tx).is_some()
@@ -184,6 +194,13 @@ impl CaptureAdapter for FakeCapture {
         lock(&self.cap.released_at).push((barrier, pos));
         self.released.fetch_add(1, Ordering::SeqCst);
         Ok(())
+    }
+    async fn begin(&mut self, barrier: usize, pos: f32) -> Result<(), InputError> {
+        lock(&self.cap.begins).push((barrier, pos));
+        Ok(())
+    }
+    fn can_begin(&self) -> bool {
+        !self.cap.cannot_begin.load(Ordering::SeqCst)
     }
     fn holds_hooks(&self) -> bool {
         self.cap.hooks.load(Ordering::SeqCst)

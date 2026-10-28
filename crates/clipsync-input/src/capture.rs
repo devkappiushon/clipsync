@@ -678,8 +678,24 @@ impl Loop {
         if !self.host.peers().iter().any(|p| p.id == to && p.connected) {
             return Err(msg::PEER_OFFLINE.to_owned());
         }
+        if !self.cap.can_begin() {
+            return Err(msg::SWITCH_UNAVAILABLE.to_owned());
+        }
         let middle = (t.remote.0 + t.remote.1) / 2.0;
-        self.open(&t, middle).await
+        self.open(&t, middle).await?;
+        // The session is open: now the local keyboard and mouse have to follow it (a crossing
+        // does this by itself; a switch does not cross anything).
+        let barrier = self
+            .targets
+            .iter()
+            .position(|x| same_barrier(x, &t))
+            .unwrap_or(0);
+        let here = (t.local.0 + t.local.1) / 2.0;
+        if let Err(e) = self.cap.begin(barrier, here).await {
+            self.end_session(true).await;
+            return Err(msg::adapter_failed(&e.to_string()));
+        }
+        Ok(())
     }
 }
 

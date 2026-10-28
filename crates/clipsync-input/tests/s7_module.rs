@@ -776,3 +776,48 @@ async fn an_adapter_without_hooks_keeps_its_session_while_paused() {
     assert!(!a.cap.resume_watching());
     let _ = b;
 }
+
+// ---- a switch by shortcut or button starts the capture; a crossing does not need it
+
+#[tokio::test]
+async fn a_switch_begins_the_capture_once_and_a_crossing_never_does() {
+    let (_hub, _d, a, b) = pair(0.0, 1.0).await;
+    // a crossing: the adapter already captures, so `begin` is not called
+    a.cap.activate(0, 0.75);
+    until("session on b", || b.emu.started() && b.emu.emitted() > 0).await;
+    assert!(a.cap.begins().is_empty());
+    a.cap.deactivate();
+    until("cursor back", || a.cap.released() >= 1).await;
+    // the "Ir para dispositivo" button
+    let ModuleReply::Done = command(&a.tx, ModuleCommand::InputSwitch { to: b.id }).await else {
+        panic!("switch")
+    };
+    let begins = a.cap.begins();
+    assert_eq!(begins.len(), 1, "{begins:?}");
+    assert_eq!(begins[0].0, 0);
+    assert!((begins[0].1 - 0.75).abs() < 1e-5, "{begins:?}");
+    // the shortcut: back home, then to b again
+    a.cap.hotkey(Hotkey::GoTo(1));
+    until("home", || a.cap.released() >= 2).await;
+    a.cap.hotkey(Hotkey::GoTo(2));
+    until("second begin", || a.cap.begins().len() == 2).await;
+}
+
+#[tokio::test]
+async fn a_switch_is_refused_where_the_platform_cannot_begin_a_capture() {
+    let (_hub, _d, a, mut b) = src_with_raw_dest(0.0, 1.0, 0).await;
+    a.cap.set_can_begin(false);
+    let ModuleReply::Error(text) = command(&a.tx, ModuleCommand::InputSwitch { to: b.id }).await
+    else {
+        panic!("a switch without `begin` must fail")
+    };
+    assert!(text.contains("indisponível nesta versão"), "{text}");
+    assert!(a.cap.begins().is_empty());
+    // nothing was opened at the destination
+    assert!(
+        wait_input(&mut b, 300, |m| matches!(m, InputMsg::EnterSpan { .. })
+            .then_some(()))
+        .await
+        .is_none()
+    );
+}

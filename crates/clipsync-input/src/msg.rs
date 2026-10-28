@@ -135,6 +135,8 @@ pub fn refused_by(peer: &str, reason: RejectReason) -> String {
         _ => format!("{peer} não deixou emular teclado e mouse"),
     }
 }
+pub const SWITCH_UNAVAILABLE: &str =
+    "ir para o dispositivo sem cruzar a borda: indisponível nesta versão neste sistema";
 pub const SOURCE_SCREEN_LOCKED: &str = "a tela desta máquina está bloqueada: o controle de outras máquinas fica parado até desbloquear";
 pub const RESUME_HOTKEY_REFUSED: &str =
     "o sistema não deixou registrar Win+Alt+P: retome pela bandeja ou pelo botão Pausar tudo";
