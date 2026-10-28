@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.15, Keel, 2026-10-27)
+# Contrato · ClipSync MVP de hoje (v1.16, Keel, 2026-10-28)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -20,6 +20,7 @@ v1.13 (fechamento da S5):
 
 v1.14 (fatia S6 · interface visual, decisões do Maestro + Keel): nova §12. Crates novos `clipsync-ui` (lógica das telas, sem Tauri) e `clipsync-app` (casca Tauri 2, só compila no CI). Proto: `PROTOCOL_VERSION = 2` com mínimo 1, variantes novas no fim (`Zones`, `LayoutOffer`, `EnterAt`, comandos `Clip*` e `Input*`). Com ligação no `layout.toml`, o agente de input captura sozinho (§8 regra 1). Permissão inicial do pareamento: tudo desligado.
 v1.15 (registro do Flux, casca em 367def0): §12.7 item 3. O Tauri 2.12.5 exige permissão explícita para comando declarado no `app_manifest`, então a capability do app leva `core:default`, `notification:default` e `allow-clipsync`.
+v1.16 (decisões do Maestro, 2026-10-28): §12.6 e §12.9 item 2 (2). Revogação avisada ao par: `CloseCode::Revoked = 8` no fim do enum; no `device_revoke`, A manda `Bye{Revoked}` ao par v2 antes de fechar, e B tira A do próprio `peers.toml` (dono: Rivet). A §12.5 ganha a notificação `device_removed`. Assinatura comum do `self_test` (L7) no clipboard e no input: `self_test() -> SelfTestOutcome`.
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -1054,7 +1055,7 @@ Prefs       = {shortcuts: {open: "Win+Alt+C", pause_all: "Win+Alt+P", send_once:
 6. `agent_state {agent, error}`
 7. `pair_code_ready {attempt_id, code: "123 456", peer: {name, short, modules: {clipboard, input}}}`
 8. `pair_result {attempt_id, outcome: "paired"|"declined_local"|"declined_peer"|"failed"|"expired"|"cancelled", device: Device|null, reason}`
-9. `notification {kind: "item_received"|"device_connected"|"block", title, body}` (já filtrada pelas preferências, sem conteúdo)
+9. `notification {kind: "item_received"|"device_connected"|"block"|"device_removed", title, body}` (já filtrada pelas preferências, sem conteúdo; `device_removed` na v1.16, §12.6)
 10. `prefs_changed {prefs}`
 11. `resync {}` (o receptor atrasou; o front busca tudo de novo)
 12. `layout_changed {rev, reason: "saved"|"zones"|"offer"}`
@@ -1067,6 +1068,8 @@ Fonte: 1 a 6, 12 (zones e offer) e 13 vêm da consulta de 1 s (`Status`; `ClipIn
 ```rust
 // limits.rs
 pub const PROTOCOL_VERSION: u16 = 2;   // MIN_PROTOCOL_VERSION segue 1 (decisão 8 da §12.10)
+// wire.rs (v1.16)
+pub enum CloseCode { /* atuais, 0 a 7 */ Revoked = 8 }   // ALL com 9 itens; reason() = b"revoked"; from_code(8) = Some(Revoked)
 pub const MAX_ZONES: usize = 16;
 pub const MAX_LAYOUT_LINKS: usize = 64;
 // module.rs
@@ -1113,12 +1116,20 @@ pub struct BlockRecord { pub at_unix_ms: u64, pub peer: Option<PeerId>, pub peer
 4. Prazos no `ask_module`: `ClipSendCurrent` = `CLIP_SEND_TIMEOUT`; `InputOffer` 5 s; os demais, `STATUS_TIMEOUT`.
 5. Gravar `[clipboard] mode` no `config.toml`: função no core (nome à escolha do Rivet), tmp + rename, mantendo o resto.
 
+**Revogação avisada ao par (v1.16, decisão do Maestro; dono: Rivet, em proto, core e clipsync-ui):**
+1. `CloseCode::Revoked = 8`, no fim do enum.
+2. No `device_revoke` com o nome certo, A grava o `peers.toml` como hoje e, antes de fechar a conexão, manda `Bye{code: Revoked}` no fluxo de controle, com a mesma folga do `Bye` de shutdown. O fechamento segue o de hoje (`CloseCode::UnknownPeer` no `ReloadPeers`). O gatilho dentro do core é escolha do Rivet.
+3. Só par com `remote_version >= 2` recebe `Bye{Revoked}` (decisão 7 da §12.10: o 0.1.0 não decodifica a variante nova e fecharia com `Protocol`). Com par v1, A só fecha.
+4. B, ao receber `Bye{Revoked}` de par autenticado (malha, ALPN_MESH, pino conferido), remove A do próprio `peers.toml` pelo caminho do revoke local: grava e recarrega como no `ReloadPeers`. Quem faz é o core, então vale com agente in_app e external. Fora da malha (ALPN_PAIR), nada é removido.
+5. A `Ui` de B emite `peer_disconnected` e uma `notification {kind: "device_removed", title: "Dispositivo removido", body: "<nome> removeu este dispositivo"}`, com o nome limpo de A como estava no `peers.toml`. A notificação segue a preferência `notifications.block` e sai uma vez só: a remoção não gera também `peer_blocked`. Como o crate fica sabendo da remoção é escolha do Rivet.
+6. B offline na hora do revoke fica como hoje: quando B volta, a conexão cai como par desconhecido (`UnknownPeer` em `recent_blocks`), e B não remove A.
+
 **Clipboard (Flux):**
 1. Itens `in_inbox` e `rejected` (Stale) guardam o texto completo até o ttl, o descarte ou a aplicação. Debug redigido.
 2. `ClipApply` escreve pelo adaptador com o livro de escritas, marca `Applied` e atualiza o hash atual. Não gera oferta e vale pausado.
 3. `ClipDiscard` remove o item e o texto.
 4. `ClipSendCurrent` lê o clipboard atual e segue o caminho do `ClipSend` (§7 regra 12). Vazio dá `ModuleReply::Error` com a const pública de `msg.rs`; o crate da UI mapeia pelas consts públicas.
-5. `self_test()` estruturado (L7): escreve texto sintético, confere a leitura e devolve o conteúdo anterior quando havia texto.
+5. `self_test()` estruturado (L7), com a assinatura comum abaixo: escreve texto sintético, confere a leitura e devolve o conteúdo anterior quando havia texto.
 
 **Input (Vector):**
 1. `clipsync_input::layout`: tipos, leitura e escrita do `layout.toml`, usados pelo `clipsync-ui/src/layout.rs`. Formato:
@@ -1143,7 +1154,14 @@ pub struct BlockRecord { pub at_unix_ms: u64, pub peer: Option<PeerId>, pub peer
 4. Barreira ganha `peer_monitor`, `peer_from` e `peer_to` opcionais. Posição no destino: `peer_from + t * (peer_to - peer_from)`, com `t = (pos - from) / (to - from)`.
 5. `Zones` vai no PeerUp de par com versão 2 e a cada mudança de monitor. `EnterAt` quando a ligação nomeia o monitor de destino. `InputLock`, `InputSwitch`, `InputOffer`, `InputOfferClear` e `InputState` como na §12.5. `InputReload` relê o `layout.toml` e reinstala as barreiras.
 6. Listar os monitores locais não pode abrir diálogo do portal só para isso.
-7. `self_test` do input (L7).
+7. `self_test` do input (L7), com a assinatura comum abaixo.
+
+**self_test (L7, v1.16): assinatura comum.** O clipboard (Flux) e o input (Vector) exportam, cada um na raiz do próprio crate, a mesma forma:
+```rust
+pub async fn self_test() -> SelfTestOutcome;
+pub enum SelfTestOutcome { Validated(String), Experimental(String), Unavailable(String) }
+```
+A `String` é o detalhe em português, sem conteúdo do clipboard. O Rivet mapeia no `onboarding_self_test` (§12.5): `Validated` dá `validated`, `Experimental` dá `experimental` e `Unavailable` dá `unavailable`, com a `String` em `detail`. `not_tested` só sai quando o Rivet não chamou o `self_test` daquele módulo.
 
 ### 12.7 Casca Tauri e frontend
 **Flux:**
@@ -1183,7 +1201,7 @@ Comandos da raiz, com `export PATH=$HOME/.cargo/bin:$PATH`.
    - (g) `recent_blocks` guarda no máximo 20, o mais novo primeiro.
 2. **Rivet, clipsync-ui (critério a):** `cargo test -p clipsync-ui` verde, sem sessão gráfica, com agentes reais em perfis temporários, 127.0.0.1 e adaptadores fake. Um teste por fluxo:
    - (1) onboarding: `onboarding_start` e `onboarding_create` dão a mesma impressão digital; perfil existente sem `recreate` dá `needs_confirmation`;
-   - (2) dispositivos: `input_in` sem confirmação dá `needs_confirmation`; com confirmação grava o `peers.toml` e o par vê a permissão nova; `device_revoke` com nome errado dá `name_mismatch`, e com o nome certo o par some do status dos dois lados;
+   - (2) dispositivos: `input_in` sem confirmação dá `needs_confirmation`; com confirmação grava o `peers.toml` e o par vê a permissão nova; `device_revoke` com nome errado dá `name_mismatch`, e com o nome certo o par some do status dos dois lados; revogação avisada (v1.16): com B de pé, em até 3 s A sai do `peers.toml` de B, e a `Ui` de B emite `peer_disconnected` e uma única `notification`, de kind `device_removed` e corpo "<nome de A> removeu este dispositivo"; com B parado na hora do revoke, o `peers.toml` de B continua com A depois que B volta;
    - (3) pareamento: duas `Ui` recebem `pair_code_ready` com o MESMO código; `pair_finish` antes de `pair_code_matches` dá `wrong_step`; aceite dos dois lados grava exatamente os grants (padrão tudo false) e emite `pair_result` paired; `pair_cancel` emite cancelled e não grava;
    - (4) layout: `layout_get` traz o próprio dispositivo (o resto é do Vector);
    - (5) clipboard: B em manual recebe o item (`clip_received` sem preview); `clipboard_get` sem preview; `clipboard_preview` devolve o texto; `clipboard_copy_item` aplica no fake; `clipboard_discard_item` remove;
@@ -1230,3 +1248,4 @@ Comandos da raiz, com `export PATH=$HOME/.cargo/bin:$PATH`.
 10. Keel: notificação do sistema por `tauri-plugin-notification`. Sem diálogo de arquivo (o pacote de suporte vai para Downloads) e sem plugin de autostart (feito à mão pelo Flux).
 11. Lacunas: L1 `init_with` (Rivet); L2 `InputState` (Vector); L5 `ClipApply`, `ClipDiscard` e `ClipSendCurrent` (Flux); L6 `recent_blocks` (Rivet); L7 `self_test` (Flux no clipboard, Vector no input).
 12. Maestro: `plan` + `build` duplicados no `clipsync-ui` por agora. É dívida registrada.
+13. Maestro (v1.16): a revogação avisa o par v2 com `Bye{Revoked}`, e o par se remove sozinho (§12.6, dono Rivet). O `self_test` tem uma assinatura só no clipboard e no input, e o Rivet faz o mapeamento.
