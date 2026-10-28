@@ -65,6 +65,18 @@ async fn both_sides_see_the_same_code_and_save_exactly_their_grants() {
         (e.code.as_str(), e.field.as_deref()),
         ("bad_addr", Some("addr"))
     );
+    // S6-11: the window is at most PAIR_WINDOW_SECS (120 s).
+    for w in [0, 121, 600] {
+        let e = err(
+            &ui_a,
+            json!({ "cmd": "pair_host_start", "args": { "port": 0, "window_secs": w } }),
+        )
+        .await;
+        assert_eq!(
+            (e.code.as_str(), e.field.as_deref()),
+            ("bad_request", Some("window_secs"))
+        );
+    }
 
     let host = ok(
         &ui_a,

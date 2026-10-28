@@ -28,8 +28,6 @@ use crate::{Ctx, UiError, clean, lock, msg, unix_ms};
 
 /// The user's side of "Sem decisão em 120 s = recusa".
 const DECISION_TIMEOUT: Duration = Duration::from_secs(PAIR_WINDOW_SECS);
-/// Upper bound of `window_secs`.
-const MAX_WINDOW_SECS: u64 = 600;
 /// What `pairing::host` reports when nobody joined in time.
 const WINDOW_EXPIRED: &str = "window expired";
 
@@ -241,8 +239,9 @@ pub(crate) async fn host_start(
     ctx: &Arc<Ctx>,
     args: PairHostStartArgs,
 ) -> Result<HostStarted, UiError> {
-    if !(1..=MAX_WINDOW_SECS).contains(&args.window_secs) {
-        return Err(UiError::bad_request("window_secs: 1..600").with_field("window_secs"));
+    // §12.5 (v1.17, S6-11): the same 2 minutes the user has to decide.
+    if !(1..=PAIR_WINDOW_SECS).contains(&args.window_secs) {
+        return Err(UiError::bad_request("window_secs: 1..120").with_field("window_secs"));
     }
     ctx.require_profile()?;
     let window = Duration::from_secs(args.window_secs);
