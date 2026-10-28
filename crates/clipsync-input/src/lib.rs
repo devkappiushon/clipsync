@@ -10,6 +10,7 @@ mod module;
 pub mod msg;
 pub mod probe;
 mod self_test;
+mod span;
 
 use clipsync_proto::{Module, ModuleError};
 use std::path::Path;

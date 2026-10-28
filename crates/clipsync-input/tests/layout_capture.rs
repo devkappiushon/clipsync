@@ -339,7 +339,7 @@ async fn lock_ignores_an_activation_and_switch_opens_a_session_on_the_linked_pee
     let reply = command(&a.tx, ModuleCommand::InputSwitch { to: b.id }).await;
     assert!(matches!(reply, ModuleReply::Done), "{reply:?}");
     match next_input(&mut b, 2000).await.expect("enter at") {
-        InputMsg::EnterAt {
+        InputMsg::EnterSpan {
             edge, monitor, pos, ..
         } => {
             assert_eq!(edge, Edge::Left);
@@ -564,7 +564,7 @@ async fn input_reload_installs_the_barriers_of_the_new_file_and_keeps_the_old_on
     a.cap.activate(0, 0.75);
     assert!(matches!(
         next_input(&mut b, 2000).await,
-        Some(InputMsg::EnterAt { .. })
+        Some(InputMsg::EnterSpan { .. })
     ));
 }
 
@@ -667,10 +667,10 @@ async fn loopback_uses_the_link_barrier_and_maps_the_position() {
     a.cap.activate(0, 0.75);
     let mut entered = false;
     while let Some(m) = next_input(&mut b, 2000).await {
-        if matches!(m, InputMsg::EnterAt { .. }) {
+        if matches!(m, InputMsg::EnterSpan { .. }) {
             entered = true;
             break;
         }
     }
-    assert!(entered, "no EnterAt after the loopback");
+    assert!(entered, "no EnterSpan after the loopback");
 }

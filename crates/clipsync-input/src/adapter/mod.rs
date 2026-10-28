@@ -7,6 +7,7 @@ pub(crate) mod outputs;
 mod portal;
 mod tokens;
 pub mod winmath;
+mod zones;
 
 use async_trait::async_trait;
 use clipsync_proto::{Edge, InputEvent};
@@ -18,6 +19,7 @@ pub use fake::{FakeCapture, FakeCaptureHandle, FakeEmulate, FakeEmulateHandle};
 #[cfg(target_os = "linux")]
 pub use portal::{PortalCapture, PortalEmulate};
 pub use tokens::TokenStore;
+pub(crate) use zones::same_zones;
 
 #[derive(Debug, Clone)]
 pub struct Zone {
@@ -115,6 +117,19 @@ pub trait CaptureAdapter: Send + 'static {
         let _ = barriers;
         Err(InputError::Other("unsupported".into()))
     }
+    /// True when the adapter holds system-wide input hooks while it runs (Windows). Pausing the
+    /// module then stops it, so no hook stays installed while paused (§13.2 rule 2g).
+    fn holds_hooks(&self) -> bool {
+        false
+    }
+    /// While paused and stopped: listen only for the resume combination (Win+Alt+P), through a
+    /// system hotkey that reads no keys. `Ok(None)`: no such thing here (resume from the tray or
+    /// the app button); `Err`: the system refused the combination (same fallback).
+    async fn watch_resume(&mut self) -> Result<Option<mpsc::Receiver<CaptureEvent>>, InputError> {
+        Ok(None)
+    }
+    /// Drops what `watch_resume` registered.
+    async fn unwatch_resume(&mut self) {}
     /// Gives the cursor back at barrier `barrier`, at `pos` (0 to 1), one pixel inside the zone.
     async fn release_at(&mut self, barrier: usize, pos: f32) -> Result<(), InputError> {
         let _ = (barrier, pos);

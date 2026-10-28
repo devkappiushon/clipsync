@@ -1,4 +1,5 @@
 //! User-facing text (pt-BR). Code, identifiers and comments stay in English.
+use clipsync_proto::RejectReason;
 pub const LOOPBACK_BUSY: &str = "já existe um teste de entrada em andamento";
 pub const UNSUPPORTED_COMMAND: &str = "comando não suportado pelo módulo de entrada";
 pub const PEER_UNKNOWN: &str = "par desconhecido ou sem permissão";
@@ -122,6 +123,24 @@ pub fn layout_segment_in_dead_corner(link: &str) -> String {
 }
 pub const PEER_TOO_OLD: &str =
     "o outro dispositivo roda uma versão antiga do ClipSync e não entende o layout de telas";
+/// What the source shows when the destination refuses a session (§13.6 item 9).
+pub fn refused_by(peer: &str, reason: RejectReason) -> String {
+    match reason {
+        RejectReason::Locked => {
+            format!("{peer} está com a tela bloqueada: o controle voltou para esta máquina")
+        }
+        RejectReason::Paused => {
+            format!("{peer} está pausado: o controle voltou para esta máquina")
+        }
+        _ => format!("{peer} não deixou emular teclado e mouse"),
+    }
+}
+pub const SOURCE_SCREEN_LOCKED: &str = "a tela desta máquina está bloqueada: o controle de outras máquinas fica parado até desbloquear";
+pub const RESUME_HOTKEY_REFUSED: &str =
+    "o sistema não deixou registrar Win+Alt+P: retome pela bandeja ou pelo botão Pausar tudo";
+pub fn no_device_for_hotkey(n: u8) -> String {
+    format!("nenhum dispositivo do layout tem o atalho {n}")
+}
 pub const LOCKED_ON: &str = "travado nesta tela";
 pub const LOCKED_OFF: &str = "trava desligada: as bordas voltam a trocar de dispositivo";
 pub const NO_LAYOUT_PATH: &str = "este agente não lê layout.toml (adaptadores de teste)";

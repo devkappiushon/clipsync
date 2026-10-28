@@ -3,7 +3,7 @@ use super::{BarrierSpec, CaptureAdapter, CaptureEvent, EmulateAdapter, Hotkey, I
 use async_trait::async_trait;
 use clipsync_proto::{InputEvent, mono_us};
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 use tokio::task::JoinHandle;
@@ -12,7 +12,19 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// What the handle shares with the capture besides zones and barriers.
+#[derive(Default)]
+struct CapState {
+    hooks: AtomicBool,
+    started: AtomicBool,
+    starts: AtomicUsize,
+    resume_refused: AtomicBool,
+    resume_tx: Mutex<Option<mpsc::Sender<CaptureEvent>>>,
+    released_at: Mutex<Vec<(usize, f32)>>,
+}
+
 pub struct FakeCapture {
+    cap: Arc<CapState>,
     zones: Arc<Mutex<Vec<Zone>>>,
     barriers: Arc<Mutex<Vec<BarrierSpec>>>,
     src: Arc<AsyncMutex<mpsc::UnboundedReceiver<CaptureEvent>>>,
@@ -22,6 +34,7 @@ pub struct FakeCapture {
 
 #[derive(Clone)]
 pub struct FakeCaptureHandle {
+    cap: Arc<CapState>,
     tx: mpsc::UnboundedSender<CaptureEvent>,
     zones: Arc<Mutex<Vec<Zone>>>,
     barriers: Arc<Mutex<Vec<BarrierSpec>>>,
@@ -33,9 +46,11 @@ impl FakeCapture {
         let (tx, rx) = mpsc::unbounded_channel();
         let released = Arc::new(AtomicUsize::new(0));
         let zones = Arc::new(Mutex::new(zones));
+        let cap = Arc::new(CapState::default());
         let barriers = Arc::new(Mutex::new(Vec::new()));
         (
             Self {
+                cap: cap.clone(),
                 zones: zones.clone(),
                 barriers: barriers.clone(),
                 src: Arc::new(AsyncMutex::new(rx)),
@@ -43,6 +58,7 @@ impl FakeCapture {
                 released: released.clone(),
             },
             FakeCaptureHandle {
+                cap,
                 tx,
                 zones,
                 barriers,
@@ -90,6 +106,37 @@ impl FakeCaptureHandle {
     pub fn barriers(&self) -> Vec<BarrierSpec> {
         lock(&self.barriers).clone()
     }
+    /// Makes the adapter behave like one that holds system-wide hooks (`holds_hooks`). Call it
+    /// before the module runs.
+    pub fn set_hooks(&self, on: bool) {
+        self.cap.hooks.store(on, Ordering::SeqCst);
+    }
+    /// True between `start` and `stop`: a hook-holding adapter is installed exactly then.
+    pub fn started(&self) -> bool {
+        self.cap.started.load(Ordering::SeqCst)
+    }
+    /// How many times the module called `start`.
+    pub fn starts(&self) -> usize {
+        self.cap.starts.load(Ordering::SeqCst)
+    }
+    /// `(barrier, pos)` of every `release_at` call, in order.
+    pub fn released_at(&self) -> Vec<(usize, f32)> {
+        lock(&self.cap.released_at).clone()
+    }
+    /// True while the module listens for the resume combination (`watch_resume`).
+    pub fn resume_watching(&self) -> bool {
+        lock(&self.cap.resume_tx).is_some()
+    }
+    /// The system refuses to register the resume combination (the tray stays as the way back).
+    pub fn refuse_resume_hotkey(&self, on: bool) {
+        self.cap.resume_refused.store(on, Ordering::SeqCst);
+    }
+    /// The user pressed the resume combination: reaches the module only while it is watching.
+    pub fn resume_hotkey(&self) {
+        if let Some(tx) = lock(&self.cap.resume_tx).as_ref() {
+            let _ = tx.try_send(CaptureEvent::Hotkey(Hotkey::TogglePause));
+        }
+    }
 }
 
 #[async_trait]
@@ -108,6 +155,8 @@ impl CaptureAdapter for FakeCapture {
         barriers: &[BarrierSpec],
     ) -> Result<mpsc::Receiver<CaptureEvent>, InputError> {
         *lock(&self.barriers) = barriers.to_vec();
+        self.cap.started.store(true, Ordering::SeqCst);
+        self.cap.starts.fetch_add(1, Ordering::SeqCst);
         if let Some(h) = self.forwarder.take() {
             h.abort();
         }
@@ -131,7 +180,27 @@ impl CaptureAdapter for FakeCapture {
         *lock(&self.barriers) = barriers.to_vec();
         Ok(())
     }
+    async fn release_at(&mut self, barrier: usize, pos: f32) -> Result<(), InputError> {
+        lock(&self.cap.released_at).push((barrier, pos));
+        self.released.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+    fn holds_hooks(&self) -> bool {
+        self.cap.hooks.load(Ordering::SeqCst)
+    }
+    async fn watch_resume(&mut self) -> Result<Option<mpsc::Receiver<CaptureEvent>>, InputError> {
+        if self.cap.resume_refused.load(Ordering::SeqCst) {
+            return Err(InputError::Other("hotkey refused".into()));
+        }
+        let (tx, rx) = mpsc::channel(8);
+        *lock(&self.cap.resume_tx) = Some(tx);
+        Ok(Some(rx))
+    }
+    async fn unwatch_resume(&mut self) {
+        *lock(&self.cap.resume_tx) = None;
+    }
     async fn stop(&mut self) -> Result<(), InputError> {
+        self.cap.started.store(false, Ordering::SeqCst);
         if let Some(h) = self.forwarder.take() {
             h.abort();
         }

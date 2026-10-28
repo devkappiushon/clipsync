@@ -2,13 +2,14 @@
 //! driven by `ModuleCommand::InputLoopback` (contract §8 rules 1 to 3) and the continuous
 //! capture derived from `layout.toml` (§12.6 item 2, in `capture.rs`).
 use crate::adapter::{
-    BarrierSpec, CaptureAdapter, CaptureEvent, EmulateAdapter, InputError, Zone, ZoneRef,
-    entry_events,
+    BarrierSpec, CaptureAdapter, CaptureEvent, EmulateAdapter, Hotkey, InputError, Zone, ZoneRef,
+    entry_events, same_zones,
 };
-use crate::capture::{self, Ctl, Engine, Note, Target, new_session};
+use crate::capture::{self, Ctl, Engine, Note, SPAN_PROTOCOL, Target, ZONES_POLL, new_session};
 use crate::config::{InputConfig, map_pos, zone_ref};
-use crate::layout::{Endpoint, Layout, trim_dead_corner};
+use crate::layout::{DerivedBarrier, Endpoint, Layout, trim_dead_corner};
 use crate::msg;
+use crate::span::SpanTrack;
 use async_trait::async_trait;
 use clipsync_proto::{
     Edge, InputDatagram, InputMsg, InputState, LayoutOffer, LoopbackStats, MAX_EVENTS_PER_DATAGRAM,
@@ -112,6 +113,8 @@ struct Incoming {
     last_seq: Option<u32>,
     latencies: Vec<u64>,
     samples: u64,
+    /// Entered with `EnterSpan`: this side decides the way back.
+    span: Option<SpanTrack>,
 }
 
 impl Incoming {
@@ -125,6 +128,7 @@ impl Incoming {
             last_seq: None,
             latencies: Vec::new(),
             samples: 0,
+            span: None,
         }
     }
 
@@ -240,6 +244,16 @@ struct State {
     pending_offer: Option<PendingOffer>,
     active_peer: Option<PeerId>,
     offer_job: Option<OfferJob>,
+    /// The capture adapter holds system-wide hooks: pausing stops it (§13.2 rule 2g).
+    cap_hooks: bool,
+    /// While paused and stopped: the resume combination, when the system allowed it.
+    resume_rx: Option<mpsc::Receiver<CaptureEvent>>,
+    /// Stopped because no link leads to a peer this machine trusts; it starts again when one does.
+    suspended: bool,
+    /// The links were there but their monitors were not: start when the zones show up.
+    retry_on_zones: bool,
+    /// The targets the engine runs with, to retarget only on a real change.
+    targets_key: String,
 }
 
 #[async_trait]
@@ -286,10 +300,18 @@ impl Module for InputModule {
             pending_offer: None,
             active_peer: None,
             offer_job: None,
+            cap_hooks: false,
+            resume_rx: None,
+            suspended: false,
+            retry_on_zones: false,
+            targets_key: String::new(),
         };
+        st.cap_hooks = st.cap.as_ref().is_some_and(|c| c.holds_hooks());
         st.local_zones = st.cap.as_ref().map(|c| c.known_zones()).unwrap_or_default();
         st.start_continuous().await;
         let mut task: Option<JoinHandle<LoopDone>> = None;
+        let mut tick = tokio::time::interval(ZONES_POLL);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
                 input = rx.recv() => {
@@ -319,9 +341,19 @@ impl Module for InputModule {
                 }
                 n = note_rx.recv() => {
                     if let Some(n) = n {
-                        st.on_note(n);
+                        st.on_note(n).await;
                     }
                 }
+                ev = async { match st.resume_rx.as_mut() { Some(r) => r.recv().await, None => None } },
+                    if st.resume_rx.is_some() =>
+                {
+                    match ev {
+                        Some(CaptureEvent::Hotkey(h)) => st.on_hotkey(h).await,
+                        Some(_) => {}
+                        None => st.resume_rx = None,
+                    }
+                }
+                _ = tick.tick() => st.on_tick().await,
                 () = async { if let Some(j) = &st.offer_job { tokio::time::sleep_until(j.until).await } },
                     if st.offer_job.is_some() =>
                 {
@@ -356,19 +388,106 @@ impl State {
         self.start_continuous().await;
     }
 
-    fn on_note(&mut self, n: Note) {
+    async fn on_note(&mut self, n: Note) {
         match n {
             Note::Event(t) => self.last_event = Some(t),
             Note::Block(t) => self.last_block = Some(t),
             Note::Active(p) => self.active_peer = p,
-            Note::Zones(z) => {
-                if !z.is_empty() && z.len() != self.local_zones.len() {
-                    self.local_zones = z;
-                    self.announce_zones_to_all();
-                } else if !z.is_empty() {
-                    self.local_zones = z;
+            Note::Zones(z) => self.on_zones(z).await,
+            Note::Hotkey(h) => self.on_hotkey(h).await,
+            Note::Ignored => self.ignored += 1,
+            Note::Restart => {
+                self.stop_continuous().await;
+                self.start_continuous().await;
+            }
+        }
+    }
+
+    /// The monitors may have changed (§13.8): a change by content is announced to the peers that
+    /// may control this machine, and the barriers follow without a new capture session.
+    async fn on_zones(&mut self, z: Vec<Zone>) {
+        if z.is_empty() || same_zones(&self.local_zones, &z) {
+            return;
+        }
+        self.local_zones = z;
+        self.announce_zones_to_all();
+        if self.cont.is_some() {
+            self.retarget().await;
+        } else if self.retry_on_zones {
+            self.start_continuous().await;
+        }
+    }
+
+    /// Every 2 s, in every platform: the zones the adapter knows (the engine does the same while
+    /// it owns the adapter) and whether the links still lead to trusted peers.
+    async fn on_tick(&mut self) {
+        let known = self.cap.as_ref().map(|c| c.known_zones());
+        if let Some(z) = known {
+            self.on_zones(z).await;
+        }
+        self.sync_links().await;
+    }
+
+    /// What a recognized shortcut does (§13.6 item 5).
+    async fn on_hotkey(&mut self, h: Hotkey) {
+        match h {
+            Hotkey::GoTo(n) => {
+                let me = self.host.local_id();
+                let target = self
+                    .layout
+                    .as_ref()
+                    .and_then(|l| l.devices.iter().find(|d| d.hotkey == Some(n)))
+                    .map(|d| d.peer);
+                match target {
+                    Some(peer) if peer == me => self.send_ctl(Ctl::Home),
+                    Some(peer) => {
+                        let (tx, rx) = oneshot::channel();
+                        self.switch(peer, tx);
+                        let notes = self.notes.clone();
+                        tokio::spawn(async move {
+                            if let Ok(ModuleReply::Error(e)) = rx.await {
+                                let _ = notes.send(Note::Block(e));
+                            }
+                        });
+                    }
+                    None => self.last_block = Some(msg::no_device_for_hotkey(n)),
                 }
             }
+            Hotkey::ToggleLock => {
+                let on = !self.locked;
+                self.set_locked(on);
+            }
+            Hotkey::TogglePause => self.host.request_pause(!self.host.paused()),
+        }
+    }
+
+    /// "Travar nesta tela", by command or shortcut.
+    fn set_locked(&mut self, on: bool) {
+        self.locked = on;
+        self.send_ctl(Ctl::Lock(on));
+        self.last_event = Some(if on {
+            msg::LOCKED_ON.to_owned()
+        } else {
+            msg::LOCKED_OFF.to_owned()
+        });
+    }
+
+    /// Paused with the capture stopped: listen for the resume combination, nothing else.
+    async fn arm_resume(&mut self) {
+        let Some(cap) = self.cap.as_mut() else { return };
+        match cap.watch_resume().await {
+            Ok(rx) => self.resume_rx = rx,
+            Err(e) => {
+                tracing::warn!("resume hotkey refused: {e}");
+                self.last_block = Some(msg::RESUME_HOTKEY_REFUSED.to_owned());
+            }
+        }
+    }
+
+    async fn disarm_resume(&mut self) {
+        self.resume_rx = None;
+        if let Some(cap) = self.cap.as_mut() {
+            cap.unwatch_resume().await;
         }
     }
 
@@ -509,40 +628,32 @@ impl State {
         }
     }
 
-    /// Installs the barriers derived from `layout.toml` (contract §12.6 item 2). Nothing to do
-    /// without links; the loopback owns the adapter while it runs and restarts us after.
-    async fn start_continuous(&mut self) {
-        if self.cont.is_some() {
-            return;
-        }
+    /// The links of `layout.toml` that start on this machine and lead to a peer it trusts. A peer
+    /// that was revoked is no longer in `host.peers()`, so its links stop counting (the hook goes
+    /// away with the last one, §13.2 rule 2a and the Sentinel's R2).
+    fn derived_links(&self) -> Vec<DerivedBarrier> {
         let me = self.host.local_id();
-        let (derived, dead) = match &self.layout {
-            Some(l) => (l.barriers_for(me), l.options.dead_corner_px),
-            None => return,
-        };
-        if derived.is_empty() {
-            return;
-        }
-        let Some(mut cap) = self.cap.take() else {
-            return;
-        };
-        let zones = match cap.zones().await {
-            Ok(z) => z,
-            Err(e) => {
-                tracing::warn!("zones unavailable: {e}");
-                self.last_block = Some(match e {
-                    InputError::PermissionDenied => msg::PORTAL_DENIED.to_owned(),
-                    other => msg::adapter_failed(&other.to_string()),
-                });
-                self.cap = Some(cap);
-                return;
-            }
-        };
+        let trusted: Vec<PeerId> = self.host.peers().iter().map(|p| p.id).collect();
+        self.layout
+            .as_ref()
+            .map(|l| l.barriers_for(me))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|b| trusted.contains(&b.peer))
+            .collect()
+    }
+
+    /// The barriers that exist on these zones. A link whose monitor is missing waits for it
+    /// (§13.8 item 3); `report` says why in `last_block`.
+    fn build_targets(&mut self, zones: &[Zone], report: bool) -> Vec<Target> {
+        let dead = self.layout.as_ref().map_or(0, |l| l.options.dead_corner_px);
         let mut targets = Vec::new();
-        for b in derived {
-            let Some(zone) = find_zone(&zones, &b.monitor) else {
+        for b in self.derived_links() {
+            let Some(zone) = find_zone(zones, &b.monitor) else {
                 tracing::warn!(link = %b.link, "monitor of the link not found");
-                self.last_block = Some(msg::layout_monitor_missing(&b.link, &b.monitor));
+                if report {
+                    self.last_block = Some(msg::layout_monitor_missing(&b.link, &b.monitor));
+                }
                 continue;
             };
             let len = match b.edge {
@@ -550,7 +661,9 @@ impl State {
                 Edge::Top | Edge::Bottom => zone.width,
             };
             let Some((from, to)) = trim_dead_corner(b.from, b.to, len, dead) else {
-                self.last_block = Some(msg::layout_segment_in_dead_corner(&b.link));
+                if report {
+                    self.last_block = Some(msg::layout_segment_in_dead_corner(&b.link));
+                }
                 continue;
             };
             targets.push(Target {
@@ -567,10 +680,43 @@ impl State {
                 remote: (b.peer_from, b.peer_to),
             });
         }
-        if targets.is_empty() {
-            self.cap = Some(cap);
+        targets
+    }
+
+    /// Installs the barriers derived from `layout.toml` (contract §12.6 item 2). Nothing to do
+    /// without links; the loopback owns the adapter while it runs and restarts us after. Paused
+    /// with a hook-holding adapter: nothing is installed (§13.2 rule 2g).
+    async fn start_continuous(&mut self) {
+        if self.cont.is_some() || (self.paused && self.cap_hooks) {
             return;
         }
+        if self.derived_links().is_empty() {
+            return;
+        }
+        self.suspended = false;
+        let Some(mut cap) = self.cap.take() else {
+            return;
+        };
+        let zones = match cap.zones().await {
+            Ok(z) => z,
+            Err(e) => {
+                tracing::warn!("zones unavailable: {e}");
+                self.last_block = Some(match e {
+                    InputError::PermissionDenied => msg::PORTAL_DENIED.to_owned(),
+                    other => msg::adapter_failed(&other.to_string()),
+                });
+                self.cap = Some(cap);
+                return;
+            }
+        };
+        let targets = self.build_targets(&zones, true);
+        if targets.is_empty() {
+            self.cap = Some(cap);
+            self.retry_on_zones = true;
+            return;
+        }
+        self.retry_on_zones = false;
+        self.targets_key = targets_key(&targets);
         let (ctl, ctl_rx) = mpsc::unbounded_channel();
         let engine = Engine {
             host: self.host.clone(),
@@ -580,11 +726,42 @@ impl State {
             notes: self.notes.clone(),
             locked: self.locked,
             paused: self.paused,
+            dead_corner_px: self.layout.as_ref().map_or(0, |l| l.options.dead_corner_px),
+            peer_zones: self.peer_zones.clone(),
         };
         self.cont = Some(Cont {
             ctl,
             task: tokio::spawn(capture::run(engine)),
         });
+    }
+
+    /// The zones or the trusted peers changed: swap the barriers in place when they differ, stop
+    /// when no link leads to a trusted peer any more.
+    async fn retarget(&mut self) {
+        if self.cont.is_none() {
+            return;
+        }
+        if self.derived_links().is_empty() {
+            self.stop_continuous().await;
+            self.suspended = true;
+            return;
+        }
+        let zones = self.local_zones.clone();
+        let targets = self.build_targets(&zones, false);
+        let key = targets_key(&targets);
+        if key != self.targets_key {
+            self.targets_key = key;
+            self.send_ctl(Ctl::Retarget(targets));
+        }
+    }
+
+    /// Peers came or went: follow the trust in the links.
+    async fn sync_links(&mut self) {
+        if self.cont.is_some() {
+            self.retarget().await;
+        } else if self.suspended && !self.derived_links().is_empty() {
+            self.start_continuous().await;
+        }
     }
 
     /// Closes the open session and takes the adapter back.
@@ -717,13 +894,7 @@ impl State {
                 None
             }
             ModuleCommand::InputLock { locked } => {
-                self.locked = locked;
-                self.send_ctl(Ctl::Lock(locked));
-                self.last_event = Some(if locked {
-                    msg::LOCKED_ON.to_owned()
-                } else {
-                    msg::LOCKED_OFF.to_owned()
-                });
+                self.set_locked(locked);
                 let _ = reply.send(ModuleReply::Done);
                 None
             }
@@ -800,6 +971,7 @@ impl State {
             ModuleInput::PeerUp(info) => {
                 self.announce_zones(&info);
                 self.peers.insert(info.id, info);
+                self.sync_links().await;
             }
             ModuleInput::PeerDown(id) => {
                 self.peers.remove(&id);
@@ -811,6 +983,8 @@ impl State {
                     let _ = c.tx.send(LoopSignal::PeerDown);
                 }
                 self.send_ctl(Ctl::PeerDown(id));
+                // A revoked peer is gone from `host.peers()`: its links stop counting.
+                self.sync_links().await;
             }
             ModuleInput::Paused(p) => {
                 self.paused = p;
@@ -823,6 +997,15 @@ impl State {
                     if let Some(c) = &self.ctl {
                         let _ = c.tx.send(LoopSignal::Paused);
                     }
+                    // Hooks do not stay installed while paused (§13.2 rule 2g); only the system
+                    // hotkey for the way back is left, if the system allows it.
+                    if self.cap_hooks && self.cont.is_some() {
+                        self.stop_continuous().await;
+                        self.arm_resume().await;
+                    }
+                } else {
+                    self.disarm_resume().await;
+                    self.start_continuous().await;
                 }
             }
             ModuleInput::Command { .. } | ModuleInput::Shutdown => {}
@@ -832,7 +1015,7 @@ impl State {
     async fn on_msg(&mut self, from: PeerId, m: InputMsg) {
         match m {
             InputMsg::Enter { session, edge, pos } => {
-                self.on_enter(from, session, edge, None, pos).await
+                self.on_enter(from, session, edge, None, pos, None).await
             }
             InputMsg::EnterAt {
                 session,
@@ -840,23 +1023,53 @@ impl State {
                 monitor,
                 pos,
             } => {
-                self.on_enter(from, session, edge, monitor.as_deref(), pos)
+                self.on_enter(from, session, edge, monitor.as_deref(), pos, None)
                     .await
             }
-            // Protocol 3. The way back (`back_from..back_to`) and the replies come with the S7
-            // module work (§13.6 items 1 to 3); until then an `EnterSpan` enters like an `EnterAt`.
             InputMsg::EnterSpan {
                 session,
                 edge,
                 monitor,
                 pos,
-                ..
+                back_from,
+                back_to,
             } => {
-                self.on_enter(from, session, edge, monitor.as_deref(), pos)
-                    .await
+                self.on_enter(
+                    from,
+                    session,
+                    edge,
+                    monitor.as_deref(),
+                    pos,
+                    Some((back_from, back_to)),
+                )
+                .await
             }
-            InputMsg::Returned { .. } | InputMsg::Refused { .. } => self.ignored += 1,
+            // Only for the session this machine opened toward that peer (the capture checks it).
+            InputMsg::Returned { session, pos } => match &self.cont {
+                Some(c) => {
+                    let _ = c.ctl.send(Ctl::Returned { from, session, pos });
+                }
+                None => self.ignored += 1,
+            },
+            InputMsg::Refused { session, reason } => {
+                if let Some(c) = self
+                    .ctl
+                    .as_ref()
+                    .filter(|c| c.to == from && c.session.load(Ordering::SeqCst) == session)
+                {
+                    let _ = c.tx.send(LoopSignal::Rejected(reason));
+                } else if let Some(c) = &self.cont {
+                    let _ = c.ctl.send(Ctl::Refused {
+                        from,
+                        session,
+                        reason,
+                    });
+                } else {
+                    self.ignored += 1;
+                }
+            }
             InputMsg::Zones { zones } => {
+                self.send_ctl(Ctl::PeerZones(from, zones.clone()));
                 self.peer_zones.insert(from, zones);
                 let name = self.peer_name(from);
                 self.last_event = Some(msg::zones_from(&name));
@@ -925,6 +1138,7 @@ impl State {
             .map_or_else(|| id.short(), |p| p.name.clone())
     }
 
+    /// `Enter`, `EnterAt` and `EnterSpan` (`back` is the way-back span of the last one).
     async fn on_enter(
         &mut self,
         from: PeerId,
@@ -932,9 +1146,15 @@ impl State {
         edge: Edge,
         monitor: Option<&str>,
         pos: f32,
+        back: Option<(f32, f32)>,
     ) {
-        if self.paused || session == 0 {
+        if session == 0 {
             self.ignored += 1;
+            return;
+        }
+        if self.paused {
+            self.ignored += 1;
+            self.refuse(from, session, RejectReason::Paused);
             return;
         }
         if self.incoming.get(&from).is_some_and(|i| i.active) {
@@ -949,6 +1169,7 @@ impl State {
                         InputError::PermissionDenied => msg::PORTAL_DENIED.to_owned(),
                         _ => msg::EMULATOR_FAILED.to_owned(),
                     });
+                    self.refuse(from, session, RejectReason::ApplyFailed);
                     return;
                 }
             }
@@ -959,11 +1180,49 @@ impl State {
             Some(z) => self.emu.enter(z, &self.local_zones, edge, pos).await,
             None => self.emu.emit(&entry_events(edge, pos)).await,
         };
-        if let Err(e) = placed {
-            tracing::warn!("entry positioning failed: {e}");
+        match placed {
+            Err(InputError::Locked) => {
+                self.incoming.remove(&from);
+                self.release_all().await;
+                self.refuse(from, session, RejectReason::Locked);
+                return;
+            }
+            Err(e) => tracing::warn!("entry positioning failed: {e}"),
+            Ok(()) => {}
+        }
+        if let Some(span) = back {
+            let entry_zone = zone
+                .or_else(|| self.local_zones.first())
+                .cloned()
+                .unwrap_or_else(reference_zone);
+            if let Some(i) = self.incoming.get_mut(&from) {
+                i.span = Some(SpanTrack::new(entry_zone, edge, pos, span));
+            }
         }
         let name = self.peer_name(from);
         self.last_event = Some(msg::control_started(&name));
+    }
+
+    /// `Refused` to the source, only when it speaks protocol 3 (a v2 peer has no such message).
+    fn refuse(&self, to: PeerId, session: u32, reason: RejectReason) {
+        self.send_v3(to, InputMsg::Refused { session, reason });
+    }
+
+    /// A reliable message that only protocol 3 peers understand.
+    fn send_v3(&self, to: PeerId, m: InputMsg) {
+        if !self
+            .peers
+            .get(&to)
+            .is_some_and(|p| p.remote_version >= SPAN_PROTOCOL)
+        {
+            return;
+        }
+        let host = self.host.clone();
+        tokio::spawn(async move {
+            if let Err(e) = host.send_reliable(to, ModuleMsg::Input(m)).await {
+                tracing::debug!(peer = %to, "input reply not sent: {e}");
+            }
+        });
     }
 
     async fn on_datagram(&mut self, from: PeerId, dg: InputDatagram) {
@@ -993,10 +1252,37 @@ impl State {
         }
         inc.record_latency(mono_us().saturating_sub(dg.t_mono_us));
         inc.received += dg.events.len() as u64;
+        let session = dg.session;
+        let mut events = dg.events;
+        // The way back: the destination follows the cursor and takes the push out of the motion.
+        let mut returned = None;
+        if let Some(track) = inc.span.as_mut() {
+            if let Some((x, y)) = self.emu.cursor() {
+                track.sync(x, y);
+            }
+            returned = track.step(&self.local_zones, &mut events);
+        }
         if self.emu_started
-            && let Err(e) = self.emu.emit(&dg.events).await
+            && !events.is_empty()
+            && let Err(e) = self.emu.emit(&events).await
         {
+            if matches!(e, InputError::Locked) {
+                // The screen locked in the middle of the session: the source gets the cursor back.
+                self.incoming.remove(&from);
+                self.release_all().await;
+                self.refuse(from, session, RejectReason::Locked);
+                return;
+            }
             tracing::warn!("emit failed: {e}");
+        }
+        if let Some(pos) = returned {
+            if let Some(i) = self.incoming.get_mut(&from) {
+                i.active = false;
+            }
+            self.release_all().await;
+            self.send_v3(from, InputMsg::Returned { session, pos });
+            let name = self.peer_name(from);
+            self.last_event = Some(msg::returned_from(&name));
         }
     }
 
@@ -1018,6 +1304,19 @@ struct LoopJob {
     session: Arc<AtomicU32>,
     signals: mpsc::UnboundedReceiver<LoopSignal>,
     reply: oneshot::Sender<ModuleReply>,
+}
+
+/// What the way back is measured on when the destination knows no monitor of its own: 1080p.
+fn reference_zone() -> Zone {
+    Zone {
+        index: 0,
+        name: None,
+        x: 0,
+        y: 0,
+        width: 1920,
+        height: 1080,
+        scale: 1.0,
+    }
 }
 
 /// `"#0"` is an index; anything else a connector name.
@@ -1228,4 +1527,9 @@ async fn drive(
         },
         () = tokio::time::sleep_until(wait) => Err(msg::NO_STATS.to_owned()),
     }
+}
+
+/// A comparable summary of a set of targets: a retarget only happens when it changes.
+fn targets_key(targets: &[Target]) -> String {
+    format!("{targets:?}")
 }
