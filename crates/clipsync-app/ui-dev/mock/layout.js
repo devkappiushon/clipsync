@@ -271,10 +271,18 @@ registrar({
     return { rev: estado.layout.rev, results };
   },
 
-  layout_offer_answer: ({ accept } = {}) => {
+  layout_offer_answer: ({ accept, from_peer_id, rev } = {}) => {
     exigirInput();
+    if (typeof accept !== "boolean") throw erro("bad_request", "Diga se aceita ou recusa a oferta.", { field: "accept" });
+    if (typeof from_peer_id !== "string") throw erro("bad_request", "Falta o par que fez a oferta.", { field: "from_peer_id" });
+    if (!Number.isInteger(rev)) throw erro("bad_request", "Falta a revisão da oferta.", { field: "rev" });
     const oferta = estado.layout.pending_offer;
     if (!oferta) throw erro("no_offer", "Não há oferta de layout pendente.");
+    if (oferta.from_peer_id !== from_peer_id || oferta.rev !== rev) {
+      throw erro("stale_offer", `A oferta mudou: agora quem oferece é ${oferta.from_name} (revisão ${oferta.rev}). Confira e responda de novo.`, {
+        details: { from_peer_id: oferta.from_peer_id, rev: oferta.rev },
+      });
+    }
     estado.layout.pending_offer = null;
     if (accept !== true) return { layout_rev: estado.layout.rev };
     for (const l of oferta.links) {

@@ -64,6 +64,14 @@ Escolha pela URL: `/?cenario=<nome>#/<tela>`.
 | `plataforma=windows` | recursos de teclado e mouse desligados |
 | `tema=claro` ou `tema=escuro` | tema inicial, para capturar as telas nos dois temas |
 
+### Testes do simulador
+
+Sem navegador e sem npm, com o `node --test` embutido. Provam o simulador, não o agente (esse é testado em Rust, no `clipsync-ui`).
+
+```sh
+node --test crates/clipsync-app/ui-dev/testes/oferta.test.mjs
+```
+
 ## Acrescentar uma tela
 
 1. Crie `js/telas/<nome>.js` com `export default function montar({ rota, ir, assinar })`, devolvendo `{ no, desmontar? }` (ou uma promessa disso).

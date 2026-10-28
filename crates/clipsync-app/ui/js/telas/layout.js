@@ -18,6 +18,7 @@ const BORDAS = { left: "esquerda", right: "direita", top: "superior", bottom: "i
 const OPOSTA = { left: "right", right: "left", top: "bottom", bottom: "top" };
 const EVENTOS_RECARREGAR = ["layout_changed", "peer_connected", "peer_disconnected", "resync"];
 const ESTADOS = { connected: "conectado", connecting: "conectando", offline: "offline", blocked: "bloqueado" };
+const ERROS_DE_OFERTA = new Set(["no_offer", "stale_offer"]);
 
 const pct = (f) => `${Math.round(f * 100)}%`;
 const encaixar = (px) => Math.round(px / MALHA_PX) * MALHA_PX;
@@ -124,6 +125,12 @@ export default function montar({ ir, assinar }) {
       return r;
     } catch (erro) {
       if (erro?.code === "stale_rev") {
+        mostrarAvisoTopo("aviso", mensagemDe(erro));
+        await carregar({ silencioso: true });
+        return undefined;
+      }
+      if (ERROS_DE_OFERTA.has(erro?.code)) {
+        // A oferta mudou ou sumiu depois que a tela a mostrou: o texto do erro fica no topo e a oferta é lida de novo.
         mostrarAvisoTopo("aviso", mensagemDe(erro));
         await carregar({ silencioso: true });
         return undefined;
@@ -730,6 +737,11 @@ export default function montar({ ir, assinar }) {
 
   // ----- oferta pendente -----
 
+  /** A resposta diz qual oferta o usuário viu (par e rev), para não aceitar uma que chegou depois. */
+  function respostaOferta(oferta, accept) {
+    return { accept, from_peer_id: oferta.from_peer_id, rev: oferta.rev };
+  }
+
   function pintarOferta() {
     const o = layout.pending_offer;
     if (!o) {
@@ -742,8 +754,8 @@ export default function montar({ ir, assinar }) {
       aviso(
         "info",
         h("p", null, `${o.from_name} ofereceu um layout (rev ${o.rev}) com ${o.links.length} ${o.links.length === 1 ? "ligação" : "ligações"}. Aceitar substitui as ligações que cruzam as mesmas bordas.`),
-        botao({ rotulo: "Aceitar layout", variante: "primario", icone: "verificar", aoClicar: () => executar(() => api.layoutOfferAnswer({ accept: true })) }),
-        botao({ rotulo: "Recusar", icone: "fechar", aoClicar: () => executar(() => api.layoutOfferAnswer({ accept: false })) }),
+        botao({ rotulo: "Aceitar layout", variante: "primario", icone: "verificar", aoClicar: () => executar(() => api.layoutOfferAnswer(respostaOferta(o, true))) }),
+        botao({ rotulo: "Recusar", icone: "fechar", aoClicar: () => executar(() => api.layoutOfferAnswer(respostaOferta(o, false))) }),
       ),
     );
   }
