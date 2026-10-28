@@ -19,6 +19,17 @@ const RESULTADOS = {
   cancelled: "Pareamento cancelado.",
 };
 
+// Uma frase só por desfecho. Recusa e cancelamento têm texto próprio, porque o `reason` do agente só repete o mesmo
+// fato; falha e tempo esgotado trazem a causa no `reason`, que vale mais que o texto fixo.
+const COM_CAUSA = new Set(["failed", "expired"]);
+
+function fraseDoResultado({ outcome, reason }) {
+  const causa = typeof reason === "string" ? reason.trim() : "";
+  const frase = COM_CAUSA.has(outcome) && causa ? causa : (RESULTADOS[outcome] ?? "O pareamento terminou sem sucesso.");
+  const maiuscula = frase.charAt(0).toLocaleUpperCase("pt-BR") + frase.slice(1);
+  return /[.!?]$/.test(maiuscula) ? maiuscula : `${maiuscula}.`;
+}
+
 function rotuloModulos({ clipboard, input }) {
   const partes = [clipboard && "clipboard", input && "teclado e mouse"].filter(Boolean);
   return partes.length > 0 ? partes.join(", ") : "nenhum";
@@ -410,9 +421,8 @@ export default function montar({ ir, assinar }) {
         ),
       ];
     }
-    const texto = RESULTADOS[resultado.outcome] ?? "O pareamento terminou sem sucesso.";
     return [
-      aviso("erro", h("p", null, texto, resultado.reason ? ` ${resultado.reason}` : "")),
+      aviso("erro", h("p", null, fraseDoResultado(resultado))),
       h(
         "div",
         { class: "linha" },
