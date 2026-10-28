@@ -39,6 +39,11 @@ jobs:
             libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
             pkg-config build-essential file
 
+      # Contrato §13.3 item 5: unsafe só em crates/clipsync-win/src/ffi.rs.
+      - name: unsafe isolado
+        shell: bash
+        run: scripts/conferir-unsafe.sh
+
       - name: cargo fmt
         run: cargo fmt --all -- --check
 
@@ -67,6 +72,11 @@ jobs:
           components: clippy
 
       - uses: Swatinem/rust-cache@v2
+
+      # Contrato §13.3 item 5: unsafe só em crates/clipsync-win/src/ffi.rs.
+      - name: unsafe isolado
+        shell: bash
+        run: scripts/conferir-unsafe.sh
 
       # Prova que o release compila para Windows e que o alvo fica sem aviso.
       # O roteiro e2e da CLI é cfg(unix); os testes de portal são ignorados.
