@@ -1,7 +1,8 @@
 //! Janela `main`. Está no tauri.conf.json com `create: false` e nasce aqui, para ganhar o bloqueio
-//! de navegação para fora do app (§12.7 regra 3). Invisível até o front terminar de carregar;
-//! com `--hidden`, só aparece pela bandeja.
+//! de navegação para fora do app e de janela nova (§12.7 regra 3). Invisível até o front terminar
+//! de carregar; com `--hidden`, só aparece pela bandeja.
 
+use tauri::webview::NewWindowResponse;
 use tauri::{AppHandle, Manager, Url, WebviewWindowBuilder};
 
 use crate::state::AppState;
@@ -18,14 +19,20 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .ok_or(tauri::Error::WindowNotFound)?;
     WebviewWindowBuilder::from_config(app, window)?
         .on_navigation(is_app_origin)
+        // O front não abre janela (sem `window.open` nem link externo): nenhuma é permitida.
+        .on_new_window(|_url, _features| NewWindowResponse::Deny)
         .build()?;
     Ok(())
 }
 
-/// Só a origem do próprio app: `tauri://localhost` (Linux) e `http(s)://tauri.localhost` (Windows).
+/// Só a origem exata do app: `tauri://localhost` (Linux) e `http(s)://tauri.localhost` (Windows),
+/// sem porta nem credencial na URL. Outro host, outra porta ou `user@` é navegação para fora.
 fn is_app_origin(url: &Url) -> bool {
+    if url.port().is_some() || !url.username().is_empty() || url.password().is_some() {
+        return false;
+    }
     match url.scheme() {
-        "tauri" => true,
+        "tauri" => url.host_str() == Some("localhost"),
         "http" | "https" => url.host_str() == Some("tauri.localhost"),
         _ => false,
     }
@@ -58,8 +65,11 @@ mod tests {
     #[test]
     fn own_origin_is_allowed() {
         assert!(allowed("tauri://localhost/index.html"));
+        assert!(allowed("tauri://localhost"));
         assert!(allowed("http://tauri.localhost/index.html"));
         assert!(allowed("https://tauri.localhost/"));
+        // a porta padrão do esquema some na análise da URL: é a mesma origem
+        assert!(allowed("https://tauri.localhost:443/"));
     }
 
     #[test]
@@ -68,5 +78,20 @@ mod tests {
         assert!(!allowed("http://tauri.localhost.evil.com/"));
         assert!(!allowed("file:///etc/passwd"));
         assert!(!allowed("javascript:alert(1)"));
+    }
+
+    #[test]
+    fn host_port_and_credentials_must_match_exactly() {
+        assert!(!allowed("tauri://outro/index.html"));
+        assert!(!allowed("tauri://localhost.evil.com/"));
+        assert!(!allowed("tauri://localhost:8080/"));
+        assert!(!allowed("http://tauri.localhost:8080/"));
+        assert!(!allowed("https://tauri.localhost:8443/"));
+        assert!(!allowed("http://user@tauri.localhost/"));
+        assert!(!allowed("http://user:senha@tauri.localhost/"));
+        assert!(!allowed("tauri://user@localhost/"));
+        assert!(!allowed("http://tauri.localhost@evil.com/"));
+        assert!(!allowed("http://localhost/"));
+        assert!(!allowed("ws://tauri.localhost/"));
     }
 }
