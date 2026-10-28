@@ -821,3 +821,21 @@ async fn a_switch_is_refused_where_the_platform_cannot_begin_a_capture() {
         .is_none()
     );
 }
+#[tokio::test]
+async fn the_capture_stops_when_the_peer_is_revoked() {
+    let d = tempfile::tempdir().unwrap();
+    write_layout(
+        d.path(),
+        &layout_ab(node_id("a"), node_id("b"), 0.0, 1.0, 0),
+    );
+    let hub = MemHub::new();
+    let a = spawn_src(&hub, "a", d.path(), true);
+    let b = spawn_dest(&hub, "b");
+    hub.link(a.id, b.id, PeerPerms::default(), CONTROL);
+    until("capture started", || a.cap.started()).await;
+    hub.unlink(a.id, b.id);
+    until("hook gone", || !a.cap.started()).await;
+    // trusted again: the hook comes back (the link is still in the file)
+    hub.link(a.id, b.id, PeerPerms::default(), CONTROL);
+    until("hook back", || a.cap.started()).await;
+}

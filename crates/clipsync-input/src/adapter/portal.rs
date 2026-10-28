@@ -3,6 +3,7 @@
 //! Hard rules from the spikes: never call `supported_capabilities()` (GNOME 50 returns 15, an
 //! unknown bit, and the parse fails); the right-edge barrier sits at `x = zone.x + width`; the
 //! RemoteDesktop EIS offers relative motion only.
+use super::session::LockWatch;
 use super::{
     BarrierSpec, CaptureAdapter, CaptureEvent, EmulateAdapter, InputError, TokenStore, Zone,
     ZoneRef, barrier_segment, edge_position,
@@ -24,6 +25,7 @@ use reis::event::{DeviceCapability, EiEvent};
 use std::collections::HashSet;
 use std::num::NonZero;
 use std::os::unix::net::UnixStream;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -59,6 +61,7 @@ struct ActiveInfo {
     cursor: Option<(f64, f64)>,
 }
 
+#[derive(Clone)]
 struct Geom {
     zone: Zone,
     edge: Edge,
@@ -69,9 +72,15 @@ pub struct PortalCapture {
     session: Option<Session<InputCapture>>,
     zone_set: u32,
     zones: Vec<Zone>,
+    /// The portal said the zones changed (`ZonesChanged`): the next `zones()` asks again.
+    zones_dirty: Arc<AtomicBool>,
+    zones_task: Option<tokio::task::JoinHandle<()>>,
+    /// The barriers the capture loop maps an activation through; `set_barriers` swaps them.
+    geoms: Arc<Mutex<Vec<Geom>>>,
     active: Arc<Mutex<ActiveInfo>>,
     thread: Option<std::thread::JoinHandle<()>>,
     stop: Option<oneshot::Sender<()>>,
+    lock_watch: Option<LockWatch>,
 }
 
 impl Default for PortalCapture {
@@ -87,9 +96,13 @@ impl PortalCapture {
             session: None,
             zone_set: 0,
             zones: Vec::new(),
+            zones_dirty: Arc::new(AtomicBool::new(false)),
+            zones_task: None,
+            geoms: Arc::new(Mutex::new(Vec::new())),
             active: Arc::new(Mutex::new(ActiveInfo::default())),
             thread: None,
             stop: None,
+            lock_watch: None,
         }
     }
 
@@ -107,8 +120,18 @@ impl PortalCapture {
             )
             .await
             .map_err(map_err)?;
+        self.ic = Some(ic);
+        self.session = Some(session);
+        self.refresh_zones().await
+    }
+
+    /// Asks the portal for the zones again (a new `zone_set` after a change).
+    async fn refresh_zones(&mut self) -> Result<(), InputError> {
+        let (Some(ic), Some(session)) = (&self.ic, &self.session) else {
+            return Err(InputError::Other("no session".into()));
+        };
         let zones = ic
-            .zones(&session, GetZonesOptions::default())
+            .zones(session, GetZonesOptions::default())
             .await
             .map_err(map_err)?
             .response()
@@ -131,9 +154,44 @@ impl PortalCapture {
                 scale: 1.0,
             })
             .collect();
-        self.ic = Some(ic);
-        self.session = Some(session);
         Ok(())
+    }
+
+    /// The portal's `ZonesChanged` signal only marks the zones dirty; the module's 2 s poll calls
+    /// `zones()`, which asks again (§13.8 item 2).
+    fn watch_zones(&mut self) {
+        if self.zones_task.is_some() {
+            return;
+        }
+        let dirty = self.zones_dirty.clone();
+        self.zones_task = Some(tokio::spawn(async move {
+            let Ok(ic) = InputCapture::new().await else {
+                return;
+            };
+            let Ok(mut changes) = ic.receive_zones_changed().await else {
+                return;
+            };
+            while changes.next().await.is_some() {
+                dirty.store(true, Ordering::SeqCst);
+            }
+        }));
+    }
+
+    /// The barriers of `barriers` on the current zones, as the portal wants them.
+    fn portal_barriers(
+        &self,
+        barriers: &[BarrierSpec],
+    ) -> Result<(Vec<Barrier>, Vec<Geom>), InputError> {
+        let mut geoms = Vec::new();
+        let mut portal = Vec::new();
+        for (i, b) in barriers.iter().enumerate() {
+            let zone = self.resolve(&b.zone)?.clone();
+            let seg = barrier_segment(&zone, b.edge, b.from, b.to);
+            let id = NonZero::new(i as u32 + 1).ok_or_else(|| InputError::Other("id".into()))?;
+            portal.push(Barrier::new(id, (seg.x1, seg.y1, seg.x2, seg.y2)));
+            geoms.push(Geom { zone, edge: b.edge });
+        }
+        Ok((portal, geoms))
     }
 
     fn resolve<'a>(&'a self, r: &ZoneRef) -> Result<&'a Zone, InputError> {
@@ -158,6 +216,9 @@ impl CaptureAdapter for PortalCapture {
 
     async fn zones(&mut self) -> Result<Vec<Zone>, InputError> {
         self.ensure_session().await?;
+        if self.zones_dirty.swap(false, Ordering::SeqCst) {
+            self.refresh_zones().await?;
+        }
         Ok(self.zones.clone())
     }
 
@@ -178,15 +239,8 @@ impl CaptureAdapter for PortalCapture {
         let (Some(ic), Some(session)) = (&self.ic, &self.session) else {
             return Err(InputError::Other("no session".into()));
         };
-        let mut geoms = Vec::new();
-        let mut portal_barriers = Vec::new();
-        for (i, b) in barriers.iter().enumerate() {
-            let zone = self.resolve(&b.zone)?.clone();
-            let seg = barrier_segment(&zone, b.edge, b.from, b.to);
-            let id = NonZero::new(i as u32 + 1).ok_or_else(|| InputError::Other("id".into()))?;
-            portal_barriers.push(Barrier::new(id, (seg.x1, seg.y1, seg.x2, seg.y2)));
-            geoms.push(Geom { zone, edge: b.edge });
-        }
+        let (portal_barriers, geoms) = self.portal_barriers(barriers)?;
+        *lock(&self.geoms) = geoms;
         let resp = ic
             .set_pointer_barriers(
                 session,
@@ -210,9 +264,11 @@ impl CaptureAdapter for PortalCapture {
             .map_err(map_err)?;
         let stream = UnixStream::from(fd);
         let (tx, rx) = mpsc::channel(4096);
+        let tx_events = tx.clone();
         let (ready_tx, ready_rx) = oneshot::channel();
         let (stop_tx, stop_rx) = oneshot::channel::<()>();
         let active = self.active.clone();
+        let geoms = self.geoms.clone();
         let spawned = std::thread::Builder::new()
             .name("clipsync-input-capture".into())
             .spawn(move || {
@@ -239,7 +295,49 @@ impl CaptureAdapter for PortalCapture {
         ic.enable(session, EnableOptions::default())
             .await
             .map_err(map_err)?;
+        self.watch_zones();
+        // A locked screen is the logind's `LockedHint`; a lock already on is reported at once.
+        self.lock_watch = Some(LockWatch::start(Some(tx_events)).await);
         Ok(rx)
+    }
+
+    /// Swaps the barriers on the live session without a new dialog: the portal keeps one
+    /// capture session per agent run, so only the barriers go through `SetPointerBarriers` again
+    /// (with the current `zone_set`, hence the zones are asked first).
+    async fn set_barriers(&mut self, barriers: &[BarrierSpec]) -> Result<(), InputError> {
+        self.ensure_session().await?;
+        self.refresh_zones().await?;
+        self.zones_dirty.store(false, Ordering::SeqCst);
+        let (portal_barriers, geoms) = self.portal_barriers(barriers)?;
+        let (Some(ic), Some(session)) = (&self.ic, &self.session) else {
+            return Err(InputError::Other("no session".into()));
+        };
+        // Barriers are replaced while the session is disabled; `enable` brings the capture back.
+        ic.disable(session, Default::default())
+            .await
+            .map_err(map_err)?;
+        let resp = ic
+            .set_pointer_barriers(
+                session,
+                &portal_barriers,
+                self.zone_set,
+                SetPointerBarriersOptions::default(),
+            )
+            .await
+            .map_err(map_err)?
+            .response()
+            .map_err(map_err)?;
+        let refused = resp.failed_barriers().len();
+        ic.enable(session, EnableOptions::default())
+            .await
+            .map_err(map_err)?;
+        if refused > 0 {
+            return Err(InputError::Other(format!(
+                "portal refused {refused} barrier(s)"
+            )));
+        }
+        *lock(&self.geoms) = geoms;
+        Ok(())
     }
 
     async fn release(&mut self) -> Result<(), InputError> {
@@ -262,6 +360,10 @@ impl CaptureAdapter for PortalCapture {
 
     async fn stop(&mut self) -> Result<(), InputError> {
         self.stop = None;
+        self.lock_watch = None;
+        if let Some(t) = self.zones_task.take() {
+            t.abort();
+        }
         if let Some(t) = self.thread.take() {
             let _ = tokio::task::spawn_blocking(move || t.join()).await;
         }
@@ -276,7 +378,7 @@ impl CaptureAdapter for PortalCapture {
 
 async fn capture_loop(
     stream: UnixStream,
-    geoms: Vec<Geom>,
+    geoms: Arc<Mutex<Vec<Geom>>>,
     active: Arc<Mutex<ActiveInfo>>,
     tx: mpsc::Sender<CaptureEvent>,
     ready_tx: oneshot::Sender<Result<(), String>>,
@@ -316,7 +418,11 @@ async fn capture_loop(
                         (id.get() as usize).saturating_sub(1),
                     _ => 0,
                 };
-                let g = geoms.get(barrier).or_else(|| geoms.first());
+                let g = {
+                    let all = lock(&geoms);
+                    all.get(barrier).or_else(|| all.first()).cloned()
+                };
+                let g = g.as_ref();
                 let cur = a.cursor_position();
                 let pos = match (g, cur) {
                     (Some(g), Some((cx, cy))) => edge_position(&g.zone, g.edge, cx, cy),
@@ -554,6 +660,7 @@ async fn emulate_loop(
     stream: UnixStream,
     mut cmd_rx: mpsc::Receiver<Cmd>,
     ready_tx: oneshot::Sender<()>,
+    layout: Arc<Mutex<Option<String>>>,
 ) {
     let mut ready_tx = Some(ready_tx);
     let Ok(ctx) = ei::Context::new(stream) else {
@@ -583,8 +690,13 @@ async fn emulate_loop(
                             | DeviceCapability::Button | DeviceCapability::Scroll);
                         let _ = ctx.flush();
                     }
-                    EiEvent::DeviceAdded(d) => em.devs.push(Dev {
-                        dev: d.device, resumed: false, emulating: false, touched: false }),
+                    EiEvent::DeviceAdded(d) => {
+                        if let Some(name) = d.device.keymap().and_then(keymap_symbols) {
+                            *lock(&layout) = Some(name);
+                        }
+                        em.devs.push(Dev {
+                            dev: d.device, resumed: false, emulating: false, touched: false });
+                    }
                     EiEvent::DeviceResumed(d) => {
                         if let Some(x) = em.devs.iter_mut().find(|x| x.dev == d.device) {
                             x.resumed = true;
@@ -623,6 +735,10 @@ pub struct PortalEmulate {
     session: Option<Session<RemoteDesktop>>,
     cmd: Option<mpsc::Sender<Cmd>>,
     thread: Option<std::thread::JoinHandle<()>>,
+    /// A locked screen takes no emulation (§13.6 item 8).
+    lock_watch: Option<LockWatch>,
+    /// The `xkb_symbols` name of the keymap the EIS announced, for the diagnostics only.
+    layout: Arc<Mutex<Option<String>>>,
 }
 
 impl PortalEmulate {
@@ -632,6 +748,8 @@ impl PortalEmulate {
             session: None,
             cmd: None,
             thread: None,
+            lock_watch: None,
+            layout: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -701,6 +819,7 @@ impl EmulateAdapter for PortalEmulate {
         let stream = UnixStream::from(fd);
         let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>(64);
         let (ready_tx, ready_rx) = oneshot::channel::<()>();
+        let layout = self.layout.clone();
         // reis streams are !Send: the EIS loop owns a current-thread runtime.
         let spawned = std::thread::Builder::new()
             .name("clipsync-input-emulate".into())
@@ -711,7 +830,7 @@ impl EmulateAdapter for PortalEmulate {
                 else {
                     return;
                 };
-                rt.block_on(emulate_loop(stream, cmd_rx, ready_tx));
+                rt.block_on(emulate_loop(stream, cmd_rx, ready_tx, layout));
             });
         match spawned {
             Ok(h) => self.thread = Some(h),
@@ -723,12 +842,20 @@ impl EmulateAdapter for PortalEmulate {
         }
         self.session = Some(session);
         self.cmd = Some(cmd_tx);
+        self.lock_watch = Some(LockWatch::start(None).await);
         Ok(())
     }
 
     async fn emit(&mut self, events: &[InputEvent]) -> Result<(), InputError> {
+        if self.lock_watch.as_ref().is_some_and(LockWatch::is_locked) {
+            return Err(InputError::Locked);
+        }
         let evs = events.to_vec();
         self.call(|r| Cmd::Emit(evs, r)).await
+    }
+
+    fn keyboard_layout(&self) -> Option<String> {
+        lock(&self.layout).clone()
     }
 
     async fn release_all(&mut self) -> Result<(), InputError> {
@@ -743,6 +870,7 @@ impl EmulateAdapter for PortalEmulate {
             let _ = self.call(Cmd::ReleaseAll).await;
         }
         self.cmd = None;
+        self.lock_watch = None;
         if let Some(t) = self.thread.take() {
             let _ = tokio::task::spawn_blocking(move || t.join()).await;
         }
@@ -750,5 +878,41 @@ impl EmulateAdapter for PortalEmulate {
             let _ = s.close().await;
         }
         Ok(())
+    }
+}
+
+/// The `xkb_symbols` name in the keymap the EIS announced (`pc+br(abnt2)+inet(evdev)`), or `None`
+/// when it cannot be read. Only for the diagnostics: the layout is never used to translate keys.
+fn keymap_symbols(k: &reis::event::Keymap) -> Option<String> {
+    use std::io::Read;
+    let fd = k.fd.try_clone().ok()?;
+    let mut text = String::new();
+    std::fs::File::from(fd)
+        .take(u64::from(k.size).min(1 << 20))
+        .read_to_string(&mut text)
+        .ok()?;
+    symbols_name(&text)
+}
+
+fn symbols_name(keymap: &str) -> Option<String> {
+    let at = keymap.find("xkb_symbols")?;
+    let rest = &keymap[at..];
+    let start = rest.find('"')? + 1;
+    let end = start + rest[start..].find('"')?;
+    Some(rest[start..end].to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::symbols_name;
+
+    #[test]
+    fn the_symbols_name_comes_out_of_the_keymap_text() {
+        let text = "xkb_keymap {\n xkb_keycodes \"evdev+aliases(qwerty)\" {};\n xkb_symbols \"pc+br(abnt2)+inet(evdev)\" {};\n};";
+        assert_eq!(
+            symbols_name(text).as_deref(),
+            Some("pc+br(abnt2)+inet(evdev)")
+        );
+        assert_eq!(symbols_name("nothing here"), None);
     }
 }

@@ -5,6 +5,8 @@ mod fake;
 pub(crate) mod outputs;
 #[cfg(target_os = "linux")]
 mod portal;
+#[cfg(target_os = "linux")]
+pub(crate) mod session;
 mod tokens;
 #[cfg(windows)]
 pub(crate) mod win;

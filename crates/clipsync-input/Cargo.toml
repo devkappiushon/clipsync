@@ -22,6 +22,7 @@ toml.workspace = true
 ashpd.workspace = true
 reis.workspace = true
 futures-util.workspace = true
+zbus.workspace = true
 
 [dev-dependencies]
 clipsync-proto = { path = "../clipsync-proto", features = ["testing"] }

@@ -58,8 +58,33 @@ pub async fn diagnose() -> Vec<DiagItem> {
                 format!("indisponível: {e}"),
             )),
         }
+        // The screen lock is the logind's `LockedHint` (§13.6 item 8).
+        let watch = crate::adapter::session::LockWatch::start(None).await;
+        out.push(if watch.available() {
+            item(
+                "tela bloqueada",
+                DiagStatus::Ok,
+                if watch.is_locked() {
+                    "bloqueada agora (logind)"
+                } else {
+                    "desbloqueada (logind)"
+                },
+            )
+        } else {
+            item(
+                "tela bloqueada",
+                DiagStatus::Warn,
+                "o logind não respondeu: a tela é tratada como desbloqueada",
+            )
+        });
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    out.push(item(
+        "teclado e mouse",
+        DiagStatus::Warn,
+        "captura e emulação do Windows prontas, ainda sem prova nesta máquina",
+    ));
+    #[cfg(not(any(target_os = "linux", windows)))]
     out.push(item(
         "teclado e mouse",
         DiagStatus::Missing,
