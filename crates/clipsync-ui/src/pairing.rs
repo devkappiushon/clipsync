@@ -345,11 +345,16 @@ pub(crate) fn finish(ctx: &Ctx, args: PairFinishArgs) -> Result<Finished, UiErro
     })
 }
 
-/// Ends the attempt at any step: the connection drops, nothing is saved, and `pair_result` says
-/// `cancelled`.
+/// Ends the attempt before the local decision is sent: the connection drops, nothing is saved,
+/// and `pair_result` says `cancelled`. In `waiting_peer` the decision already left and the core
+/// may be saving `peers.toml` right now, so the end belongs to the other machine (§12.5 v1.17,
+/// S6-10): `wrong_step`.
 pub(crate) fn cancel(ctx: &Ctx, args: AttemptArgs) -> Result<Cancelled, UiError> {
     let mut p = lock(&ctx.pairing);
     let a = current(&mut p, args.attempt_id)?;
+    if a.step == Step::WaitingPeer {
+        return Err(UiError::new(code::WRONG_STEP, msg::PAIR_ALREADY_DECIDED));
+    }
     a.cancelled = true;
     a.decide = None;
     a.task.abort();

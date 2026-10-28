@@ -160,6 +160,9 @@ async fn both_sides_see_the_same_code_and_save_exactly_their_grants() {
         ok(&ui_a, finish(id_a, a_grants.clone(), false)).await,
         json!({ "step": "waiting_peer" })
     );
+    // S6-10: a's decision already left; a cancel now could race the core saving peers.toml.
+    let e = err(&ui_a, attempt("pair_cancel", id_a)).await;
+    assert_eq!(e.code, "wrong_step");
     ok(&ui_b, finish(id_b, none.clone(), false)).await;
 
     let (ra, rb) = (

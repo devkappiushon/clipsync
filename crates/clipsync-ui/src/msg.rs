@@ -30,6 +30,8 @@ pub const NAME_MISMATCH: &str = "o nome digitado não confere com o nome do disp
 // 3 · pareamento
 pub const NO_ATTEMPT: &str = "nenhum pareamento em andamento com esse número";
 pub const WRONG_STEP: &str = "essa ação não vale nesta etapa do pareamento";
+pub const PAIR_ALREADY_DECIDED: &str =
+    "a sua decisão já foi enviada: o resultado vem quando a outra máquina responder";
 pub const PAIR_BUSY: &str = "já existe um pareamento em andamento: conclua ou cancele antes";
 pub const BAD_ADDR: &str = "endereço inválido: use IP:PORTA, por exemplo 192.168.0.10:53122";
 pub const PAIR_DECLINED_PEER: &str = "o outro dispositivo recusou o pareamento";
