@@ -131,3 +131,32 @@ pub fn zones_from(peer: &str) -> String {
 pub fn offer_from(peer: &str) -> String {
     format!("{peer} ofereceu um layout de telas")
 }
+
+// self_test (L7): what the onboarding shows for the input module.
+pub const SELF_TEST_NO_PLATFORM: &str = "teclado e mouse: indisponível neste sistema nesta versão";
+pub const SELF_TEST_TIMEOUT: &str = "os portais do sistema não responderam em 5 segundos";
+pub const SELF_TEST_NO_DEVICES: &str =
+    "o portal de emulação não oferece teclado e ponteiro juntos, os dois são necessários";
+pub const SELF_TEST_NO_MONITORS: &str =
+    "nenhum monitor detectado: os monitores podem aparecer só como #0, #1";
+pub const SELF_TEST_NOT_GNOME_WAYLAND: &str =
+    "só o GNOME no Wayland foi testado, este desktop pode se comportar de outro jeito";
+pub const SELF_TEST_KEYBOARD_UNPROVEN: &str =
+    "a digitação com acentos ainda não foi validada em máquina real";
+pub fn self_test_no_capture(why: &str) -> String {
+    format!("o portal de captura de entrada não respondeu: {why}")
+}
+pub fn self_test_no_remote(why: &str) -> String {
+    format!("o portal de emulação de entrada não respondeu: {why}")
+}
+pub fn self_test_ready(capture: u32, remote: u32, monitors: usize) -> String {
+    format!(
+        "portais de captura (v{capture}) e de emulação (v{remote}) respondem, {monitors} monitor(es) detectado(s), o primeiro uso pede uma permissão do sistema"
+    )
+}
+pub fn self_test_conflicts(found: &[String]) -> String {
+    format!(
+        "em execução: {}, podem disputar a captura",
+        found.join(", ")
+    )
+}

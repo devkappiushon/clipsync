@@ -8,6 +8,7 @@ pub mod layout;
 mod module;
 pub mod msg;
 pub mod probe;
+mod self_test;
 
 use clipsync_proto::{Module, ModuleError};
 use std::path::Path;
@@ -25,6 +26,7 @@ pub use layout::{
     trim_dead_corner,
 };
 pub use module::{build_with_adapters, build_with_layout};
+pub use self_test::{SelfTestOutcome, self_test};
 
 pub const LAYOUT_FILE: &str = "layout.toml";
 

@@ -99,7 +99,7 @@ pub async fn diagnose() -> Vec<DiagItem> {
     out
 }
 
-fn running_conflicts() -> Vec<String> {
+pub(crate) fn running_conflicts() -> Vec<String> {
     let Ok(dir) = std::fs::read_dir("/proc") else {
         return Vec::new();
     };
