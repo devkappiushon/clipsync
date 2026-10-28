@@ -14,6 +14,8 @@ pub const LAYOUT_VERSION: u32 = 1;
 pub const DEFAULT_DEAD_CORNER_PX: u32 = 8;
 pub const MAX_DEAD_CORNER_PX: u32 = 32;
 pub const MAX_HOTKEY: u8 = 9;
+/// How far from the origin a device may sit on the canvas, on each axis.
+pub const MAX_CANVAS_PX: i32 = 1_000_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutOptions {
@@ -373,6 +375,11 @@ impl Layout {
             }
             if self.devices[..i].iter().any(|o| o.peer == d.peer) {
                 return Err(invalid(msg::layout_dup_device(&short)));
+            }
+            if d.x.unsigned_abs() > MAX_CANVAS_PX.unsigned_abs()
+                || d.y.unsigned_abs() > MAX_CANVAS_PX.unsigned_abs()
+            {
+                return Err(invalid(msg::layout_bad_position(&short, MAX_CANVAS_PX)));
             }
             if let Some(n) = d.hotkey {
                 if !(1..=MAX_HOTKEY).contains(&n) {
@@ -770,6 +777,42 @@ mod tests {
         assert_eq!(l.validate().unwrap_err().code(), "invalid_field");
         l.options.dead_corner_px = 32;
         l.validate().unwrap();
+    }
+
+    #[test]
+    fn a_device_far_off_the_canvas_is_refused_by_validate_write_and_read() {
+        for (x, y) in [
+            (MAX_CANVAS_PX + 1, 0),
+            (0, MAX_CANVAS_PX + 1),
+            (-MAX_CANVAS_PX - 1, 0),
+            (0, i32::MIN),
+            (i32::MAX, i32::MAX),
+        ] {
+            let mut l = sample();
+            l.devices[1].x = x;
+            l.devices[1].y = y;
+            let e = l.validate().unwrap_err();
+            assert_eq!(e.code(), "invalid_field", "{x},{y}");
+            assert!(e.to_string().contains("posição"), "{e}");
+            let d = tempfile::tempdir().unwrap();
+            let p = d.path().join("layout.toml");
+            assert_eq!(l.write(&p).unwrap_err().code(), "invalid_field");
+            assert!(!p.exists(), "nothing written");
+        }
+        // The limit itself is fine, on both signs.
+        let mut l = sample();
+        l.devices[1].x = MAX_CANVAS_PX;
+        l.devices[1].y = -MAX_CANVAS_PX;
+        l.validate().unwrap();
+        // A hand-edited file is held to the same rule.
+        let toml = sample()
+            .to_toml_string()
+            .unwrap()
+            .replace("x = 0", "x = 2000000");
+        assert_eq!(
+            Layout::from_toml_str(&toml).unwrap_err().code(),
+            "invalid_field"
+        );
     }
 
     #[test]

@@ -83,8 +83,6 @@ pub(crate) mod txt {
 
 /// Grid of the canvas; devices snap to it (§12.5 `layout_set_device`).
 pub const SNAP_PX: u32 = 16;
-/// How far from the origin a device may be put.
-const CANVAS_LIMIT: i64 = 1_000_000;
 /// Gap between two devices that nobody placed yet.
 const AUTO_STEP: i64 = 2048;
 
@@ -347,6 +345,10 @@ fn round3(v: f64) -> f32 {
 fn snap(v: i64) -> i64 {
     let s = i64::from(SNAP_PX);
     (v + s / 2).div_euclid(s) * s
+}
+
+fn saturating_i32(v: i64) -> i32 {
+    i32::try_from(v).unwrap_or(if v < 0 { i32::MIN } else { i32::MAX })
 }
 
 fn monitor_of(z: &ZoneInfo) -> Monitor {
@@ -970,7 +972,8 @@ pub(crate) async fn set_device(ctx: &Ctx, args: SetDeviceArgs) -> Result<SetDevi
         return Err(UiError::new(base::BAD_REQUEST, txt::BAD_HOTKEY).with_field("hotkey"));
     }
     let (x, y) = (snap(i64::from(args.x)), snap(i64::from(args.y)));
-    if x.abs() > CANVAS_LIMIT || y.abs() > CANVAS_LIMIT {
+    let limit = i64::from(file::MAX_CANVAS_PX);
+    if x.abs() > limit || y.abs() > limit {
         return Err(UiError::new(base::BAD_REQUEST, txt::BAD_POSITION).with_field("x"));
     }
     if let Some(n) = args.hotkey
@@ -1127,8 +1130,9 @@ pub(crate) async fn copy_to_peers(ctx: &Ctx, args: CopyToPeersArgs) -> Result<Co
 fn apply_offer(l: &mut file::Layout, offer: &LayoutOffer, known: impl Fn(PeerId) -> bool) {
     for od in &offer.devices {
         if let Some(d) = l.devices.iter_mut().find(|d| d.peer == od.peer) {
-            d.x = i32::try_from(snap(i64::from(od.x))).unwrap_or(0);
-            d.y = i32::try_from(snap(i64::from(od.y))).unwrap_or(0);
+            // Saturate instead of wrapping to 0: `validate` then refuses what is out of the canvas.
+            d.x = saturating_i32(snap(i64::from(od.x)));
+            d.y = saturating_i32(snap(i64::from(od.y)));
         }
     }
     l.links.clear();
@@ -1408,6 +1412,42 @@ mod tests {
         assert_eq!(l.links[0].id, "l1");
         assert_eq!((l.devices[1].x, l.devices[1].y), (1936, -16), "snapped");
         assert_eq!(l.devices[1].hotkey, Some(4));
+        l.validate().unwrap();
+    }
+
+    #[test]
+    fn an_offer_with_absurd_positions_does_not_pass_validate() {
+        let (me, peers) = (row(1, "eu"), vec![row(2, "par")]);
+        let device = |peer, x, y| clipsync_proto::OfferDevice { peer, x, y };
+        for (x, y) in [
+            (2_000_000, 0),
+            (0, -2_000_000),
+            (i32::MAX, i32::MAX),
+            (i32::MIN, 0),
+        ] {
+            let mut l = normalize(file::Layout::default(), &me, &peers);
+            let offer = LayoutOffer {
+                rev: 1,
+                devices: vec![device(id(2), x, y)],
+                links: Vec::new(),
+            };
+            apply_offer(&mut l, &offer, |_| true);
+            assert_ne!(
+                (l.devices[1].x, l.devices[1].y),
+                (0, 0),
+                "must not wrap to 0 ({x},{y})"
+            );
+            let e = l.validate().unwrap_err();
+            assert_eq!(e.code(), "invalid_field", "{x},{y}");
+        }
+        // At the edge of the canvas it is accepted, snapped to the grid.
+        let mut l = normalize(file::Layout::default(), &me, &peers);
+        let offer = LayoutOffer {
+            rev: 1,
+            devices: vec![device(id(2), 999_999, -999_999)],
+            links: Vec::new(),
+        };
+        apply_offer(&mut l, &offer, |_| true);
         l.validate().unwrap();
     }
 

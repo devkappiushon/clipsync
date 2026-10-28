@@ -91,6 +91,9 @@ pub fn layout_bad_hotkey(peer: &str) -> String {
 pub fn layout_dup_hotkey(n: u8) -> String {
     format!("o atalho {n} está em mais de um dispositivo")
 }
+pub fn layout_bad_position(peer: &str, max: i32) -> String {
+    format!("dispositivo {peer}: a posição deve ficar entre -{max} e {max} px")
+}
 pub fn layout_bad_dead_corner(max: u32) -> String {
     format!("canto morto fora do intervalo de 0 a {max} px")
 }
