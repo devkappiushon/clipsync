@@ -32,10 +32,25 @@ const vertical = (edge) => edge === "left" || edge === "right";
 const mesmaBorda = (p, q) => p.peer_id === q.peer_id && p.monitor === q.monitor && p.edge === q.edge;
 const sobrepoe = (p, q) => mesmaBorda(p, q) && p.from < q.to && q.from < p.to;
 
+/** Nome do monitor para mostrar: o amigável (no Windows, o modelo da tela) ou, sem ele, o `ref`. */
+const nomeDoMonitor = (m) => m.name || m.ref;
+/** "150%" quando a escala não é 100%; senão nada. */
+const escalaDoMonitor = (m) => (m.scale !== 1 ? `${Math.round(m.scale * 100)}%` : null);
+const medidasDoMonitor = (m) => [`${m.width}×${m.height}`, escalaDoMonitor(m)].filter(Boolean).join(" · ");
+const nomeDoMonitorEm = (layout, peerId, ref) => {
+  const m = layout.devices.find((x) => x.peer_id === peerId)?.monitors.find((x) => x.ref === ref);
+  return m ? nomeDoMonitor(m) : ref;
+};
+/** Cabe `texto` em `largura` px de SVG? Senão corta com reticências. */
+const caber = (texto, largura) => {
+  const max = Math.max(3, Math.floor(largura / LARGURA_LETRA_PX));
+  return texto.length <= max ? texto : `${texto.slice(0, max - 1)}…`;
+};
+
 function descreverPonta(layout, ponta) {
   const d = layout.devices.find((x) => x.peer_id === ponta.peer_id);
   const nome = d?.name ?? ponta.peer_id.slice(0, 8);
-  return `${nome} · ${ponta.monitor} · borda ${BORDAS[ponta.edge]}${ponta.from > 0 || ponta.to < 1 ? ` · de ${pct(ponta.from)} a ${pct(ponta.to)}` : ""}`;
+  return `${nome} · ${nomeDoMonitorEm(layout, ponta.peer_id, ponta.monitor)} · borda ${BORDAS[ponta.edge]}${ponta.from > 0 || ponta.to < 1 ? ` · de ${pct(ponta.from)} a ${pct(ponta.to)}` : ""}`;
 }
 
 export default function montar({ ir, assinar }) {
@@ -257,11 +272,11 @@ export default function montar({ ir, assinar }) {
       const hh = r.h * escala;
       grupo.append(svg("rect", { class: `layout__monitor${r.fantasma ? " layout__monitor--fantasma" : ""}`, x: p.x, y: p.y, width: w, height: hh, rx: 4 }));
       const t1 = svg("text", { class: "layout__texto", x: p.x + 8, y: p.y + 18 });
-      t1.textContent = r.fantasma ? r.m.name : r.m.ref;
+      t1.textContent = caber(r.fantasma ? r.m.name : nomeDoMonitor(r.m), w - 16);
       grupo.append(t1);
       if (!r.fantasma && w > 72 && hh > 40) {
         const t2 = svg("text", { class: "layout__texto layout__texto--fraco", x: p.x + 8, y: p.y + 34 });
-        t2.textContent = `${r.m.width}×${r.m.height}${r.m.scale !== 1 ? ` @${r.m.scale}` : ""}`;
+        t2.textContent = caber(medidasDoMonitor(r.m), w - 16);
         grupo.append(t2);
       }
       if (!r.fantasma) for (const edge of Object.keys(BORDAS)) grupo.append(zonaBorda(d, r, { x: p.x, y: p.y, w, h: hh }, edge));
@@ -343,7 +358,7 @@ export default function montar({ ir, assinar }) {
       ...geo,
       tabindex: 0,
       role: "button",
-      "aria-label": `${d.name}, ${r.m.ref}, borda ${BORDAS[edge]}. Enter seleciona um trecho para ligar.`,
+      "aria-label": `${d.name}, ${nomeDoMonitor(r.m)}, borda ${BORDAS[edge]}. Enter seleciona um trecho para ligar.`,
     });
     const escolher = (fracaoClicada) => {
       const ligacaoExistente = layout.links.find((l) => [l.a, l.b].some((p) => mesmaBorda(p, ponta) && fracaoClicada >= p.from && fracaoClicada <= p.to));
@@ -393,7 +408,7 @@ export default function montar({ ir, assinar }) {
   function opcoesDestino(ponta) {
     return layout.devices
       .filter((d) => d.peer_id !== ponta.peer_id)
-      .flatMap((d) => d.monitors.flatMap((m) => Object.keys(BORDAS).map((edge) => ({ peer_id: d.peer_id, monitor: m.ref, edge, nome: d.name }))))
+      .flatMap((d) => d.monitors.flatMap((m) => Object.keys(BORDAS).map((edge) => ({ peer_id: d.peer_id, monitor: m.ref, rotuloMonitor: nomeDoMonitor(m), edge, nome: d.name }))))
       .filter((o) => !layout.locked_edges.some((e) => mesmaBorda(e, o) && e.from <= 0 && e.to >= 1));
   }
 
@@ -587,7 +602,7 @@ export default function montar({ ir, assinar }) {
       const daMaquina = opcoes.filter((o) => o.peer_id === seletorDispositivo.value);
       const atual = selecao.destino;
       const preferida = daMaquina.find((o) => atual && chave(o) === chave(atual)) ?? daMaquina.find((o) => o.edge === OPOSTA[ponta.edge]) ?? daMaquina[0];
-      trocar(seletorBorda, daMaquina.map((o) => h("option", { value: chave(o), selected: preferida && chave(o) === chave(preferida) }, `${o.monitor} · ${BORDAS[o.edge]}`)));
+      trocar(seletorBorda, daMaquina.map((o) => h("option", { value: chave(o), selected: preferida && chave(o) === chave(preferida) }, `${o.rotuloMonitor} · ${BORDAS[o.edge]}`)));
       sincronizar();
     };
     seletorDispositivo.addEventListener("change", preencherBordas);
@@ -704,7 +719,17 @@ export default function montar({ ir, assinar }) {
           h("dt", null, "Posição no plano"),
           h("dd", { class: "mono" }, `${d.x}, ${d.y}`),
           h("dt", null, "Monitores"),
-          h("dd", null, d.monitors.length > 0 ? `${d.monitors.length} (${fonte})` : fonte),
+          h(
+            "dd",
+            null,
+            d.monitors.length > 0 ? `${d.monitors.length} (${fonte})` : fonte,
+            d.monitors.length > 0 &&
+              h(
+                "ul",
+                { class: "layout__monitores" },
+                d.monitors.map((m) => h("li", null, h("strong", null, nomeDoMonitor(m)), ` · ${medidasDoMonitor(m)}`)),
+              ),
+          ),
           h("dt", null, h("label", { for: idAtalho }, "Atalho para ir até ele")),
           h("dd", null, h("div", { class: "linha" }, atalho, !recurso("switch_device") && indisponivel())),
         ),

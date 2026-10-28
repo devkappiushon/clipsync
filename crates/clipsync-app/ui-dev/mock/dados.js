@@ -15,7 +15,7 @@ export function peerId(short) {
   return id;
 }
 
-export const EU = { peer_id: peerId("f3d7-ea9a"), short: "f3d7-ea9a", name: "notebook-a" };
+export const EU = { peer_id: peerId("f3d7-ea9a"), short: "f3d7-ea9a", name: plataforma === "windows" ? "desktop-win" : "notebook-a" };
 
 function par({ short, name, addr, state, blocked_reason = null, perms, remote_modules, dias }) {
   return {
@@ -75,10 +75,11 @@ estado.agente = cenario === "erro" ? "failed" : cenario === "sem-perfil" ? "stop
 estado.erroAgente = cenario === "erro" ? "Não foi possível abrir a porta 47800: já está em uso." : null;
 estado.pausado = false;
 estado.telaTravada = false;
-estado.modulos = { clipboard: true, input: plataforma === "linux" };
+estado.modulos = { clipboard: true, input: true };
 estado.dispositivos = dispositivosPadrao();
 
-const CAPACIDADES_INPUT = plataforma === "linux";
+// S7: o input existe no Linux e no Windows (clipsync_input::SUPPORTED).
+const CAPACIDADES_INPUT = true;
 
 export function features() {
   return {
@@ -90,7 +91,8 @@ export function features() {
     switch_device: CAPACIDADES_INPUT,
     layout_copy: CAPACIDADES_INPUT,
     os_notifications: true,
-    global_shortcuts: false,
+    // Windows com o módulo de input ligado: Win+Alt+N, L e P. No Linux não há tecla global sem o portal.
+    global_shortcuts: plataforma === "windows" && estado.modulos.input === true,
     peer_pause: false,
     peer_controls_column: false,
     peer_rtt: false,

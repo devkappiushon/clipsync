@@ -3,7 +3,7 @@
 // Validações do layout_set_link na ordem do contrato §12.5.
 
 import { EU, peerId } from "./dados.js";
-import { atraso, cenario, emitir, erro, estado, registrar } from "./nucleo.js";
+import { atraso, cenario, emitir, erro, estado, plataforma, registrar } from "./nucleo.js";
 
 const SNAP = 16;
 const BORDAS = ["left", "right", "top", "bottom"];
@@ -19,7 +19,26 @@ function dispositivoBase(peer, extra) {
 const PESSOAL = peerId("aa31-537a");
 const CASA = peerId("1bc6-7a55");
 
+/** PC Windows da S7: dois monitores com o nome amigável, em px físicos; o 4K roda a 150%. No Windows o nome serve de `ref`. */
+function layoutWindows() {
+  const devices = [
+    dispositivoBase({ peer_id: EU.peer_id, name: EU.name }, { x: 0, y: 0, hotkey: null, monitors: [monitor("DELL U2723QE", 0, 0, 0, 3840, 2160, 1.5), monitor("LG 24GL600F", 1, 3840, 360, 1920, 1080)] }),
+    dispositivoBase({ peer_id: PESSOAL, name: "pc-pessoal" }, { x: 5920, y: 360, hotkey: 1, monitors: [monitor("eDP-1", 0, 0, 0, 1920, 1080, 1.5)] }),
+    dispositivoBase({ peer_id: CASA, name: "pc-de-casa", state: "offline" }, { x: 0, y: 2320, hotkey: 2, monitors_source: "cached", monitors: [monitor("eDP-1", 0, 0, 0, 1920, 1080)] }),
+  ];
+  const links = [
+    {
+      id: "l1",
+      a: { peer_id: EU.peer_id, monitor: "LG 24GL600F", edge: "right", from: 0, to: 1 },
+      b: { peer_id: PESSOAL, monitor: "eDP-1", edge: "left", from: 0, to: 1 },
+      problem: null,
+    },
+  ];
+  return { devices, links };
+}
+
 function layoutPadrao() {
+  if (plataforma === "windows") return layoutWindows();
   const devices = [
     dispositivoBase({ peer_id: PESSOAL, name: "pc-pessoal" }, { x: 0, y: 0, hotkey: 2, monitors: [monitor("DP-1", 0, 0, 0, 2560, 1440), monitor("HDMI-1", 1, 2560, 180, 1920, 1080)] }),
     dispositivoBase({ peer_id: EU.peer_id, name: EU.name }, { x: 4640, y: 360, hotkey: 1, monitors: [monitor("eDP-1", 0, 0, 0, 1920, 1080, 1.5)] }),

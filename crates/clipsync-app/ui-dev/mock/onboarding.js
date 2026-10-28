@@ -21,9 +21,9 @@ registrar({
   onboarding_start: () => ({
     default_name: estado.inicializado ? EU.name : NOME_PADRAO,
     fingerprint_short: EU.short,
-    input_supported: plataforma === "linux",
+    input_supported: true,
     already_initialized: estado.inicializado,
-    defaults: { input: plataforma === "linux", clipboard: false },
+    defaults: { input: true, clipboard: false },
   }),
 
   onboarding_check_name: ({ name } = {}) => {
@@ -37,9 +37,6 @@ registrar({
     const input = modules.input === true;
     const clipboard = modules.clipboard === true;
     if (!input && !clipboard) throw erro("no_module", "Ligue pelo menos um módulo para esta máquina fazer algo.");
-    if (input && plataforma !== "linux") {
-      throw erro("no_usable_module", "Teclado e mouse ainda não funcionam no Windows. Deixe só a área de transferência.", { field: "input" });
-    }
     if (estado.inicializado && recreate !== true) {
       throw erro("needs_confirmation", "Esta máquina já tem um perfil. Refazer apaga a identidade: os pares terão de parear de novo.");
     }
@@ -69,7 +66,14 @@ registrar({
     if (!features().input) {
       resultados.push({ module: "input", status: "unavailable", detail: "Teclado e mouse ainda não funcionam nesta plataforma." });
     } else if (estado.modulos.input) {
-      resultados.push({ module: "input", status: "experimental", detail: "Portal InputCapture respondeu e o loopback moveu o cursor 3 vezes." });
+      resultados.push({
+        module: "input",
+        status: "experimental",
+        detail:
+          plataforma === "windows"
+            ? "Captura e emulação do Windows prontas, ainda sem prova nesta máquina."
+            : "Portal InputCapture respondeu e o loopback moveu o cursor 3 vezes.",
+      });
     } else {
       resultados.push({ module: "input", status: "not_tested", detail: "Módulo desligado nesta máquina." });
     }

@@ -13,6 +13,7 @@ function itensLinux() {
     { area: "sistema", name: "XWayland", status: "ok", detail: "DISPLAY=:0, servidor X11 respondendo" },
     { area: "sistema", name: "Portais", status: "ok", detail: "InputCapture v1 · RemoteDesktop v2 (teclado, ponteiro, touchscreen)" },
     { area: "sistema", name: "Monitores", status: "ok", detail: "eDP-1 1920×1080 @ 0,0 (escala 1,5)" },
+    { area: "sistema", name: "Layout do teclado", status: "ok", detail: "xkb: br(abnt2)" },
     { area: "adaptadores", name: "Clipboard", status: estado.modulos.clipboard ? "ok" : "missing", detail: estado.modulos.clipboard ? "x11-xfixes · data-control ausente no compositor: observação pela ponte XWayland · plataforma validada" : "Módulo desligado nesta máquina." },
     { area: "adaptadores", name: "Captura de entrada", status: estado.modulos.input ? "ok" : "missing", detail: estado.modulos.input ? "portal-inputcapture · 1 diálogo por sessão · experimental" : "Módulo desligado nesta máquina." },
     { area: "adaptadores", name: "Emulação de entrada", status: estado.modulos.input ? "ok" : "missing", detail: estado.modulos.input ? "portal-remotedesktop · token salvo, sem novo diálogo" : "Módulo desligado nesta máquina." },
@@ -26,9 +27,12 @@ function itensWindows() {
   return [
     { area: "sistema", name: "Sistema operacional", status: "ok", detail: "Windows 11 Pro 24H2 (build 26100)" },
     { area: "sistema", name: "Sessão", status: "ok", detail: "Área de trabalho interativa, sem RDP" },
-    { area: "sistema", name: "Monitores", status: "ok", detail: "\\\\.\\DISPLAY1 2560×1440 @ 0,0" },
+    { area: "sistema", name: "Monitores", status: "ok", detail: "DELL U2723QE 3840×2160 @ 0,0 (escala 1,5) · LG 24GL600F 1920×1080 @ 3840,360" },
+    { area: "sistema", name: "Layout do teclado", status: "ok", detail: "00010416 · Português (Brasil ABNT2)" },
     { area: "adaptadores", name: "Clipboard", status: "ok", detail: "win32 · plataforma experimental" },
-    { area: "adaptadores", name: "Captura de entrada", status: "missing", detail: "Teclado e mouse ainda não funcionam no Windows." },
+    { area: "adaptadores", name: "Captura de entrada", status: estado.modulos.input ? "warn" : "missing", detail: estado.modulos.input ? "win-hooks · experimental, ainda sem prova nesta máquina" : "Módulo desligado nesta máquina." },
+    { area: "adaptadores", name: "Emulação de entrada", status: estado.modulos.input ? "warn" : "missing", detail: estado.modulos.input ? "win-sendinput · experimental, ainda sem prova nesta máquina" : "Módulo desligado nesta máquina." },
+    { area: "adaptadores", name: "Atalhos ativos", status: estado.modulos.input ? "ok" : "missing", detail: estado.modulos.input ? "Win+Alt+1 a 9, Win+Alt+L e Win+Alt+P · Win+Alt+C e Win+Alt+V indisponíveis nesta versão" : "Módulo de teclado e mouse desligado." },
     { area: "conflitos", name: "Mouse Without Borders", status: "ok", detail: "Não detectado." },
   ];
 }
@@ -46,7 +50,18 @@ function bloqueios() {
   if (cenario === "vazio") return [];
   const casa = estado.dispositivos.find((d) => d.name === "pc-de-casa");
   const antigo = estado.dispositivos.find((d) => d.name === "notebook-antigo");
+  // S7 (contrato §13.6 item 9): quando o destino recusa emular, a origem registra o motivo como bloqueio.
+  const pessoal = estado.dispositivos.find((d) => d.name === "pc-pessoal");
+  const recusas =
+    plataforma === "windows"
+      ? [
+          { at_unix_ms: AGORA - 4 * MIN, peer_id: pessoal?.peer_id ?? null, peer_name: "pc-pessoal", module: "input", reason: "pc-pessoal está com a tela bloqueada: o controle voltou para esta máquina" },
+          { at_unix_ms: AGORA - 11 * MIN, peer_id: casa?.peer_id ?? null, peer_name: "pc-de-casa", module: "input", reason: "pc-de-casa está pausado: o controle voltou para esta máquina" },
+          { at_unix_ms: AGORA - 19 * MIN, peer_id: antigo?.peer_id ?? null, peer_name: "notebook-antigo", module: "input", reason: "notebook-antigo não deixou emular teclado e mouse" },
+        ]
+      : [];
   return [
+    ...recusas,
     { at_unix_ms: AGORA - 28 * MIN, peer_id: casa?.peer_id ?? null, peer_name: "pc-de-casa", module: "clipboard", reason: "Oferta recusada: malha pausada." },
     { at_unix_ms: AGORA - 3 * 60 * MIN, peer_id: antigo?.peer_id ?? null, peer_name: "notebook-antigo", module: "input", reason: "Par sem permissão de controle tentou entrar." },
     { at_unix_ms: AGORA - 26 * 60 * MIN, peer_id: null, peer_name: null, module: null, reason: "Conexão de 192.168.115.90 recusada: chave desconhecida." },

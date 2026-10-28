@@ -469,3 +469,13 @@
 .layout__painel .kv .layout__atalho {
   min-width: 0;
 }
+
+.layout__monitores {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  margin: var(--s-1) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-sm);
+}

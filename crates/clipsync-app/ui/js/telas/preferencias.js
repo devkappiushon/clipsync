@@ -1,10 +1,10 @@
-// Tela 7 · Preferências em duas colunas: atalhos (texto, indisponíveis nesta versão) e início com a sessão à esquerda;
+// Tela 7 · Preferências em duas colunas: atalhos (texto fixo: ativos no Windows, indisponíveis no Linux) e início com a sessão à esquerda;
 // notificações por tipo, aparência e idioma à direita; versão, licença e crédito na linha de rodapé.
 // Toda mudança grava na hora pelo prefs_set; se falhar, o controle volta e o erro aparece.
 
 import { api } from "../api.js";
 import { area, aviso, cabecalho, indisponivel } from "../areas.js";
-import { botao, cartao, interruptor, segmentado, tabela, tecla } from "../componentes.js";
+import { botao, cartao, interruptor, segmentado, selo, tabela, tecla } from "../componentes.js";
 import { h, trocar } from "../dom.js";
 import { recurso } from "../estado.js";
 import { INDISPONIVEL, mensagemDe } from "../formatar.js";
@@ -31,18 +31,19 @@ function irParaDispositivos(teclas) {
   const ultima = teclas[n - 1];
   const prefixo = primeira.slice(0, -1);
   const sequencial = n > 1 && teclas.every((t, i) => t === `${prefixo}${Number(primeira.slice(-1)) + i}`) && ultima.startsWith(prefixo);
-  if (!sequencial) return teclas.map((tecla, i) => ({ acao: `Ir para o dispositivo ${i + 1}`, tecla }));
+  if (!sequencial) return teclas.map((tecla, i) => ({ acao: `Ir para o dispositivo ${i + 1}`, tecla, vale: true }));
   const lista = n === 2 ? "1 ou 2" : `${Array.from({ length: n - 1 }, (_, i) => i + 1).join(", ")} ou ${n}`;
-  return [{ acao: `Ir para dispositivo ${lista}`, tecla: `${primeira} a ${ultima.slice(-1)}` }];
+  return [{ acao: `Ir para dispositivo ${lista}`, tecla: `${primeira} a ${ultima.slice(-1)}`, vale: true }];
 }
 
+// `vale`: o atalho existe no Windows (contrato §13.6). Abrir e Enviar uma vez seguem indisponíveis lá.
 function atalhos(prefs) {
   const s = prefs.shortcuts;
   return [
-    { acao: "Abrir o ClipSync", tecla: s.open },
-    { acao: "Pausar tudo", tecla: s.pause_all },
-    { acao: "Enviar o clipboard uma vez", tecla: s.send_once },
-    { acao: "Travar nesta tela", tecla: s.lock_screen },
+    { acao: "Abrir o ClipSync", tecla: s.open, vale: false },
+    { acao: "Pausar tudo", tecla: s.pause_all, vale: true },
+    { acao: "Enviar o clipboard uma vez", tecla: s.send_once, vale: false },
+    { acao: "Travar nesta tela", tecla: s.lock_screen, vale: true },
     ...irParaDispositivos(s.go_to_device),
   ];
 }
@@ -88,7 +89,7 @@ export default function montar({ ir, assinar }) {
     const ligado = recurso("global_shortcuts");
     return cartao({
       titulo: "Atalhos",
-      acoes: !ligado && indisponivel(),
+      acoes: ligado ? selo("ok", "ativos nesta máquina") : indisponivel(),
       filhos: [
         lista.length === 0
           ? h("p", { class: "muted" }, "Nenhum atalho definido.")
@@ -97,7 +98,7 @@ export default function montar({ ir, assinar }) {
               colunas: [
                 { chave: "acao", rotulo: "Ação" },
                 { chave: "tecla", rotulo: "Atalho", render: (a) => tecla(a.tecla) },
-                ...(ligado ? [{ chave: "estado", rotulo: "Estado", render: () => "ativo" }] : []),
+                ...(ligado ? [{ chave: "estado", rotulo: "Estado", render: (a) => (a.vale ? "ativo" : indisponivel()) }] : []),
               ],
               linhas: lista,
               chaveLinha: (a) => a.acao,
@@ -105,7 +106,13 @@ export default function montar({ ir, assinar }) {
         h(
           "div",
           { class: "preferencias__alternativa" },
-          h("p", { class: "nota" }, "Enquanto o atalho global não existe, as mesmas ações estão em botões: Pausar tudo na barra lateral e no menu da bandeja; Travar nesta tela e Ir para dispositivo no Layout de telas."),
+          h(
+            "p",
+            { class: "nota" },
+            ligado
+              ? "Os atalhos valem com o módulo de teclado e mouse ligado, até durante o controle de outra máquina. As mesmas ações continuam em botões: Pausar tudo na barra lateral; Travar nesta tela e Ir para dispositivo no Layout de telas."
+              : "Enquanto o atalho global não existe, as mesmas ações estão em botões: Pausar tudo na barra lateral e no menu da bandeja; Travar nesta tela e Ir para dispositivo no Layout de telas.",
+          ),
           botao({ rotulo: "Abrir o Layout de telas", variante: "discreto", icone: "avancar", aoClicar: () => ir("layout") }),
         ),
       ],

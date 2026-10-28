@@ -4,7 +4,8 @@
 const ATRASO_MS = 160;
 
 export const cenario = new URLSearchParams(location.search).get("cenario") ?? "padrao";
-export const plataforma = new URLSearchParams(location.search).get("plataforma") === "windows" ? "windows" : "linux";
+// ?cenario=windows (ou ?plataforma=windows) simula o PC Windows da S7: dois monitores, um com escala 1,5, e o input ligado.
+export const plataforma = cenario === "windows" || new URLSearchParams(location.search).get("plataforma") === "windows" ? "windows" : "linux";
 
 /** Dados mutáveis do mock. Cada domínio usa sua própria chave. */
 export const estado = {};

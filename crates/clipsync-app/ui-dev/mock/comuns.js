@@ -14,7 +14,7 @@ registrar({
     screen_locked: estado.telaTravada,
     mesh: malha(),
     modules: { ...estado.modulos },
-    input_supported: plataforma === "linux",
+    input_supported: true,
     version: "0.2.0",
     platform: plataforma,
     features: features(),

@@ -61,7 +61,8 @@ Escolha pela URL: `/?cenario=<nome>#/<tela>`.
 | `cenario=erro` | agente com falha: telas mostram o erro e "Tentar de novo"; gravar preferências falha com `io` |
 | `cenario=estados` | par offline, par bloqueado por chave diferente, oferta de layout pendente, exportação do pacote falhando |
 | `cenario=pareamento` | pareamento já no passo do código, sem esperar (sair da tela cancela a tentativa) |
-| `plataforma=windows` | recursos de teclado e mouse desligados |
+| `cenario=windows` | PC Windows da S7: dois monitores (um 4K a 150%), teclado e mouse ligados, atalhos ativos, recusas de destino listadas como bloqueio |
+| `plataforma=windows` | o mesmo, combinável com outro cenário (ex.: `cenario=sem-perfil&plataforma=windows` mostra o onboarding do Windows) |
 | `tema=claro` ou `tema=escuro` | tema inicial, para capturar as telas nos dois temas |
 
 ### Testes do simulador
