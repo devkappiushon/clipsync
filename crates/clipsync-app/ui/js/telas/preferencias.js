@@ -23,6 +23,19 @@ const TEMAS = [
   { valor: "dark", rotulo: "Escuro" },
 ];
 
+/** Os atalhos de ir para o dispositivo N viram uma linha só: "Win+Alt+1 a 3" quando só o número muda. */
+function irParaDispositivos(teclas) {
+  if (teclas.length === 0) return [];
+  const n = teclas.length;
+  const primeira = teclas[0];
+  const ultima = teclas[n - 1];
+  const prefixo = primeira.slice(0, -1);
+  const sequencial = n > 1 && teclas.every((t, i) => t === `${prefixo}${Number(primeira.slice(-1)) + i}`) && ultima.startsWith(prefixo);
+  if (!sequencial) return teclas.map((tecla, i) => ({ acao: `Ir para o dispositivo ${i + 1}`, tecla }));
+  const lista = n === 2 ? "1 ou 2" : `${Array.from({ length: n - 1 }, (_, i) => i + 1).join(", ")} ou ${n}`;
+  return [{ acao: `Ir para dispositivo ${lista}`, tecla: `${primeira} a ${ultima.slice(-1)}` }];
+}
+
 function atalhos(prefs) {
   const s = prefs.shortcuts;
   return [
@@ -30,7 +43,7 @@ function atalhos(prefs) {
     { acao: "Pausar tudo", tecla: s.pause_all },
     { acao: "Enviar o clipboard uma vez", tecla: s.send_once },
     { acao: "Travar nesta tela", tecla: s.lock_screen },
-    ...s.go_to_device.map((tecla, i) => ({ acao: `Ir para o dispositivo ${i + 1}`, tecla })),
+    ...irParaDispositivos(s.go_to_device),
   ];
 }
 
@@ -170,7 +183,7 @@ export default function montar({ ir, assinar }) {
   function cartaoIdioma() {
     return cartao({
       titulo: "Idioma",
-      filhos: [h("p", null, "Português (Brasil)"), h("p", { class: "nota" }, `Outros idiomas: ${INDISPONIVEL}.`)],
+      filhos: [h("div", { class: "preferencias__idioma" }, h("p", null, "Português (Brasil)"), h("p", { class: "nota" }, `Outros idiomas: ${INDISPONIVEL}.`))],
     });
   }
 
