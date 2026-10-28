@@ -90,24 +90,27 @@ impl AppState {
 mod tests {
     use super::*;
     use crate::ui::UiOptions;
+    use std::path::Path;
     use std::sync::Arc;
     use std::time::Duration;
 
-    async fn stub_ui() -> Ui {
+    /// Uma `Ui` real sobre um perfil temporário sem `init`: sobe sem agente, só com a consulta.
+    async fn ui_without_profile(dir: &Path) -> Ui {
         Ui::start(UiOptions {
-            profile: None,
+            profile: Some(dir.join("perfil")),
             poll: Duration::from_millis(10),
             listen: None,
             fake_adapters: true,
-            autostart_dir: None,
-            downloads_dir: None,
+            autostart_dir: Some(dir.join("autostart")),
+            downloads_dir: Some(dir.join("downloads")),
         })
         .await
-        .expect("stub starts")
+        .expect("ui starts without a profile")
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn command_waits_for_the_ui_to_come_up() {
+        let dir = tempfile::tempdir().expect("tempdir");
         let state = Arc::new(AppState::new(false));
         assert!(state.ui_now().is_none());
         let waiter = {
@@ -115,20 +118,17 @@ mod tests {
             tokio::spawn(async move { state.ui().await.is_ok() })
         };
         tokio::time::sleep(Duration::from_millis(20)).await;
-        state.set_ready(stub_ui().await);
+        let ui = ui_without_profile(dir.path()).await;
+        state.set_ready(ui.clone());
         assert!(waiter.await.expect("task finishes"));
         assert!(state.ui_now().is_some());
+        ui.shutdown().await;
     }
 
     #[tokio::test]
     async fn failed_start_is_reported_to_every_command() {
         let state = AppState::new(true);
-        state.set_failed(UiError {
-            code: "config".into(),
-            message: "x".into(),
-            field: None,
-            details: None,
-        });
+        state.set_failed(UiError::new("config", "x"));
         let code = state.ui().await.err().map(|error| error.code);
         assert_eq!(code.as_deref(), Some("config"));
         assert!(state.ui_now().is_none());

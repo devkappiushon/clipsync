@@ -10,7 +10,6 @@ mod msg;
 mod signals;
 mod state;
 mod tray;
-mod ui;
 mod window;
 
 use std::ffi::OsString;
@@ -19,6 +18,10 @@ use std::time::Duration;
 
 use tauri::webview::PageLoadEvent;
 use tauri::{Manager, RunEvent, WindowEvent};
+
+// A superfície da §12.3 (`Ui`, `UiOptions`, `UiError`, `UiEvent`) vem do crate do Rivet; os
+// módulos da casca a alcançam por `crate::ui`.
+use clipsync_ui as ui;
 
 use crate::state::AppState;
 use crate::ui::UiOptions;

@@ -11,8 +11,8 @@ name = "clipsync-app"
 path = "src/main.rs"
 
 [dependencies]
-# TODO(contrato §12.1 e §12.3): quando o crate do Rivet existir, trocar o stub `src/ui.rs` por
-# `clipsync-ui = { path = "../clipsync-ui" }`. O app depende só de ui + tauri (grafo da §12.1).
+# Grafo da §12.1: o app depende só de ui + tauri. A lógica das telas fica no clipsync-ui.
+clipsync-ui = { path = "../clipsync-ui" }
 tauri.workspace = true
 tauri-plugin-notification.workspace = true
 tokio.workspace = true
@@ -20,6 +20,9 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [build-dependencies]
 tauri-build.workspace = true
