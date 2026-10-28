@@ -21,7 +21,13 @@ async fn answers_without_a_dialog_and_with_a_detail_in_portuguese() {
         !detail.contains('\n') && !detail.contains('\u{2014}'),
         "{detail}"
     );
-    if cfg!(not(target_os = "linux")) {
+    if cfg!(windows) {
+        // the hooks and the monitors decide; nothing is `Validated` until the matrix says so
+        assert!(
+            !matches!(outcome, SelfTestOutcome::Validated(_)),
+            "{outcome:?}"
+        );
+    } else if cfg!(not(target_os = "linux")) {
         assert!(matches!(outcome, SelfTestOutcome::Unavailable(_)));
     }
 }

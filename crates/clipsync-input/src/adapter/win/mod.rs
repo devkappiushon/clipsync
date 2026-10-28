@@ -16,8 +16,6 @@ pub(super) const HOOKS_GAVE_UP: &str = "Os ganchos de teclado e mouse deste comp
 /// Brings the hooks up and down, reads the monitors and checks the desktop. It reads no key (the
 /// callback passes everything without looking), moves no cursor and presses nothing. The result is
 /// `Experimental` until the compatibility matrix records the roteiro on a real machine.
-// Called by `self_test.rs` (Vector) once it wires the Windows branch.
-#[allow(dead_code)]
 pub fn self_test() -> SelfTestOutcome {
     let monitors = match clipsync_win::monitors() {
         Ok(monitors) => monitors,

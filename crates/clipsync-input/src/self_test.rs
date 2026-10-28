@@ -4,7 +4,8 @@
 //! the cursor or presses a key.
 //!
 //! Criterion, in this order:
-//! 1. `Unavailable`: not Linux; or the InputCapture portal does not answer; or the RemoteDesktop
+//! 1. `Unavailable`: neither Linux nor Windows (Windows has its own check in `adapter::win`, which
+//!    is never better than `Experimental` until the matrix records the roteiro); or the InputCapture portal does not answer; or the RemoteDesktop
 //!    portal does not answer or lacks the keyboard or the pointer device type; or the portals did
 //!    not answer in 5 s. The module cannot run (it needs both capture and emulation).
 //! 2. `Experimental`: both portals answer, and at least one of: no monitor detected, an Input
@@ -13,6 +14,7 @@
 //! 3. `Validated`: none of the above. Unreachable until `KEYBOARD_VALIDATED` turns true, which
 //!    happens when the matrix promotes keyboard and mouse (README says "experimental" today).
 
+#[cfg(any(target_os = "linux", test))]
 use crate::msg;
 
 /// Same shape as `clipsync_clipboard::SelfTestOutcome`. The `String` is the detail in Portuguese.
@@ -145,9 +147,15 @@ pub async fn self_test() -> SelfTestOutcome {
 }
 
 /// There is no adapter outside Linux in this version.
-#[cfg(not(target_os = "linux"))]
+#[cfg(windows)]
 pub async fn self_test() -> SelfTestOutcome {
-    SelfTestOutcome::Unavailable(msg::SELF_TEST_NO_PLATFORM.to_owned())
+    // Quick and synchronous: it installs and drops the hooks, reads the monitors and the desktop.
+    crate::adapter::win::self_test()
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+pub async fn self_test() -> SelfTestOutcome {
+    SelfTestOutcome::Unavailable(crate::msg::SELF_TEST_NO_PLATFORM.to_owned())
 }
 
 #[cfg(test)]
