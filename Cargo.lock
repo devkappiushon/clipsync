@@ -811,6 +811,7 @@ name = "clipsync-win"
 version = "0.2.1"
 dependencies = [
  "thiserror 2.0.21",
+ "windows",
 ]
 
 [[package]]
