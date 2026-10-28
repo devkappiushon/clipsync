@@ -1,4 +1,4 @@
-//! `clipsync probe input`: portal capture and emulation checks. Never prints keys or key codes.
+//! `clipsync probe input`: capture and emulation checks on the real adapters. Never prints keys or key codes.
 use crate::msg;
 use clipsync_proto::LoopbackStats;
 
@@ -39,21 +39,21 @@ pub async fn run(args: ProbeArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
-mod linux;
+#[cfg(any(target_os = "linux", windows))]
+mod run;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 async fn capture(_: u32) -> anyhow::Result<()> {
     Err(Unavailable.into())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 async fn emulate(_: bool) -> anyhow::Result<()> {
     Err(Unavailable.into())
 }
 
-#[cfg(target_os = "linux")]
-use linux::{capture, emulate};
+#[cfg(any(target_os = "linux", windows))]
+use run::{capture, emulate};
 
 /// Text for the loopback result, in pt-BR.
 pub fn print_loopback(stats: &LoopbackStats) -> String {

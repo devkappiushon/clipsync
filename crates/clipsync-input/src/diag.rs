@@ -79,11 +79,30 @@ pub async fn diagnose() -> Vec<DiagItem> {
         });
     }
     #[cfg(windows)]
-    out.push(item(
-        "teclado e mouse",
-        DiagStatus::Warn,
-        "captura e emulação do Windows prontas, ainda sem prova nesta máquina",
-    ));
+    {
+        // Nothing here installs a hook or moves the cursor: it only names what will run.
+        out.push(item(
+            "teclado e mouse",
+            DiagStatus::Warn,
+            "captura e emulação do Windows prontas, ainda sem prova nesta máquina",
+        ));
+        out.push(item(
+            "captura",
+            DiagStatus::Ok,
+            "win-hooks: ganchos de teclado e mouse só com ligação no layout e o módulo ligado",
+        ));
+        out.push(item(
+            "emulação",
+            DiagStatus::Ok,
+            "win-sendinput: movimento absoluto no desktop virtual, teclas pela posição física",
+        ));
+        out.push(item("layout do teclado", DiagStatus::Ok, windows_layout()));
+        out.push(item(
+            "atalhos",
+            DiagStatus::Ok,
+            "Win+Alt+1 a 9 (ir para o dispositivo), Win+Alt+L (travar), Win+Alt+P (pausar); Win+Alt+C e Win+Alt+V: indisponível nesta versão",
+        ));
+    }
     #[cfg(not(any(target_os = "linux", windows)))]
     out.push(item(
         "teclado e mouse",
@@ -137,4 +156,21 @@ pub(crate) fn running_conflicts() -> Vec<String> {
     found.sort();
     found.dedup();
     found
+}
+
+/// The keyboard layout of the Windows session, by its KLID (diagnostics only).
+#[cfg(windows)]
+fn windows_layout() -> String {
+    match clipsync_win::keyboard_layout() {
+        Some(klid) => {
+            let name = match klid.as_str() {
+                "00010416" => "Português (Brasil ABNT2)",
+                "00000416" => "Português (Brasil ABNT)",
+                "00000409" => "EUA",
+                _ => "outro",
+            };
+            format!("{name} ({klid})")
+        }
+        None => "não foi possível ler o layout".to_owned(),
+    }
 }
