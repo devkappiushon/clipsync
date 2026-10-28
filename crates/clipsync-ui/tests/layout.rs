@@ -30,6 +30,11 @@ fn ep(peer: &PeerId, edge: &str, from: f64, to: f64) -> Value {
     json!({ "peer_id": peer.to_hex(), "monitor": "fake-0", "edge": edge, "from": from, "to": to })
 }
 
+/// The answer names the offer the user saw: who made it and its revision.
+fn offer_answer(accept: bool, from: &PeerId, rev: u64) -> Value {
+    json!({ "cmd": "layout_offer_answer", "args": { "accept": accept, "from_peer_id": from.to_hex(), "rev": rev } })
+}
+
 fn set_link(id: Value, a: Value, b: Value, base_rev: u64) -> Value {
     json!({ "cmd": "layout_set_link", "args": { "id": id, "a": a, "b": b, "base_rev": base_rev } })
 }
@@ -158,7 +163,7 @@ async fn without_the_input_module_or_a_profile_every_command_says_why() {
         json!({ "cmd": "layout_set_device", "args": { "peer_id": hex, "x": 0, "y": 0, "hotkey": null, "base_rev": 0 } }),
         json!({ "cmd": "layout_set_options", "args": { "dead_corner_px": 8, "base_rev": 0 } }),
         json!({ "cmd": "layout_copy_to_peers", "args": { "peer_ids": null } }),
-        json!({ "cmd": "layout_offer_answer", "args": { "accept": true } }),
+        json!({ "cmd": "layout_offer_answer", "args": { "accept": true, "from_peer_id": hex, "rev": 1 } }),
         json!({ "cmd": "lock_to_screen", "args": { "locked": true } }),
         json!({ "cmd": "switch_to_device", "args": { "peer_id": hex } }),
         json!({ "cmd": "input_test", "args": { "peer_id": hex, "seconds": 5 } }),
@@ -955,8 +960,7 @@ async fn a_layout_is_offered_to_the_peers_and_each_answer_is_reported() {
     assert!(!dir.path().join("b").join("layout.toml").exists());
 
     // Declining clears it and changes nothing.
-    let answer =
-        |accept: bool| json!({ "cmd": "layout_offer_answer", "args": { "accept": accept } });
+    let answer = |accept: bool| offer_answer(accept, &ida, 1);
     assert_eq!(ok(&b, answer(false)).await, json!({ "layout_rev": 0 }));
     assert_eq!(get(&b).await["pending_offer"], json!(null));
     assert!(!dir.path().join("b").join("layout.toml").exists());
@@ -986,4 +990,89 @@ async fn a_layout_is_offered_to_the_peers_and_each_answer_is_reported() {
     for ui in [&a, &b, &c] {
         ui.shutdown().await;
     }
+}
+
+/// S6-18: the pending offer can be replaced between the screen and the click. An answer that
+/// names another offer than the pending one is refused, whether it accepts or declines, and
+/// nothing is written.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_answer_must_name_the_offer_the_user_saw() {
+    let d = duo().await;
+    let (ida, idb) = (&d.ida, &d.idb);
+    let copy = json!({ "cmd": "layout_copy_to_peers", "args": { "peer_ids": [idb.to_hex()] } });
+    let b_file = d.layout_file("b");
+
+    // Nothing pending: no_offer, whatever the answer says.
+    assert_eq!(err(&d.b, offer_answer(true, ida, 1)).await.code, "no_offer");
+
+    ok(
+        &d.a,
+        set_link(
+            json!(null),
+            ep(ida, "right", 0.25, 0.75),
+            ep(idb, "left", 0.25, 0.75),
+            0,
+        ),
+    )
+    .await;
+    ok(&d.a, copy.clone()).await;
+    wait_until("offer rev 1 shown on b", || async {
+        get(&d.b).await["pending_offer"]["rev"] == json!(1)
+    })
+    .await;
+
+    // Wrong revision or wrong sender: stale_offer, and it says which offer is pending.
+    for (accept, from, rev) in [
+        (true, ida, 0),
+        (true, ida, 2),
+        (false, ida, 2),
+        (true, idb, 1),
+        (false, &PeerId([8; 32]), 1),
+    ] {
+        let e = err(&d.b, offer_answer(accept, from, rev)).await;
+        assert_eq!(
+            e.code, "stale_offer",
+            "accept={accept} from={from} rev={rev}"
+        );
+        let details = e.details.as_ref().unwrap();
+        assert_eq!(details["from_peer_id"], json!(ida.to_hex()));
+        assert_eq!(details["rev"], json!(1));
+        assert!(e.message.contains("revisão 1"), "{}", e.message);
+    }
+    assert!(!b_file.exists(), "a refused answer writes nothing");
+    assert_eq!(
+        get(&d.b).await["pending_offer"]["rev"],
+        json!(1),
+        "and clears nothing"
+    );
+
+    // A malformed sender is a bad request on its field.
+    let bad = json!({ "cmd": "layout_offer_answer", "args": { "accept": true, "from_peer_id": "xyz", "rev": 1 } });
+    let e = err(&d.b, bad).await;
+    assert_eq!(
+        (e.code.as_str(), e.field.as_deref()),
+        ("bad_request", Some("from_peer_id"))
+    );
+    let missing = json!({ "cmd": "layout_offer_answer", "args": { "accept": true } });
+    assert_eq!(err(&d.b, missing).await.code, "bad_request");
+
+    // The offer is replaced after the screen was drawn: the old answer is refused, the new one works.
+    ok(&d.a, json!({ "cmd": "layout_set_device", "args": { "peer_id": idb.to_hex(), "x": 64, "y": 0, "hotkey": null, "base_rev": 1 } })).await;
+    ok(&d.a, copy).await;
+    wait_until("offer rev 2 replaces rev 1 on b", || async {
+        get(&d.b).await["pending_offer"]["rev"] == json!(2)
+    })
+    .await;
+    let e = err(&d.b, offer_answer(true, ida, 1)).await;
+    assert_eq!(e.code, "stale_offer");
+    assert_eq!(e.details.as_ref().unwrap()["rev"], json!(2));
+    assert!(!b_file.exists());
+    assert_eq!(
+        ok(&d.b, offer_answer(true, ida, 2)).await,
+        json!({ "layout_rev": 1 })
+    );
+    assert!(b_file.exists());
+    assert_eq!(err(&d.b, offer_answer(true, ida, 2)).await.code, "no_offer");
+    d.a.shutdown().await;
+    d.b.shutdown().await;
 }

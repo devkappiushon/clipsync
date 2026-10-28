@@ -26,7 +26,7 @@ async fn every_command_of_the_layout_screen_says_input_off() {
         json!({ "cmd": "layout_set_device", "args": { "peer_id": hex, "x": 0, "y": 0, "hotkey": null, "base_rev": 0 } }),
         json!({ "cmd": "layout_set_options", "args": { "dead_corner_px": 8, "base_rev": 0 } }),
         json!({ "cmd": "layout_copy_to_peers", "args": { "peer_ids": null } }),
-        json!({ "cmd": "layout_offer_answer", "args": { "accept": true } }),
+        json!({ "cmd": "layout_offer_answer", "args": { "accept": true, "from_peer_id": hex, "rev": 1 } }),
         json!({ "cmd": "lock_to_screen", "args": { "locked": true } }),
         json!({ "cmd": "switch_to_device", "args": { "peer_id": hex } }),
         json!({ "cmd": "input_test", "args": { "peer_id": hex, "seconds": 5 } }),

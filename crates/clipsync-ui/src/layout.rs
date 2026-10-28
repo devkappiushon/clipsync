@@ -33,6 +33,7 @@ pub mod code {
     pub const INPUT_OFF: &str = "input_off";
     pub const NO_LAYOUT: &str = "no_layout";
     pub const NO_OFFER: &str = "no_offer";
+    pub const STALE_OFFER: &str = "stale_offer";
     pub const SAME_DEVICE: &str = "same_device";
     pub const INTERNAL_EDGE_LOCKED: &str = "internal_edge_locked";
     pub const EMPTY_SEGMENT: &str = "empty_segment";
@@ -67,6 +68,12 @@ pub(crate) mod txt {
     pub const DEAD_CORNER_EMPTIES: &str = "com esse valor uma ligação ficaria sem trecho: encurte os cantos mortos ou ajuste a ligação";
     pub const OFFER_OFFLINE: &str = "dispositivo offline: a oferta não foi enviada";
     pub const OFFER_DENIED: &str = "o outro dispositivo não aceitou a oferta: ele precisa permitir que este controle o teclado e o mouse dele";
+
+    pub fn stale_offer(from: &str, rev: u64) -> String {
+        format!(
+            "a oferta mudou: agora quem oferece é {from} (revisão {rev}): confira e responda de novo"
+        )
+    }
 
     pub fn hotkey_taken(key: u8, owner: &str) -> String {
         format!("Win+Alt+{key} já é de {owner}")
@@ -326,6 +333,10 @@ pub struct CopyToPeersArgs {
 #[serde(deny_unknown_fields)]
 pub struct OfferAnswerArgs {
     pub accept: bool,
+    /// 64 hex: who made the offer the screen showed (`pending_offer.from_peer_id`).
+    pub from_peer_id: String,
+    /// The revision of that offer (`pending_offer.rev`).
+    pub rev: u64,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1156,8 +1167,15 @@ fn apply_offer(l: &mut file::Layout, offer: &LayoutOffer, known: impl Fn(PeerId)
     }
 }
 
+/// The answer names the offer the user saw (`from_peer_id` and `rev`). The module keeps one
+/// offer and any peer with `input_in` can replace it, so an answer to another offer than the
+/// pending one is `stale_offer`, whether it accepts or declines, and it says which one is
+/// pending. What is applied is always the offer read here, the one that was checked. A newer
+/// offer that lands after the check can still be dropped by the final clear: that loses an
+/// offer, it never applies one the user did not see.
 pub(crate) async fn offer_answer(ctx: &Ctx, args: OfferAnswerArgs) -> Result<RevReply, UiError> {
     let cfg = require_input(ctx)?;
+    let seen_from = api::peer_id(&args.from_peer_id, "from_peer_id")?;
     let _guard = WRITE.lock().await;
     let state = match ask(ctx, ModuleCommand::InputState).await? {
         ModuleReply::InputState(s) => s,
@@ -1167,6 +1185,16 @@ pub(crate) async fn offer_answer(ctx: &Ctx, args: OfferAnswerArgs) -> Result<Rev
         return Err(UiError::new(code::NO_OFFER, txt::NO_OFFER));
     };
     let mut w = World::load(ctx).await?;
+    if pending.from != seen_from || pending.offer.rev != args.rev {
+        return Err(UiError::new(
+            code::STALE_OFFER,
+            txt::stale_offer(&w.name_of(pending.from), pending.offer.rev),
+        )
+        .with_details(serde_json::json!({
+            "from_peer_id": pending.from.to_hex(),
+            "rev": pending.offer.rev,
+        })));
+    }
     if !args.accept {
         ask(ctx, ModuleCommand::InputOfferClear).await?;
         return Ok(RevReply {
