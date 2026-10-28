@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const LAYOUT_VERSION: u32 = 1;
 pub const DEFAULT_DEAD_CORNER_PX: u32 = 8;
@@ -461,25 +462,40 @@ impl Layout {
         }
     }
 
-    /// Validates, then writes `path.tmp` and renames it over `path`.
+    /// Validates, then writes a private temp file next to `path` and renames it over `path`.
     pub fn write(&self, path: &Path) -> Result<(), LayoutError> {
         self.validate()?;
         let text = self.to_toml_string()?;
-        let mut tmp = path.as_os_str().to_owned();
-        tmp.push(".tmp");
-        let tmp = std::path::PathBuf::from(tmp);
-        let io = |e: std::io::Error| LayoutError::Io(e.to_string());
-        let res = (|| {
-            let mut f = std::fs::File::create(&tmp)?;
-            f.write_all(text.as_bytes())?;
-            f.sync_all()?;
-            std::fs::rename(&tmp, path)
-        })();
-        if res.is_err() {
-            let _ = std::fs::remove_file(&tmp);
-        }
-        res.map_err(io)
+        write_private(path, text.as_bytes()).map_err(|e| LayoutError::Io(e.to_string()))
     }
+}
+
+/// Same shape as the core's `write_private`: a temp name unique per write, `create_new` (never
+/// opens an existing file or follows a link planted at that name), mode 0600 on Unix, `fsync`,
+/// then an atomic rename. A symlink at `path` itself is replaced, not followed.
+fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    static NEXT_TMP: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT_TMP.fetch_add(1, Ordering::Relaxed);
+    let mut name = path.as_os_str().to_owned();
+    name.push(format!(".tmp-{}-{n}", std::process::id()));
+    let tmp = std::path::PathBuf::from(name);
+    let res = (|| {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts.open(&tmp)?;
+        f.write_all(data)?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    res
 }
 
 impl Link {
@@ -855,6 +871,53 @@ mod tests {
         )]);
         assert_eq!(bad.write(&p).unwrap_err().code(), "same_device");
         assert_eq!(Layout::read(&p).unwrap(), Some(sample()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_symlink_is_never_followed_and_the_file_is_private() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let d = tempfile::tempdir().unwrap();
+        let victim = d.path().join("victim.txt");
+        std::fs::write(&victim, "intacto").unwrap();
+        let p = d.path().join("layout.toml");
+        // The old fixed temp name, and the target itself, both pointing at the victim.
+        symlink(&victim, d.path().join("layout.toml.tmp")).unwrap();
+        symlink(&victim, &p).unwrap();
+        sample().write(&p).unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "intacto");
+        assert!(
+            !std::fs::symlink_metadata(&p)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(Layout::read(&p).unwrap(), Some(sample()));
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn concurrent_writes_do_not_share_a_temp_file_and_leave_none_behind() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("layout.toml");
+        std::thread::scope(|s| {
+            for rev in 1..=8u64 {
+                let p = &p;
+                s.spawn(move || {
+                    let mut l = sample();
+                    l.rev = rev;
+                    l.write(p).unwrap();
+                });
+            }
+        });
+        let back = Layout::read(&p).unwrap().unwrap();
+        assert!((1..=8).contains(&back.rev));
+        let names: Vec<_> = std::fs::read_dir(d.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("layout.toml")]);
     }
 
     #[test]
