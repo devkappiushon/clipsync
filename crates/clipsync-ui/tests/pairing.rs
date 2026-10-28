@@ -8,11 +8,19 @@
 
 mod common;
 
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+use clipsync_core::tls::KEEP_ALIVE;
 use clipsync_ui::UiEvent;
 use clipsync_ui::events::{PairCodeReady, PairOutcomeName, PairResult};
 use common::*;
 use serde_json::{Value, json};
+use tokio::net::UdpSocket;
 use tokio::sync::broadcast;
+use tokio::task::JoinHandle;
 
 async fn code_ready(rx: &mut broadcast::Receiver<UiEvent>, who: &str) -> PairCodeReady {
     match next_event(rx, who, |e| matches!(e, UiEvent::PairCodeReady(_))).await {
@@ -36,6 +44,55 @@ fn finish(id: u64, grants: Value, ack: bool) -> Value {
     json!({ "cmd": "pair_finish", "args": {
         "attempt_id": id, "grants": grants, "acknowledge_full_trust": ack,
     } })
+}
+
+/// A UDP relay between the joiner and the host that can lose what the host sends, like a
+/// network dropping the one packet that matters.
+struct LossyRelay {
+    addr: SocketAddr,
+    losing: Arc<AtomicBool>,
+    task: JoinHandle<()>,
+}
+
+impl LossyRelay {
+    async fn start(host: SocketAddr) -> Self {
+        let front = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let back = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        back.connect(host).await.unwrap();
+        let addr = front.local_addr().unwrap();
+        let losing = Arc::new(AtomicBool::new(false));
+        let lose = losing.clone();
+        let task = tokio::spawn(async move {
+            let (mut up, mut down) = (vec![0u8; 65_536], vec![0u8; 65_536]);
+            let mut joiner = None;
+            loop {
+                tokio::select! {
+                    r = front.recv_from(&mut up) => {
+                        let Ok((n, from)) = r else { continue };
+                        joiner = Some(from);
+                        let _ = back.send(&up[..n]).await;
+                    }
+                    r = back.recv(&mut down) => {
+                        let Ok(n) = r else { continue };
+                        if let Some(j) = joiner.filter(|_| !lose.load(Ordering::SeqCst)) {
+                            let _ = front.send_to(&down[..n], j).await;
+                        }
+                    }
+                }
+            }
+        });
+        Self { addr, losing, task }
+    }
+
+    /// Everything the host sends in the next `d` is lost.
+    fn lose_host_packets(&self, d: Duration) {
+        self.losing.store(true, Ordering::SeqCst);
+        let losing = self.losing.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(d).await;
+            losing.store(false, Ordering::SeqCst);
+        });
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -263,6 +320,58 @@ async fn cancel_ends_the_attempt_and_saves_nothing() {
         err(&ui_a, attempt("pair_cancel", id)).await.code,
         "no_attempt"
     );
+    ui_a.shutdown().await;
+    ui_c.shutdown().await;
+}
+
+/// CI 40680756334 (e40849c): the cancel reached the other side only as the FIN and the
+/// CONNECTION_CLOSE of a dropped connection, packets QUIC never sends twice. With them lost, c
+/// ended on a stateless reset, if a's endpoint was still there to answer, or on the idle timeout
+/// (keep-alive 5 s + idle 15 s, the 20 s the test waits), and its user kept waiting. The decline
+/// now goes as Confirm{false} on the control stream, which QUIC retransmits.
+#[tokio::test(flavor = "multi_thread")]
+async fn cancel_reaches_the_other_side_even_when_packets_are_lost() {
+    let dir = tempfile::tempdir().unwrap();
+    let (pa, _) = init_profile(dir.path(), "a", CLIPBOARD_ONLY);
+    let (pc, _) = init_profile(dir.path(), "c", CLIPBOARD_ONLY);
+    let ui_a = start(dir.path(), "a").await;
+    let ui_c = start(dir.path(), "c").await;
+    let (mut ev_a, mut ev_c) = (ui_a.subscribe(), ui_c.subscribe());
+
+    let host = ok(
+        &ui_a,
+        json!({ "cmd": "pair_host_start", "args": { "port": 0 } }),
+    )
+    .await;
+    let id = host["attempt_id"].as_u64().unwrap();
+    let port = u16::try_from(host["port"].as_u64().unwrap()).unwrap();
+    let relay = LossyRelay::start(SocketAddr::from(([127, 0, 0, 1], port))).await;
+    ok(
+        &ui_c,
+        json!({ "cmd": "pair_join_start", "args": { "addr": relay.addr.to_string() } }),
+    )
+    .await;
+    code_ready(&mut ev_a, "code on a").await;
+    code_ready(&mut ev_c, "code on c").await;
+
+    relay.lose_host_packets(Duration::from_millis(300));
+    let t0 = tokio::time::Instant::now();
+    ok(&ui_a, attempt("pair_cancel", id)).await;
+    let rc = result(&mut ev_c, "the other side ends despite the loss").await;
+    let took = t0.elapsed();
+    assert!(
+        took < KEEP_ALIVE,
+        "c ended {took:?} after the cancel: it learned from the keep-alive, not from a"
+    );
+    // c read a's decision; a broken connection ("failed") is what the lost close used to leave.
+    assert_eq!(rc.outcome, PairOutcomeName::DeclinedPeer);
+    assert!(rc.reason.is_some());
+    let r = result(&mut ev_a, "cancelled on a").await;
+    assert_eq!((r.attempt_id, r.outcome), (id, PairOutcomeName::Cancelled));
+
+    assert!(pa.load_peers().unwrap().peer.is_empty());
+    assert!(pc.load_peers().unwrap().peer.is_empty());
+    relay.task.abort();
     ui_a.shutdown().await;
     ui_c.shutdown().await;
 }

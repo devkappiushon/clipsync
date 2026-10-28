@@ -139,6 +139,21 @@ async fn read_hello(send: &mut SendStream, recv: &mut RecvStream) -> Result<Hell
     }
 }
 
+/// What ends `finish` before both sides accepted.
+enum End {
+    Failed(Fail),
+    /// The first Confirm{false}: ours (`by_peer: false`) or the peer's.
+    Declined {
+        by_peer: bool,
+    },
+}
+
+impl From<Fail> for End {
+    fn from(f: Fail) -> Self {
+        End::Failed(f)
+    }
+}
+
 /// Both nonces exchanged, code derived: ask the user while reading the peer's Confirm.
 struct Agreed {
     conn: Connection,
@@ -149,7 +164,8 @@ struct Agreed {
 }
 
 /// Runs `confirm` off the runtime (it may read stdin), sends our Confirm and reads the peer's
-/// concurrently, then saves peers.toml only if both accepted.
+/// concurrently, then saves peers.toml only if both accepted. The first decline, from either side,
+/// ends the attempt without waiting for the other answer.
 async fn finish<F>(
     p: &Profile,
     cfg: &Config,
@@ -180,37 +196,48 @@ where
         )
         .await?;
         let _ = send.finish();
-        Ok::<_, Fail>((decision, send))
+        if !decision.accept {
+            return Err(End::Declined { by_peer: false });
+        }
+        Ok::<_, End>(decision)
     };
     let remote = async {
         match read_frame(&mut recv, MAX_CONTROL_FRAME_BYTES).await {
-            Ok(Frame::Pair(PairMsg::Confirm { accept })) => Ok(accept),
+            Ok(Frame::Pair(PairMsg::Confirm { accept: true })) => Ok(()),
+            Ok(Frame::Pair(PairMsg::Confirm { accept: false })) => {
+                Err(End::Declined { by_peer: true })
+            }
             // A declining peer always sends Confirm{false} before closing, so a close without
             // Confirm is a failed attempt (bad reveal, timeout), not a decline.
-            Err(WireError::Io(_)) => match conn.close_reason() {
-                Some(e) => Err(Fail::Peer(e)),
-                None => Err(Fail::Local(CloseCode::PairFailed, "control stream lost")),
-            },
-            _ => Err(Fail::Local(CloseCode::PairFailed, "frame out of order")),
+            Err(WireError::Io(_)) => Err(match conn.close_reason() {
+                Some(e) => Fail::Peer(e).into(),
+                None => Fail::Local(CloseCode::PairFailed, "control stream lost").into(),
+            }),
+            _ => Err(Fail::Local(CloseCode::PairFailed, "frame out of order").into()),
         }
     };
-    // try_join: if the peer fails first, do not wait for the user (the blocking prompt is left
-    // behind; the CLI exits on the error).
-    let ((decision, send), remote_accept) =
-        match timeout(ATTEMPT_TIMEOUT, async { tokio::try_join!(local, remote) }).await {
-            Ok(Ok(r)) => r,
-            Ok(Err(f)) => return Err(f.into_error(&conn)),
-            Err(_) => return Err(Fail::Local(CloseCode::PairFailed, "timeout").into_error(&conn)),
-        };
+    // try_join: if the peer fails or declines first, do not wait for the user (the blocking
+    // prompt is left behind; the CLI exits, the app drops it with the attempt).
+    let answers = timeout(ATTEMPT_TIMEOUT, async { tokio::try_join!(local, remote) }).await;
+    let decision = match answers {
+        Ok(Ok((decision, ()))) => decision,
+        Ok(Err(End::Declined { by_peer })) => {
+            if !by_peer {
+                // The decline lives in the stream, which QUIC retransmits until the peer
+                // acknowledges it, and data acknowledged before a close is still read. The
+                // CONNECTION_CLOSE goes out once: closing first and losing it left the peer
+                // waiting for its idle timeout (CI 40680756334).
+                let _ = timeout(CONFIRM_FLUSH, send.stopped()).await;
+            }
+            close(&conn, CloseCode::PairFailed);
+            return Ok(PairOutcome::Declined { by_peer });
+        }
+        Ok(Err(End::Failed(f))) => return Err(f.into_error(&conn)),
+        Err(_) => return Err(Fail::Local(CloseCode::PairFailed, "timeout").into_error(&conn)),
+    };
     // Let the peer receive our Confirm before the connection goes away.
     let _ = timeout(CONFIRM_FLUSH, send.stopped()).await;
 
-    if !(decision.accept && remote_accept) {
-        close(&conn, CloseCode::PairFailed);
-        return Ok(PairOutcome::Declined {
-            by_peer: decision.accept,
-        });
-    }
     let local_modules = cfg.modules;
     let entry = PeerEntry {
         id: peer_id,
@@ -670,6 +697,48 @@ mod tests {
         );
         assert!(
             matches!(hosted, PairOutcome::Declined { by_peer: true }),
+            "{hosted:?}"
+        );
+        assert!(a.load_peers().unwrap().peer.is_empty());
+        assert!(b.load_peers().unwrap().peer.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pairing_declined_ends_the_other_side_without_waiting_for_its_user() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (profile(&dir, "a"), profile(&dir, "b"));
+        let (addr, host) = spawn_host(
+            a.clone(),
+            Duration::from_secs(10),
+            |_: &PairPrompt| PairDecision {
+                accept: false,
+                grants: ALL,
+            },
+            HostHooks::default(),
+        )
+        .await;
+        // The joiner's user does not answer while the test runs (dropping `_user` releases it).
+        let (_user, answer) = std::sync::mpsc::channel::<()>();
+        let joined = timeout(
+            Duration::from_secs(5),
+            join(&b, addr, move |_: &PairPrompt| {
+                let _ = answer.recv_timeout(Duration::from_secs(60));
+                PairDecision {
+                    accept: true,
+                    grants: ALL,
+                }
+            }),
+        )
+        .await
+        .expect("the joiner ends on the host's decline")
+        .unwrap();
+        let hosted = host.await.unwrap().unwrap();
+        assert!(
+            matches!(joined, PairOutcome::Declined { by_peer: true }),
+            "{joined:?}"
+        );
+        assert!(
+            matches!(hosted, PairOutcome::Declined { by_peer: false }),
             "{hosted:?}"
         );
         assert!(a.load_peers().unwrap().peer.is_empty());

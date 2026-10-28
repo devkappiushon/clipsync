@@ -155,6 +155,15 @@ fn current(p: &mut Pairing, id: u64) -> Result<&mut Attempt, UiError> {
         .ok_or_else(no_attempt)
 }
 
+/// The attempt `id` while it can still go on: a cancelled one only waits for the core to end.
+fn live(p: &mut Pairing, id: u64) -> Result<&mut Attempt, UiError> {
+    let a = current(p, id)?;
+    if a.cancelled {
+        return Err(no_attempt());
+    }
+    Ok(a)
+}
+
 /// The `confirm` of the core: runs on a blocking thread, so it may wait for the user.
 fn confirm_fn(
     ctx: Weak<Ctx>,
@@ -311,7 +320,7 @@ pub(crate) async fn join_start(
 pub(crate) async fn code_matches(ctx: &Ctx, args: AttemptArgs) -> Result<CodeMatched, UiError> {
     {
         let mut p = lock(&ctx.pairing);
-        let a = current(&mut p, args.attempt_id)?;
+        let a = live(&mut p, args.attempt_id)?;
         if a.step != Step::Code {
             return Err(wrong_step());
         }
@@ -328,7 +337,7 @@ pub(crate) async fn code_matches(ctx: &Ctx, args: AttemptArgs) -> Result<CodeMat
 /// Grants for a module that is off here are dropped by the core before saving.
 pub(crate) fn finish(ctx: &Ctx, args: PairFinishArgs) -> Result<Finished, UiError> {
     let mut p = lock(&ctx.pairing);
-    let a = current(&mut p, args.attempt_id)?;
+    let a = live(&mut p, args.attempt_id)?;
     if a.step != Step::Permissions {
         return Err(wrong_step());
     }
@@ -345,10 +354,10 @@ pub(crate) fn finish(ctx: &Ctx, args: PairFinishArgs) -> Result<Finished, UiErro
     })
 }
 
-/// Ends the attempt before the local decision is sent: the connection drops, nothing is saved,
-/// and `pair_result` says `cancelled`. In `waiting_peer` the decision already left and the core
-/// may be saving `peers.toml` right now, so the end belongs to the other machine (§12.5 v1.17,
-/// S6-10): `wrong_step`.
+/// Ends the attempt before the local decision is sent: nothing is saved, and `pair_result` says
+/// `cancelled`. In `waiting_peer` the decision already left and the core may be saving
+/// `peers.toml` right now, so the end belongs to the other machine (§12.5 v1.17, S6-10):
+/// `wrong_step`.
 pub(crate) fn cancel(ctx: &Ctx, args: AttemptArgs) -> Result<Cancelled, UiError> {
     let mut p = lock(&ctx.pairing);
     let a = current(&mut p, args.attempt_id)?;
@@ -356,8 +365,13 @@ pub(crate) fn cancel(ctx: &Ctx, args: AttemptArgs) -> Result<Cancelled, UiError>
         return Err(UiError::new(code::WRONG_STEP, msg::PAIR_ALREADY_DECIDED));
     }
     a.cancelled = true;
-    a.decide = None;
-    a.task.abort();
+    // On the code or permissions screen the core waits for this decision: dropping it declines,
+    // and the core sends Confirm{false} on the stream and closes once the peer has it. Aborting
+    // there left the peer only a CONNECTION_CLOSE, sent once: lost, the other user waited for
+    // the idle timeout (CI 40680756334). Before the code there is no decision to give.
+    if a.decide.take().is_none() {
+        a.task.abort();
+    }
     Ok(Cancelled { cancelled: true })
 }
 
