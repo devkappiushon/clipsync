@@ -749,6 +749,50 @@ async fn pause_fails_closed_when_state_cannot_be_saved() {
     stop(ra).await;
 }
 
+/// The next `Paused` that reaches a probe; other inputs are skipped.
+async fn next_paused(rx: &mut mpsc::UnboundedReceiver<ModuleInput>) -> bool {
+    tokio::time::timeout(WAIT, async {
+        loop {
+            match rx.recv().await {
+                Some(ModuleInput::Paused(p)) => return p,
+                Some(_) => {}
+                None => panic!("module channel closed"),
+            }
+        }
+    })
+    .await
+    .expect("no Paused")
+}
+
+/// §13.11 item 1 (f): a module's `request_pause` takes the control's path. Both modules get
+/// `Paused`, the status says it (what the app compares to emit `pause_changed`) and state.toml
+/// keeps it; `request_pause(false)` undoes all three.
+#[tokio::test(flavor = "multi_thread")]
+async fn request_pause_pauses_both_modules_like_the_control() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = node(&dir, "a");
+    let mut ra = start(&a, false);
+    wait_until("agent up", || async { status(&a.profile).await.is_some() }).await;
+    let host = (&mut ra.input_host).await.unwrap();
+
+    host.request_pause(true);
+    assert!(next_paused(&mut ra.clip).await);
+    assert!(next_paused(&mut ra.input).await);
+    assert!(host.paused());
+    assert!(status(&a.profile).await.unwrap().paused);
+    assert!(a.profile.load_state().unwrap().paused);
+
+    host.request_pause(false);
+    assert!(!next_paused(&mut ra.clip).await);
+    assert!(!next_paused(&mut ra.input).await);
+    assert!(!host.paused());
+    assert!(!status(&a.profile).await.unwrap().paused);
+    assert!(!a.profile.load_state().unwrap().paused);
+
+    drop(host);
+    stop(ra).await;
+}
+
 /// §12.9 item 1 (e) and §13.11 item 1 (e): a 0.1.0 agent accepts a Hello when
 /// `version >= 1 && 1 >= min_version` (its MIN and PROTOCOL were both 1), a 0.2.x agent when
 /// `version >= 1 && 2 >= min_version`. Ours (3, minimum 1) passes both, and we still accept a
