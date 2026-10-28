@@ -261,14 +261,16 @@ export default async function montar({ rota, ir }) {
     trocar(corpo, 
       cartao({
         filhos: [
-          h("p", null, "O teste escreve um texto sintético no clipboard e, com teclado e mouse ligados, move o cursor em loopback nesta máquina."),
-          aviso("aviso", h("p", null, "O teste pode alterar o clipboard por alguns segundos. O conteúdo anterior é restaurado em seguida.")),
+          h("p", null, "O teste confere cada módulo ligado e, com teclado e mouse ligados, move o cursor em loopback nesta máquina."),
+          dados.modulos?.clipboard !== false &&
+            aviso("aviso", h("p", { id: "aviso-teste-clipboard" }, "O teste escreve um texto de teste na área de transferência e devolve o texto anterior. Conteúdo que não é texto (imagem, arquivo) não volta.")),
           h(
             "div",
             { class: "linha" },
             botao({
               rotulo: "Rodar teste com conteúdo sintético",
               variante: "primario",
+              "aria-describedby": dados.modulos?.clipboard !== false ? "aviso-teste-clipboard" : null,
               icone: "verificar",
               aoClicar: async () => {
                 trocar(erroTeste);
