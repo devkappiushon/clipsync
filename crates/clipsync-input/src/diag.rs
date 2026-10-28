@@ -97,10 +97,12 @@ pub async fn diagnose() -> Vec<DiagItem> {
             "win-sendinput: movimento absoluto no desktop virtual, teclas pela posição física",
         ));
         out.push(item("layout do teclado", DiagStatus::Ok, windows_layout()));
+        // `diagnose()` knows neither the profile nor this machine's id, so it cannot tell whether
+        // a local link exists (§13.9): it says when they are active, never that they are.
         out.push(item(
             "atalhos",
-            DiagStatus::Ok,
-            "Win+Alt+1 a 9 (ir para o dispositivo), Win+Alt+L (travar), Win+Alt+P (pausar); Win+Alt+C e Win+Alt+V: indisponível nesta versão",
+            DiagStatus::Warn,
+            "Win+Alt+1 a 9 (ir para o dispositivo), Win+Alt+L (travar) e Win+Alt+P (pausar): ativos quando há ligação desta máquina no layout; Win+Alt+C e Win+Alt+V: indisponível nesta versão",
         ));
     }
     #[cfg(not(any(target_os = "linux", windows)))]
