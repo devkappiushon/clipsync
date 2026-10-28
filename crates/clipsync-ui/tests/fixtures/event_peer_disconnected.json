@@ -1,0 +1,8 @@
+{
+  "event": "peer_disconnected",
+  "data": {
+    "peer_id": "dad34d8fccefae6162f55646c308bc9b9b7e4e1b2383442ff7d8da17c43fca40",
+    "short": "dad3-4d8f-ccef-ae61",
+    "name": "notebook"
+  }
+}

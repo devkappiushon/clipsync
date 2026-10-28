@@ -8,10 +8,10 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 
-use clipsync_proto::{BlockRecord, PeerId, PeerState};
+use clipsync_proto::{BlockRecord, InputState, ModuleKind, PeerId, PeerState};
 use serde::{Deserialize, Serialize};
 
-use crate::clipboard::ItemState;
+use crate::clipboard::{self, ItemState};
 use crate::devices::Device;
 use crate::prefs::{Notifications, Prefs};
 use crate::status::{self, AgentMode, ModuleName, Modules};
@@ -192,6 +192,10 @@ pub(crate) struct Snapshot {
     connected: BTreeMap<PeerId, PeerConnected>,
     /// The agent's `recent_blocks`, newest first.
     blocks: Vec<BlockRecord>,
+    /// The clipboard box by id (32 hex), without previews; `None` when the module is off.
+    inbox: Option<BTreeMap<String, ClipReceived>>,
+    /// What the input module answered to `InputState`.
+    input: Option<InputState>,
 }
 
 impl Snapshot {
@@ -220,6 +224,31 @@ impl Snapshot {
             ),
             None => (BTreeMap::new(), Vec::new()),
         };
+        let clipboard_on = o.status.as_ref().is_some_and(|s| {
+            s.modules
+                .iter()
+                .any(|m| m.kind == ModuleKind::Clipboard && m.enabled)
+        });
+        let inbox = if clipboard_on {
+            clipboard::inbox(ctx).await.ok().map(|items| {
+                items
+                    .iter()
+                    .map(|i| {
+                        let item = clipboard::InboxItem::new(i);
+                        let ev = ClipReceived {
+                            id: item.id.clone(),
+                            short: item.short,
+                            from: item.from,
+                            bytes: item.bytes,
+                            state: item.state,
+                        };
+                        (item.id, ev)
+                    })
+                    .collect()
+            })
+        } else {
+            None
+        };
         Self {
             agent: AgentStateData {
                 agent: o.agent,
@@ -229,6 +258,8 @@ impl Snapshot {
             live: o.status.is_some(),
             connected,
             blocks,
+            inbox,
+            input: o.input,
         }
     }
 
@@ -244,6 +275,34 @@ impl Snapshot {
             None => now.blocks.len(),
         };
         now.blocks[..fresh].iter().rev()
+    }
+
+    /// `layout_changed` (zones, offer) and `screen_lock_changed`, when both looks have an
+    /// `InputState` to compare.
+    fn input_events(&self, now: &Snapshot, layout_rev: impl Fn() -> u64) -> Vec<UiEvent> {
+        let (Some(was), Some(is)) = (&self.input, &now.input) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if was.local != is.local || was.peers != is.peers {
+            out.push(UiEvent::LayoutChanged(LayoutChanged {
+                rev: layout_rev(),
+                reason: LayoutReason::Zones,
+            }));
+        }
+        if is.pending_offer.is_some() && was.pending_offer != is.pending_offer {
+            out.push(UiEvent::LayoutChanged(LayoutChanged {
+                rev: layout_rev(),
+                reason: LayoutReason::Offer,
+            }));
+        }
+        if (was.screen_locked, was.active_peer) != (is.screen_locked, is.active_peer) {
+            out.push(UiEvent::ScreenLockChanged(ScreenLockChanged {
+                screen_locked: is.screen_locked,
+                active_peer_id: is.active_peer.map(|p| p.to_hex()),
+            }));
+        }
+        out
     }
 
     fn diff(&self, now: &Snapshot, notify: Notifications) -> Vec<UiEvent> {
@@ -292,8 +351,30 @@ impl Snapshot {
             }
             out.push(UiEvent::PeerBlocked(ev));
         }
+        if let (Some(was), Some(is)) = (&self.inbox, &now.inbox) {
+            for (id, item) in is {
+                if !was.contains_key(id) {
+                    out.push(UiEvent::ClipReceived(item.clone()));
+                    if notify.item_received {
+                        out.push(UiEvent::Notification(Notification {
+                            kind: NotificationKind::ItemReceived,
+                            title: msg::NOTIFY_ITEM.to_string(),
+                            body: msg::notify_item(&item.from, item.bytes),
+                        }));
+                    }
+                }
+            }
+        }
         out
     }
+}
+
+/// The `rev` of `layout.toml` (0 when there is none yet).
+fn layout_rev(ctx: &Ctx) -> u64 {
+    clipsync_input::layout::Layout::read(&ctx.profile.dir.join("layout.toml"))
+        .ok()
+        .flatten()
+        .map_or(0, |l| l.rev)
 }
 
 /// Runs until the `Ui` is gone (or `shutdown` aborts it). `first` is the look taken inside
@@ -311,8 +392,17 @@ pub(crate) async fn poll(ctx: Weak<Ctx>, first: Snapshot) {
             // No agent this tick: keep the ring, so the same blocks are not new next time.
             now.blocks = std::mem::take(&mut last.blocks);
         }
+        if now.inbox.is_none() {
+            // A box that could not be read this tick is not a box emptied.
+            now.inbox = last.inbox.take();
+        }
         let notify = lock(&c.prefs).notifications;
-        for ev in last.diff(&now, notify) {
+        let layout_rev = || layout_rev(&c);
+        for ev in last
+            .diff(&now, notify)
+            .into_iter()
+            .chain(last.input_events(&now, layout_rev))
+        {
             c.emit(ev);
         }
         last = now;

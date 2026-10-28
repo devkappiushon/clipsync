@@ -210,6 +210,18 @@ pub(crate) async fn stop(ctx: &Ctx) -> Result<AgentReply, UiError> {
     }
 }
 
+/// Restarts the in_app agent so it reads `config.toml` again. `false` when there is no in_app
+/// agent (an external one is not ours; a stopped one reads the file when it starts).
+pub(crate) async fn restart(ctx: &Ctx) -> Result<bool, UiError> {
+    let running = matches!(&*ctx.agent.lock().await, Slot::InApp(r) if !r.task.is_finished());
+    if !running {
+        return Ok(false);
+    }
+    stop(ctx).await?;
+    start(ctx).await?;
+    Ok(true)
+}
+
 pub(crate) async fn shutdown(ctx: &Ctx) {
     let mut slot = ctx.agent.lock().await;
     if let Slot::InApp(r) = std::mem::replace(&mut *slot, Slot::Stopped) {

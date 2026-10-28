@@ -1,0 +1,28 @@
+{
+  "prefs": {
+    "shortcuts": {
+      "open": "Win+Alt+C",
+      "pause_all": "Win+Alt+P",
+      "send_once": "Win+Alt+V",
+      "lock_screen": "Win+Alt+L",
+      "go_to_device": [
+        "Win+Alt+1",
+        "Win+Alt+2",
+        "Win+Alt+3"
+      ]
+    },
+    "autostart": false,
+    "notifications": {
+      "item_received": true,
+      "device_connected": false,
+      "block": true
+    },
+    "appearance": {
+      "theme": "system",
+      "reduce_motion": false
+    },
+    "language": "pt-BR",
+    "version": "0.2.0",
+    "license": "a definir"
+  }
+}

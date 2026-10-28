@@ -1,0 +1,27 @@
+{
+  "event": "pair_result",
+  "data": {
+    "attempt_id": 3,
+    "outcome": "paired",
+    "device": {
+      "peer_id": "dad34d8fccefae6162f55646c308bc9b9b7e4e1b2383442ff7d8da17c43fca40",
+      "short": "dad3-4d8f-ccef-ae61",
+      "name": "notebook",
+      "state": "connecting",
+      "blocked_reason": null,
+      "addr": "192.168.0.11:47800",
+      "perms": {
+        "clipboard_in": false,
+        "clipboard_out": false,
+        "input_in": false
+      },
+      "remote_modules": {
+        "clipboard": true,
+        "input": true
+      },
+      "remote_version": null,
+      "paired_at": "2026-10-27T18:40:12Z"
+    },
+    "reason": null
+  }
+}

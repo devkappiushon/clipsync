@@ -1,0 +1,64 @@
+{
+  "items": [
+    {
+      "area": "sistema",
+      "name": "sistema operacional",
+      "status": "ok",
+      "detail": "Ubuntu 26.04 LTS"
+    },
+    {
+      "area": "sistema",
+      "name": "sessão gráfica",
+      "status": "ok",
+      "detail": "wayland · GNOME"
+    },
+    {
+      "area": "clipboard",
+      "name": "classificação",
+      "status": "warn",
+      "detail": "experimental: só texto"
+    },
+    {
+      "area": "input",
+      "name": "portal InputCapture",
+      "status": "missing",
+      "detail": "portal ausente nesta sessão"
+    }
+  ],
+  "network": {
+    "listen": "0.0.0.0:47800",
+    "addresses": [
+      "192.168.0.10:47800"
+    ],
+    "peers": [
+      {
+        "peer_id": "dad34d8fccefae6162f55646c308bc9b9b7e4e1b2383442ff7d8da17c43fca40",
+        "name": "notebook",
+        "state": "connected",
+        "addr": "192.168.0.11:47800"
+      },
+      {
+        "peer_id": "908dc9bfabf4d2f88d665dab60c8f432ce9678c60de6c34e1b766a5df3717751",
+        "name": "desktop-sala",
+        "state": "blocked",
+        "addr": null
+      }
+    ]
+  },
+  "blocks": [
+    {
+      "at_unix_ms": 1793158795000,
+      "peer_id": "908dc9bfabf4d2f88d665dab60c8f432ce9678c60de6c34e1b766a5df3717751",
+      "peer_name": "desktop-sala",
+      "module": "clipboard",
+      "reason": "sem permissão"
+    },
+    {
+      "at_unix_ms": 1793158710000,
+      "peer_id": null,
+      "peer_name": null,
+      "module": "input",
+      "reason": "portal recusou a captura"
+    }
+  ]
+}

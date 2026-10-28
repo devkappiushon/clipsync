@@ -1,0 +1,12 @@
+{
+  "device": {
+    "peer_id": "4f9a51a3d8f5d94c8df5ce150394de6f1c00353abfde7e4774533a97529e6282",
+    "short": "4f9a-51a3-d8f5-d94c",
+    "name": "pc-pessoal"
+  },
+  "listen": "0.0.0.0:47800",
+  "modules": {
+    "clipboard": false,
+    "input": true
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "step": "permissions",
+  "available": {
+    "clipboard": true,
+    "input": true
+  },
+  "defaults": {
+    "clipboard_in": false,
+    "clipboard_out": false,
+    "input_in": false
+  }
+}

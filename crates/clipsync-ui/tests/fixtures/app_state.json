@@ -1,0 +1,44 @@
+{
+  "initialized": true,
+  "profile_dir": "/home/ana/.config/clipsync",
+  "device": {
+    "peer_id": "4f9a51a3d8f5d94c8df5ce150394de6f1c00353abfde7e4774533a97529e6282",
+    "short": "4f9a-51a3-d8f5-d94c",
+    "name": "pc-pessoal"
+  },
+  "agent": "in_app",
+  "agent_error": null,
+  "paused": false,
+  "screen_locked": false,
+  "mesh": {
+    "connected": 1,
+    "total": 2
+  },
+  "modules": {
+    "clipboard": true,
+    "input": true
+  },
+  "input_supported": true,
+  "version": "0.2.0",
+  "platform": "linux",
+  "features": {
+    "input": true,
+    "peer_monitors": true,
+    "layout_links": true,
+    "dead_corners": true,
+    "screen_lock": true,
+    "switch_device": true,
+    "layout_copy": true,
+    "os_notifications": false,
+    "global_shortcuts": false,
+    "peer_pause": false,
+    "peer_controls_column": false,
+    "peer_rtt": false,
+    "peer_last_activity": false,
+    "peer_addr_history": false,
+    "clipboard_confirm_mode": false,
+    "clipboard_pause_capture": false,
+    "clipboard_private_mode": false,
+    "pair_peer_declined_notice": false
+  }
+}

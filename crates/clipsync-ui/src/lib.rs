@@ -7,11 +7,12 @@
 //! The UI talks to the agent ONLY through `control::request`, even when the agent runs in this
 //! process (§12.2 rule 1).
 
-mod agent;
+pub mod agent;
 pub mod api;
 pub mod autostart;
 pub mod clipboard;
 pub mod devices;
+pub mod diag;
 pub mod events;
 pub mod input;
 pub mod layout;

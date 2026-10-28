@@ -1,0 +1,21 @@
+{
+  "text": "ClipSync · pacote de suporte\nversão 0.2.0 · linux\n\n[rede]\nescuta: <ip>:47800\npar <par-1> (<id-par-1>) · conectado · <ip>:47800\n",
+  "redactions": [
+    {
+      "kind": "peer_id",
+      "count": 1
+    },
+    {
+      "kind": "peer_name",
+      "count": 1
+    },
+    {
+      "kind": "ip",
+      "count": 2
+    },
+    {
+      "kind": "device_name",
+      "count": 0
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "enabled": true,
+  "adapter": "x11-xfixes",
+  "classification": "validated",
+  "mode": "manual",
+  "last_event": "texto recebido de notebook: na caixa de recebidos",
+  "last_block": null,
+  "inbox": [
+    {
+      "id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+      "short": "0f1e2d3c",
+      "from": "notebook",
+      "received_unix_ms": 1793158800000,
+      "mime": "text/plain;charset=utf-8",
+      "bytes": 42,
+      "state": "in_inbox",
+      "reason": null
+    },
+    {
+      "id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+      "short": "a1b2c3d4",
+      "from": "desktop-sala",
+      "received_unix_ms": 1793158740000,
+      "mime": "text/plain;charset=utf-8",
+      "bytes": 1200,
+      "state": "rejected",
+      "reason": "sem permissão"
+    }
+  ],
+  "retention": {
+    "max_items": 50,
+    "ttl_ms": 600000
+  }
+}

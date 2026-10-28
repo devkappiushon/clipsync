@@ -52,6 +52,11 @@ pub fn init_profile(dir: &Path, name: &str, modules: ModuleSet) -> (Profile, Pee
     (profile, id)
 }
 
+pub const INPUT_ONLY: ModuleSet = ModuleSet {
+    clipboard: false,
+    input: true,
+};
+
 pub const BOTH: ModuleSet = ModuleSet {
     clipboard: true,
     input: true,

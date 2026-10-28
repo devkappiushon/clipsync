@@ -54,6 +54,33 @@ pub fn notify_block(name: Option<&str>, reason: &str) -> String {
     }
 }
 
+// 5 · clipboard
+pub const CLIPBOARD_OFF: &str = "o módulo clipboard está desligado neste dispositivo";
+pub const NOTIFY_ITEM: &str = "Item recebido";
+
+pub fn notify_item(from: &str, bytes: usize) -> String {
+    format!("{from} enviou {bytes} bytes para a caixa de recebidos")
+}
+
+pub fn apply_failed(why: &str) -> String {
+    format!("não foi possível escrever no clipboard: {why}")
+}
+
+// 6 · diagnóstico
+pub const DIAG_CHECK: &str = "verificação";
+pub const DIAG_TIMEOUT: &str = "não respondeu em 5 s";
+pub const NO_DOWNLOADS: &str = "não foi possível achar a pasta de downloads";
+pub const REDACTED_IP: &str = "<ip>";
+pub const REDACTED_DEVICE: &str = "<este-dispositivo>";
+
+pub fn redacted_peer(n: usize) -> String {
+    format!("<par-{n}>")
+}
+
+pub fn redacted_id(n: usize) -> String {
+    format!("<id-par-{n}>")
+}
+
 pub fn bind(detail: &str) -> String {
     format!("não foi possível abrir a porta do pareamento: {detail}")
 }

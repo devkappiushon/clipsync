@@ -1,0 +1,43 @@
+{
+  "agent_running": true,
+  "devices": [
+    {
+      "peer_id": "dad34d8fccefae6162f55646c308bc9b9b7e4e1b2383442ff7d8da17c43fca40",
+      "short": "dad3-4d8f-ccef-ae61",
+      "name": "notebook",
+      "state": "connected",
+      "blocked_reason": null,
+      "addr": "192.168.0.11:47800",
+      "perms": {
+        "clipboard_in": true,
+        "clipboard_out": true,
+        "input_in": false
+      },
+      "remote_modules": {
+        "clipboard": true,
+        "input": true
+      },
+      "remote_version": 2,
+      "paired_at": "2026-10-27T18:40:12Z"
+    },
+    {
+      "peer_id": "908dc9bfabf4d2f88d665dab60c8f432ce9678c60de6c34e1b766a5df3717751",
+      "short": "908d-c9bf-abf4-d2f8",
+      "name": "desktop-sala",
+      "state": "blocked",
+      "blocked_reason": "chave do par mudou; repareie",
+      "addr": "192.168.0.23:47800",
+      "perms": {
+        "clipboard_in": false,
+        "clipboard_out": false,
+        "input_in": false
+      },
+      "remote_modules": {
+        "clipboard": false,
+        "input": false
+      },
+      "remote_version": null,
+      "paired_at": "2026-10-26T09:02:51Z"
+    }
+  ]
+}

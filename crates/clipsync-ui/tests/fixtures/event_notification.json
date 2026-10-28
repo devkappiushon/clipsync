@@ -1,0 +1,8 @@
+{
+  "event": "notification",
+  "data": {
+    "kind": "item_received",
+    "title": "Item recebido",
+    "body": "notebook enviou 42 bytes para a caixa de recebidos"
+  }
+}

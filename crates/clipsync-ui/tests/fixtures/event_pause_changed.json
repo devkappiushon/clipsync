@@ -1,0 +1,6 @@
+{
+  "event": "pause_changed",
+  "data": {
+    "paused": true
+  }
+}

@@ -6,14 +6,15 @@
 
 use std::net::{Ipv4Addr, SocketAddr};
 
+use clipsync_clipboard::{AdapterChoice, ClipboardConfig, SelfTestOutcome};
 use clipsync_core::{Identity, InitOptions};
-use clipsync_proto::ModuleSet;
+use clipsync_proto::{ControlRequest, ControlResponse, ModuleSet};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::{self, INPUT_SUPPORTED};
 use crate::api::{OnboardingCreateArgs, code};
 use crate::status::{DeviceSelf, ModuleName, Modules};
-use crate::{Ctx, UiError, lock, msg};
+use crate::{Ctx, UiError, clean, lock, msg, status};
 
 /// When the hostname is missing or is not a valid device name.
 const FALLBACK_NAME: &str = "clipsync";
@@ -176,8 +177,7 @@ pub(crate) async fn create(ctx: &Ctx, args: OnboardingCreateArgs) -> Result<Crea
     })
 }
 
-/// No module has a structured self test yet (L7, Flux and Vector): each module says why it was
-/// not tested.
+/// A module that was not called says why.
 fn untested(module: ModuleName, enabled: bool, supported: bool) -> TestResult {
     let (status, detail) = match (supported, enabled) {
         (false, _) => (TestStatus::Unavailable, msg::SELF_TEST_UNSUPPORTED),
@@ -191,12 +191,69 @@ fn untested(module: ModuleName, enabled: bool, supported: bool) -> TestResult {
     }
 }
 
+fn tested(module: ModuleName, outcome: SelfTestOutcome) -> TestResult {
+    let (status, detail) = match &outcome {
+        SelfTestOutcome::Validated(d) => (TestStatus::Validated, d),
+        SelfTestOutcome::Experimental(d) => (TestStatus::Experimental, d),
+        SelfTestOutcome::Unavailable(d) => (TestStatus::Unavailable, d),
+    };
+    TestResult {
+        module,
+        status,
+        detail: Some(clean(detail)),
+    }
+}
+
+/// The test opens its own adapter, so a running agent would see the synthetic text and offer
+/// it to the peers: the agent is paused first (fails closed) and resumed after. `true` = we
+/// paused it.
+async fn pause_for_test(ctx: &Ctx) -> Result<bool, UiError> {
+    let Some(s) = status::agent_status(ctx).await else {
+        return Ok(false);
+    };
+    if s.paused {
+        return Ok(false);
+    }
+    match ctx.request(ControlRequest::Pause).await? {
+        ControlResponse::Ok => Ok(true),
+        // Paused in memory, only state.toml failed: still safe to test.
+        ControlResponse::Error { message } if message == clipsync_core::msg::STATE_NOT_SAVED => {
+            Ok(true)
+        }
+        ControlResponse::Error { message } => Err(UiError::internal(&clean(&message))),
+        _ => Err(UiError::internal(msg::UNEXPECTED_REPLY)),
+    }
+}
+
+/// Clipboard: `clipsync_clipboard::self_test` (a fake one when the profile uses fake adapters).
+/// Input: not called until its `self_test` exists (Vector, L7).
 pub(crate) async fn self_test(ctx: &Ctx) -> Result<SelfTest, UiError> {
     ctx.require_profile()?;
     let cfg = ctx.profile.load_config()?;
+    let clipboard = if cfg.modules.clipboard {
+        let fake = ClipboardConfig::from_table(cfg.clipboard.as_ref())
+            .is_ok_and(|c| c.adapter == AdapterChoice::Fake);
+        let paused = pause_for_test(ctx).await?;
+        let outcome = if fake {
+            tokio::task::spawn_blocking(|| {
+                let (mut adapter, _handle) = clipsync_clipboard::FakeClipboard::new();
+                clipsync_clipboard::self_test_with(&mut adapter)
+            })
+            .await
+            .unwrap_or_else(|e| SelfTestOutcome::Unavailable(e.to_string()))
+        } else {
+            clipsync_clipboard::self_test().await
+        };
+        if paused && let Err(e) = ctx.request(ControlRequest::Resume).await {
+            tracing::warn!(code = %e.code, "agent not resumed after the self test");
+        }
+        tested(ModuleName::Clipboard, outcome)
+    } else {
+        untested(ModuleName::Clipboard, false, true)
+    };
     Ok(SelfTest {
         results: vec![
-            untested(ModuleName::Clipboard, cfg.modules.clipboard, true),
+            clipboard,
             untested(ModuleName::Input, cfg.modules.input, INPUT_SUPPORTED),
         ],
     })

@@ -1,0 +1,7 @@
+{
+  "event": "agent_state",
+  "data": {
+    "agent": "failed",
+    "error": "o agente não subiu: erro de leitura ou gravação: porta 47800 em uso"
+  }
+}

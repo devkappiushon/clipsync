@@ -1,0 +1,18 @@
+{
+  "step": "code",
+  "attempt_id": 3,
+  "port": 53122,
+  "addresses": [
+    "192.168.0.10:53122"
+  ],
+  "expires_unix_ms": 1793158920000,
+  "code": "123 456",
+  "peer": {
+    "name": "notebook",
+    "short": "dad3-4d8f-ccef-ae61",
+    "modules": {
+      "clipboard": true,
+      "input": true
+    }
+  }
+}

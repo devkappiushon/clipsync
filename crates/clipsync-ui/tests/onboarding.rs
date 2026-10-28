@@ -117,7 +117,7 @@ async fn create_refuses_bad_names_and_no_module() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn self_test_reports_every_module() {
+async fn self_test_runs_the_clipboard_and_leaves_the_agent_as_it_was() {
     let dir = tempfile::tempdir().unwrap();
     init_profile(dir.path(), "a", CLIPBOARD_ONLY);
     let ui = start(dir.path(), "a").await;
@@ -125,12 +125,26 @@ async fn self_test_reports_every_module() {
     let results = r["results"].as_array().unwrap();
     let modules: Vec<_> = results.iter().map(|x| x["module"].clone()).collect();
     assert_eq!(modules, vec![json!("clipboard"), json!("input")]);
-    for x in results {
-        let status = x["status"].as_str().unwrap();
-        assert!(
-            ["validated", "experimental", "unavailable", "not_tested"].contains(&status),
-            "{x}"
-        );
-    }
+    let clip = &results[0];
+    assert!(
+        ["validated", "experimental"].contains(&clip["status"].as_str().unwrap()),
+        "the fake clipboard passes: {clip}"
+    );
+    assert!(!clip["detail"].as_str().unwrap().is_empty());
+    assert_eq!(
+        results[1],
+        json!({ "module": "input", "status": "not_tested", "detail": "módulo desligado" })
+    );
+    // Paused during the test (too short for the poll to see), resumed after.
+    assert_eq!(app_state(&ui).await["paused"], json!(false));
+
+    // A pause the user chose stays.
+    ok(
+        &ui,
+        json!({ "cmd": "pause_set", "args": { "paused": true } }),
+    )
+    .await;
+    ok(&ui, json!({ "cmd": "onboarding_self_test" })).await;
+    assert_eq!(app_state(&ui).await["paused"], json!(true));
     ui.shutdown().await;
 }

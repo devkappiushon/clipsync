@@ -11,7 +11,10 @@ use serde_json::Value;
 
 use crate::devices::Perms;
 use crate::prefs::{Appearance, Notifications};
-use crate::{Ctx, agent, clean, devices, input, layout, msg, onboarding, pairing, prefs, status};
+use crate::{
+    Ctx, agent, clean, clipboard, devices, diag, input, layout, msg, onboarding, pairing, prefs,
+    status,
+};
 
 /// Stable error codes: the front switches on these, never on the message.
 pub mod code {
@@ -41,6 +44,11 @@ pub mod code {
     pub const BAD_ADDR: &str = "bad_addr";
     pub const NO_ATTEMPT: &str = "no_attempt";
     pub const WRONG_STEP: &str = "wrong_step";
+    // clipboard
+    pub const NO_ITEM: &str = "no_item";
+    pub const WRONG_STATE: &str = "wrong_state";
+    pub const NO_TARGET: &str = "no_target";
+    pub const EMPTY_CLIPBOARD: &str = "empty_clipboard";
 }
 
 /// Rejection of a command; serialized as `{code, message, field, details}`. `message` is
@@ -328,7 +336,7 @@ pub struct ItemArgs {
     pub id: String,
 }
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ClipMode {
     Auto,
@@ -445,18 +453,17 @@ pub(crate) async fn route(ctx: &Arc<Ctx>, req: UiRequest) -> Result<Value, UiErr
         R::LockToScreen(a) => json(input::lock_to_screen(ctx, a).await?),
         R::SwitchToDevice(a) => json(input::switch_to_device(ctx, a).await?),
         R::InputTest(a) => json(input::input_test(ctx, a).await?),
+        R::ClipboardGet => json(clipboard::get(ctx).await?),
+        R::ClipboardPreview(a) => json(clipboard::preview(ctx, a).await?),
+        R::ClipboardSetMode(a) => json(clipboard::set_mode(ctx, a).await?),
+        R::ClipboardCopyItem(a) => json(clipboard::copy_item(ctx, a).await?),
+        R::ClipboardDiscardItem(a) => json(clipboard::discard_item(ctx, a).await?),
+        R::ClipboardSendNow(a) => json(clipboard::send_now(ctx, a).await?),
+        R::DiagnosticsGet => json(diag::get(ctx).await?),
+        R::SupportBundlePreview => json(diag::bundle_preview(ctx).await?),
+        R::SupportBundleExport => json(diag::bundle_export(ctx).await?),
         R::PrefsGet => json(prefs::get(ctx)),
         R::PrefsSet(a) => json(prefs::set(ctx, a)?),
-        // Stage 4 of the clipsync-ui (clipboard, diagnostics) answers here until it lands.
-        R::ClipboardGet
-        | R::ClipboardPreview(_)
-        | R::ClipboardSetMode(_)
-        | R::ClipboardCopyItem(_)
-        | R::ClipboardDiscardItem(_)
-        | R::ClipboardSendNow(_)
-        | R::DiagnosticsGet
-        | R::SupportBundlePreview
-        | R::SupportBundleExport => Err(UiError::unavailable()),
     }
 }
 

@@ -1,0 +1,8 @@
+{
+  "code": "bad_request",
+  "message": "pedido inválido",
+  "field": "paused",
+  "details": {
+    "reason": "invalid type: string \"sim\", expected a boolean"
+  }
+}

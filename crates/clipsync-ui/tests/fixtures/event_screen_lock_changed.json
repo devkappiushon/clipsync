@@ -1,0 +1,7 @@
+{
+  "event": "screen_lock_changed",
+  "data": {
+    "screen_locked": true,
+    "active_peer_id": null
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "default_name": "pc-pessoal",
+  "fingerprint_short": "4f9a-51a3-d8f5-d94c",
+  "input_supported": true,
+  "already_initialized": false,
+  "defaults": {
+    "input": true,
+    "clipboard": false
+  }
+}

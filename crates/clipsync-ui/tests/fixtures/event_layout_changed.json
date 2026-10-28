@@ -1,0 +1,7 @@
+{
+  "event": "layout_changed",
+  "data": {
+    "rev": 7,
+    "reason": "zones"
+  }
+}

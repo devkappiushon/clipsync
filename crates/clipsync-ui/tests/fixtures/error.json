@@ -1,0 +1,6 @@
+{
+  "code": "needs_confirmation",
+  "message": "permitir que esse dispositivo controle o teclado e o mouse daqui é confiança total: confirme para continuar",
+  "field": "acknowledge_full_trust",
+  "details": null
+}

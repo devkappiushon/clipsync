@@ -1,0 +1,14 @@
+{
+  "results": [
+    {
+      "module": "clipboard",
+      "status": "not_tested",
+      "detail": "módulo desligado"
+    },
+    {
+      "module": "input",
+      "status": "validated",
+      "detail": "captura e emulação conferidas pelo portal"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "event": "pair_code_ready",
+  "data": {
+    "attempt_id": 3,
+    "code": "123 456",
+    "peer": {
+      "name": "notebook",
+      "short": "dad3-4d8f-ccef-ae61",
+      "modules": {
+        "clipboard": true,
+        "input": true
+      }
+    }
+  }
+}
