@@ -224,6 +224,11 @@ pub struct InputState {
     pub screen_locked: bool,
     pub active_peer: Option<PeerId>,
     pub pending_offer: Option<PendingOffer>,
+    /// S7 (§13.7 item 3), for the diagnostics only: the keyboard layout of this machine, the
+    /// `xkb_symbols` name the EIS announces on Linux, the KLID on Windows. None until known, and
+    /// from an agent older than the field.
+    #[serde(default)]
+    pub keyboard_layout: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
