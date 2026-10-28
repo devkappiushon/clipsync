@@ -75,14 +75,26 @@ impl fmt::Debug for InputDatagram {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum InputMsg {
-    Enter { session: u32, edge: Edge, pos: f32 },
-    Leave { session: u32 },
-    ReleaseAll { session: u32 },
-    StatsRequest { session: u32 },
+    Enter {
+        session: u32,
+        edge: Edge,
+        pos: f32,
+    },
+    Leave {
+        session: u32,
+    },
+    ReleaseAll {
+        session: u32,
+    },
+    StatsRequest {
+        session: u32,
+    },
     Stats(LoopbackStats),
     // ---- protocol 2 (S6); new variants only at the end: postcard tags are positional ----
     /// My monitors, sent only to peers I granted `input_in` (they may control me).
-    Zones { zones: Vec<ZoneInfo> },
+    Zones {
+        zones: Vec<ZoneInfo>,
+    },
     /// "Copy the layout to the other devices": the receiver decides whether to apply it.
     LayoutOffer(LayoutOffer),
     /// `Enter` that names the destination monitor (`Enter` keeps its 0.1.0 shape).

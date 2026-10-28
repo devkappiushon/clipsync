@@ -231,9 +231,8 @@ fn authorize_table_for_zones_enter_at_and_layout_offer() {
     let out = |perms: PeerPerms, paused: bool, m: &ModuleMsg| {
         authorize_outbound(BOTH, &perms, BOTH, paused, m)
     };
-    let inb = |perms: PeerPerms, paused: bool, m: &ModuleMsg| {
-        authorize_inbound(BOTH, &perms, paused, m)
-    };
+    let inb =
+        |perms: PeerPerms, paused: bool, m: &ModuleMsg| authorize_inbound(BOTH, &perms, paused, m);
     let (z, e, o) = (zones(1), enter_at(0.5), layout_offer(0.0, 1.0));
 
     // Zones only LEAVES to a peer I granted input_in; pause does not stop it.

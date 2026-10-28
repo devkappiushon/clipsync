@@ -112,21 +112,39 @@ pub struct ModuleStatus {
 #[derive(Serialize, Deserialize, Clone)]
 pub enum ModuleCommand {
     Status,
-    ClipSend { text: String, to: Option<PeerId> },
+    ClipSend {
+        text: String,
+        to: Option<PeerId>,
+    },
     ClipInbox,
-    InputLoopback { to: PeerId, seconds: u32 },
+    InputLoopback {
+        to: PeerId,
+        seconds: u32,
+    },
     // ---- S6; new variants only at the end ----
     /// Writes an `in_inbox` or Stale item to the local clipboard. Works paused; no new offer.
-    ClipApply { id: EventId },
-    ClipDiscard { id: EventId },
+    ClipApply {
+        id: EventId,
+    },
+    ClipDiscard {
+        id: EventId,
+    },
     /// Sends what the local clipboard holds now, like `ClipSend`.
-    ClipSendCurrent { to: Option<PeerId> },
+    ClipSendCurrent {
+        to: Option<PeerId>,
+    },
     InputState,
     /// Reads `layout.toml` again and reinstalls the barriers.
     InputReload,
-    InputLock { locked: bool },
-    InputSwitch { to: PeerId },
-    InputOffer { to: Vec<PeerId> },
+    InputLock {
+        locked: bool,
+    },
+    InputSwitch {
+        to: PeerId,
+    },
+    InputOffer {
+        to: Vec<PeerId>,
+    },
     InputOfferClear,
 }
 

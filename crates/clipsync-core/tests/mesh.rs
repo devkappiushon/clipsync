@@ -817,7 +817,11 @@ async fn module_last_block_joins_recent_blocks_once() {
     *last_block.lock().unwrap() = Some("texto grande demais".into());
     status(&a.profile).await.unwrap();
     let blocks = status(&a.profile).await.unwrap().recent_blocks;
-    assert_eq!(blocks.len(), 1, "the same last_block counts once: {blocks:?}");
+    assert_eq!(
+        blocks.len(),
+        1,
+        "the same last_block counts once: {blocks:?}"
+    );
     assert_eq!(
         (
             blocks[0].peer,
@@ -825,7 +829,12 @@ async fn module_last_block_joins_recent_blocks_once() {
             blocks[0].module,
             blocks[0].reason.as_str()
         ),
-        (None, None, Some(ModuleKind::Clipboard), "texto grande demais")
+        (
+            None,
+            None,
+            Some(ModuleKind::Clipboard),
+            "texto grande demais"
+        )
     );
     *last_block.lock().unwrap() = Some("pausado".into());
     let blocks = status(&a.profile).await.unwrap().recent_blocks;
