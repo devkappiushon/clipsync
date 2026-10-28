@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::devices::Perms;
 use crate::prefs::{Appearance, Notifications};
-use crate::{Ctx, agent, clean, input, layout, msg, status};
+use crate::{Ctx, agent, clean, input, layout, msg, onboarding, prefs, status};
 
 /// Stable error codes: the front switches on these, never on the message.
 pub mod code {
@@ -29,6 +29,9 @@ pub mod code {
     // agent_start
     pub const NO_USABLE_MODULE: &str = "no_usable_module";
     pub const MODULE_BUILD: &str = "module_build";
+    // onboarding
+    pub const INVALID_NAME: &str = "invalid_name";
+    pub const NO_MODULE: &str = "no_module";
 }
 
 /// Rejection of a command; serialized as `{code, message, field, details}`. `message` is
@@ -409,6 +412,10 @@ pub(crate) async fn route(ctx: &Arc<Ctx>, req: UiRequest) -> Result<Value, UiErr
         R::AgentStart => json(agent::start(ctx).await?),
         R::AgentStop => json(agent::stop(ctx).await?),
         R::PauseSet(a) => json(status::pause_set(ctx, a.paused).await?),
+        R::OnboardingStart => json(onboarding::start(ctx)?),
+        R::OnboardingCheckName(a) => json(onboarding::check_name(&a.name)?),
+        R::OnboardingCreate(a) => json(onboarding::create(ctx, a).await?),
+        R::OnboardingSelfTest => json(onboarding::self_test(ctx).await?),
         R::LayoutGet => json(layout::get(ctx).await?),
         R::LayoutSetLink(a) => json(layout::set_link(ctx, a).await?),
         R::LayoutRemoveLink(a) => json(layout::remove_link(ctx, a).await?),
@@ -419,13 +426,11 @@ pub(crate) async fn route(ctx: &Arc<Ctx>, req: UiRequest) -> Result<Value, UiErr
         R::LockToScreen(a) => json(input::lock_to_screen(ctx, a).await?),
         R::SwitchToDevice(a) => json(input::switch_to_device(ctx, a).await?),
         R::InputTest(a) => json(input::input_test(ctx, a).await?),
-        // Stages 2 to 4 of the clipsync-ui (onboarding, devices, pairing, clipboard, diagnostics,
-        // preferences) answer here until they land.
-        R::OnboardingStart
-        | R::OnboardingCheckName(_)
-        | R::OnboardingCreate(_)
-        | R::OnboardingSelfTest
-        | R::DevicesList
+        R::PrefsGet => json(prefs::get(ctx)),
+        R::PrefsSet(a) => json(prefs::set(ctx, a)?),
+        // Stages 3 and 4 of the clipsync-ui (devices, pairing, clipboard, diagnostics) answer
+        // here until they land.
+        R::DevicesList
         | R::DeviceSetPerms(_)
         | R::DeviceRevoke(_)
         | R::DevicePause(_)
@@ -443,9 +448,7 @@ pub(crate) async fn route(ctx: &Arc<Ctx>, req: UiRequest) -> Result<Value, UiErr
         | R::ClipboardSendNow(_)
         | R::DiagnosticsGet
         | R::SupportBundlePreview
-        | R::SupportBundleExport
-        | R::PrefsGet
-        | R::PrefsSet(_) => Err(UiError::unavailable()),
+        | R::SupportBundleExport => Err(UiError::unavailable()),
     }
 }
 

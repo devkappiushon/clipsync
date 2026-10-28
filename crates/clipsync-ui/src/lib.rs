@@ -16,6 +16,7 @@ pub mod events;
 pub mod input;
 pub mod layout;
 pub mod msg;
+pub mod onboarding;
 pub mod prefs;
 pub mod status;
 
@@ -24,7 +25,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use clipsync_core::{Profile, control};
+use clipsync_core::{Identity, Profile, control};
 use clipsync_proto::{ControlRequest, ControlResponse, ModuleCommand, ModuleKind, ModuleReply};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
@@ -78,6 +79,10 @@ pub(crate) struct Ctx {
     pub(crate) opts: UiOptions,
     events: broadcast::Sender<UiEvent>,
     pub(crate) agent: tokio::sync::Mutex<agent::Slot>,
+    /// Made by `onboarding_start`, written by `onboarding_create`.
+    pub(crate) pending_identity: Mutex<Option<Identity>>,
+    /// `ui.toml`, read once at start; `prefs_set` keeps it in step with the file.
+    pub(crate) prefs: Mutex<prefs::Stored>,
     /// The fake clipboard of the in-app agent, when the profile asks for one (tests).
     pub(crate) fake_clipboard: Mutex<Option<clipsync_clipboard::FakeClipboardHandle>>,
     poller: Mutex<Option<JoinHandle<()>>>,
@@ -124,12 +129,15 @@ impl Ui {
     /// when the profile exists and turns the status poll on.
     pub async fn start(opts: UiOptions) -> Result<Ui, UiError> {
         let profile = Profile::resolve(opts.profile.clone())?;
+        let stored_prefs = prefs::load(&profile.dir);
         let (events, _) = broadcast::channel(EVENT_QUEUE);
         let ctx = Arc::new(Ctx {
             profile,
             opts,
             events,
             agent: tokio::sync::Mutex::new(agent::Slot::Stopped),
+            pending_identity: Mutex::new(None),
+            prefs: Mutex::new(stored_prefs),
             fake_clipboard: Mutex::new(None),
             poller: Mutex::new(None),
         });
