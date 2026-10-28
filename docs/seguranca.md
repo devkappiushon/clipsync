@@ -598,3 +598,79 @@ Como foi conferido: leitura de todos os blocos contra a documentação do Win32 
 ### Falta para o veredito final do critério 7 (§13.11)
 
 Adaptador `adapter/win/` contra a §13.2 regra 2 e a §13.6 (hook só com ligação local, sem histórico de teclas, canal limitado, `HooksLost`, `n < len` do `send`, `async_key_down` só para modificadores); o estado do bloqueio de tela nos dois sistemas; `Returned` e `Refused` só para sessão do mesmo par; o resultado do CI Windows e do roteiro manual.
+
+## S7 · final (8cc14c4)
+
+**Veredito do critério 7 (§13.11): PASSA, sem BLOQUEANTE.** Estado final da S7: **0 BLOQUEANTE · 1 MÉDIO · 2 BAIXO abertos**, mais os informativos abaixo. Recomendo corrigir o **S7-05** antes da tag v0.3.0 (é uma linha de reset e uma troca de fonte); os dois BAIXO podem ir depois. Revisado por leitura sobre o HEAD 8cc14c4 (`clipsync-win`, `adapter/win/{capture,emulate,mod}.rs`, `wincore.rs`, `winmath.rs`, `adapter/session.rs`, `module.rs`, `capture.rs`, `clipsync-proto/src/{input,module}.rs`).
+
+**O que não cobre este veredito.** Não há Windows aqui: nenhum hook, `SendInput`, bloqueio de tela ou `RegisterHotKey` rodou por mim, e o CI Windows da base (run 40757283200) estava **em andamento** ao fechar, então os testes que só rodam lá (`ffi.rs`, `tests/windows.rs`, vazamento de handle) não estão neste veredito. O roteiro manual (critério 8) é do usuário.
+
+### Evidência executada
+
+- `scripts/conferir-unsafe.sh` e `scripts/conferir-privacidade.sh`: passam (o segundo olha 8 arquivos e já roda nos dois runners, `ci.yml:50` e `:89`).
+- `cargo test --locked -p clipsync-input -p clipsync-win` no Linux: **verde** (47 + 10 + 10 + 10 + 21 + 27 + 21 + 8 e os de doc, 0 falha), incluindo `a_failed_open_does_not_begin_the_capture`.
+- `cargo clippy --locked -p clipsync-win -p clipsync-input -p clipsync-cli -p clipsync-core --all-targets --target x86_64-pc-windows-gnu -- -D warnings`: **limpo**, o que compila e lint-a o `cfg(windows)` inteiro (adaptador e `ffi.rs`, com `undocumented_unsafe_blocks` e `multiple_unsafe_ops_per_block` em `deny`). O `clipsync-app` não entra: o script de build do Tauri não roda aqui, como já era.
+- `loginctl show-session` desta máquina devolve `LockedHint=no`, e o teste do `session.rs` leu o logind real.
+
+### O `ffi.rs` depois do aac844e (reconfirmação)
+
+Diff de `c8cf755..HEAD` no `ffi.rs` e no `lib.rs`; tudo o que mudou fora de teste:
+- **S7-01 fechado.** `async_key_down(vk)` saiu. A API pública agora é `modifier_down(Modifier)` e `button_down(WinButton)`, tipos fechados (8 modificadores, 5 botões); o `async_down(vk)` é privado. Nenhuma letra pode ser lida por esse caminho.
+- **S7-03 fechado.** As duas chamadas de `DisplayConfigGetDeviceInfo` passam `ptr::from_mut(&mut source).cast()` e o `SAFETY` foi reescrito para dizer isso.
+- **I-S7-11 fechado.** `send` devolve `Err` quando o sistema aceita menos entradas que o lote.
+- **S7-02, parte do teste, fechada.** Três testes novos dentro do `ffi.rs` chamam `keyboard_proc` e `mouse_proc` com estruturas montadas à mão: pânico no teclado e no mouse passa o evento e manda `HooksLost` uma única vez, o hook morto não chama mais o fechamento, e `Block` bloqueia. Li o código dos testes; eles só rodam no Windows (esperam o CI).
+- Os novos blocos `unsafe` (`async_down`, os dois `from_mut`, os dos testes) têm `SAFETY` coerente; o clippy acima confirma. Nenhum `unsafe` fora do arquivo, nenhum `pub unsafe`.
+
+### As condições da decisão no adaptador
+
+| Condição | Estado | Onde |
+| --- | --- | --- |
+| **R2** hook só com motivo | **Cumprida** | `start_continuous` não instala nada sem `derived_links()` (ligação para par confiável); `retarget` e `sync_links` (a cada 2 s e a cada par que cai ou é revogado) derrubam a captura quando a última ligação some; `Paused(true)` com `holds_hooks` chama `stop_continuous`, e o `start_continuous` recusa subir pausado (`module.rs:704`). Um loopback em andamento na hora da pausa também termina e não deixa hook. |
+| **R1** pausa remove os hooks, Win+Alt+P retoma | **Cumprida** | Em pausa só existe o `ResumeHotkey` (`RegisterHotKey`), que o módulo arma em `arm_resume` e solta em `disarm_resume`; o `WinCapture::stop` derruba os hooks antes de tudo. Falha do sistema ao registrar vira o texto fixo `RESUME_HOTKEY_REFUSED` e a retomada pela bandeja. |
+| **R3** estado fixo, só modificador e botão | **Cumprida** | `Held` é `Copy` de 4 palavras mais um byte (`wincore.rs:99`), `HotkeyTracker` é `Copy` com `u8`, `u8`, `[u32; N]` e um `bool`, sem histórico; `press_batch` carrega só `modifiers()` e `buttons()`; `reconcile` só consulta os 8 modificadores e os 5 botões. O `Debug` de `Held`, `Out`, `HotkeyTracker` é redigido. |
+| **R4** fila limitada, sem tecla velha | **Cumprida** | `sync_channel(8000)` com `try_send` (o callback não espera); cheia, a captura termina no próprio hook (`core.end_capture()`), o worker esvazia a fila (`while try_recv`) e manda `Deactivated`. O canal do módulo é limitado (4096) e o worker usa `blocking_send`: se travar, a fila de 8000 enche e o ciclo acima corre. Na saída normal da sessão, o que sobrar na fila chega ao engine, que descarta (`CaptureEvent::Input` com `session.is_none()` retorna, `capture.rs:461`). |
+| **R5** sem log de tecla | **Cumprida** | Script no CI dos dois sistemas; `Debug` redigido em `RawEvent`, `WinKey`, `Held`, `Out`, `HotkeyTracker`. O `probe` do Vector só conta tipos de evento e compara o código do Esc sem imprimi-lo. |
+| **§13.2 2(b)** injetado passa sem ler | **Cumprida** | Os dois flags (`INJECTED` e `LOWER_IL_INJECTED`) são testados antes de ler `vkCode`, no teclado e no mouse. |
+| **§13.2 2(f)** callback sem espera | **Cumprida** | No `hook_closure` só há atômicos, `try_lock` e `try_send`; todo o resto (estacionar o cursor, `SendInput`, canal do módulo) é do worker. |
+| **§13.2 2(g)** hooks saem no `Drop` | **Cumprida** | `WinCapture::drop` tira o `Hooks` primeiro; `stop` também. Ver S7-07 para a thread que pode sobrar. |
+
+### HooksLost
+
+Tratado como decidido: `recreate_hooks` encerra a captura (`end_locally`), derruba o `Hooks` morto, manda `Deactivated` (o módulo responde `Leave` e o destino solta tudo), e a política (`RestartPolicy`, `Copy`, 3 vezes em 10 s) recria; a 4ª vez desliga (`locked = true`, sem hooks, `Error(HOOKS_GAVE_UP)` com texto fixo e sem código de tecla) até o módulo reiniciar. O `Drop` do hook morto roda na thread do worker, nunca na do hook, então não há junção da thread com ela mesma. A política tem testes na máquina de decisão pura. Falso positivo continua possível (outro programa chama `SetCursorPos` com captura ativa): o efeito é encerrar a sessão, para o lado seguro.
+
+### Achado
+
+- **S7-05 · MÉDIO · O conjunto de teclas segura valor velho entre uma instância de hook e a seguinte** (`adapter/win/capture.rs:76`, `:187-193`, `:296-314`). `Shared.held` é publicado só quando o `core.held()` do hook muda (`held != stored`), e `stored` e o `core` nascem vazios a cada `Hooks::start`. Nada zera `Shared.held` em `start()` nem em `recreate_hooks` (conferi todas as escritas: só a linha 189, dentro do callback). O `end_locally` lê esse valor e **aperta de novo localmente** todo modificador e botão dele (`:306-314`), em vez de consultar o que está fisicamente seguro como a §13.6 manda. Cenário, no fluxo normal do próprio produto: Win+Alt+P pausa (o hook viu Win e Alt descerem, `held` = {Win, Alt}); os hooks caem; o usuário solta as teclas sem hook nenhum; Win+Alt+P retoma e o hook novo sobe vazio; o usuário atravessa a borda **só com o mouse** e volta sem tocar numa tecla. Como o `core.held()` continua vazio, o publicado não é sobrescrito, e o `end_locally` da volta injeta **Win e Alt presos** na máquina local (o menu Iniciar ou o menu Alt na próxima tecla, ou Ctrl preso e os atalhos que ele dispara). O mesmo acontece com `HooksLost` com tecla segura. O critério de pronto pede que "nada fique preso no PC". Lido e raciocinado, **não executado** (o arquivo é `cfg(windows)`). **Correção, pequena:** (1) zerar `Shared.held` em `start()` e em `recreate_hooks`; (2) no `end_locally`, apertar de novo só o que `reconcile(Held::default())` diz que está fisicamente seguro (`modifier_down` e `button_down`), que é o que a §13.6 já descreve; (3) um teste do `wincore` ou do `capture` que cubra "pausa, retoma, atravessa só com mouse, volta" e confira que o lote de volta não traz modificador.
+- **S7-06 · BAIXO · Resto de depuração em código de produção do Linux** (`adapter/session.rs:29`). `eprintln!("DEBUG logind: {e}")` roda quando o logind não responde. O erro é do D-Bus e não traz tecla nem segredo, mas é um `eprintln!` num caminho de produção e o `conferir-privacidade.sh` não cobre esse arquivo. Já existe o `tracing::debug!` na linha de cima: remover o `eprintln!`. (O da linha 146 é de teste.)
+- **S7-07 · BAIXO · A thread do worker pode sobrar depois do `Drop` do `WinCapture`** (`capture.rs:662-670`). O worker guarda um `SyncSender` da própria fila (`queue`), então `inbox.recv()` nunca acusa fim; o `Drop` só tenta `try_send(Msg::Stop)`, que falha com a fila cheia. Os hooks já foram removidos (a regra 2g está cumprida), então sobra uma thread parada com o `Shared`. Só acontece em queda sem passar por `stop()`. Correção: o worker não guarda o sender, ou o `Drop` marca uma flag de fim.
+
+### Bloqueio de tela, nos dois sistemas
+
+- **Windows, destino:** `ensure_unlocked` roda antes de cada lote e no `enter`: sessão bloqueada (WTS) **ou** área de entrada diferente de `Default` dá `InputError::Locked`, e a falha da chamada (a área segura recusa o `OpenInputDesktop`) também conta como bloqueio. O módulo responde `Refused{Locked}`, esvazia a sessão e solta tudo, tanto na entrada quanto no meio da sessão (`module.rs:1198` e `:1283`). O `release_all` segue permitido: só solta.
+- **Windows, origem:** `Notice::SessionLocked`, `SessionUnlocked` e `DesktopSwitched` (relógio de 500 ms) viram `SessionLocked(bool)`; o `CaptureCore` não ativa barreira bloqueado, e o engine fecha a sessão com `ReleaseAll` e depois `Leave` (`close_for_lock`), e recusa `Activated` e `switch` bloqueado.
+- **Linux, destino:** `PortalEmulate` devolve `Locked` com o `LockedHint` ligado (`portal.rs:850`); **origem:** `PortalCapture` emite `SessionLocked` (inclusive lock já ligado na subida). Sessão do logind por `XDG_SESSION_ID`, depois por PID, depois pela sessão gráfica do usuário.
+- **Aceito:** sem logind o Linux trata como desbloqueado (decisão da §13.6 item 8, com aviso no diagnóstico). Quem usa o ClipSync sem logind injeta na tela de bloqueio do destino se ela existir.
+
+### `Returned`, `Refused`, `begin` e `can_begin`
+
+- **`Returned` e `Refused` só valem para sessão do mesmo par.** O módulo só repassa quando há captura contínua; o engine exige `s.peer == from && s.id == session` nos dois (`capture.rs:545-548` e `:575-578`), e o loopback exige `c.to == from` mais a sessão igual (`module.rs:1068-1073`); senão `ignored += 1`. `Returned` é ignorado com a trava ligada. `pos` é validado no proto (finito, 0 a 1) antes de chegar lá, e o `k` ainda é preso a 0..1. O texto da recusa sai de `msg::refused_by` com o motivo da enumeração fixa, nunca do par.
+- **Autorização no proto:** `EnterSpan` como `EnterAt` (`input_in` mais pausa), `Returned` e `Refused` sem `input_in` e `min_version` 3 (`module.rs:60,148-183`); para par v2 o módulo não manda `Refused` (`send_v3`). `EnterSpan` valida `pos`, `back_from < back_to` e o nome do monitor.
+- **`can_begin`/`begin`:** o `switch` recusa trava, pausa, sessão bloqueada, par fora do layout, par offline e `can_begin()` falso (o portal do Linux só começa por travessia, então recusa); depois abre a sessão e chama `begin`; se o `begin` falhar a sessão fecha com `Leave`. No Windows o `begin` estaciona o cursor e leva só modificadores e botões; falha de estacionar desfaz a captura.
+
+### Informativos novos
+
+- **I-S7-13 · Win+L com captura ativa vai para os dois lados.** O Windows não deixa o hook segurar o Win+L, então a máquina de origem bloqueia e o destino também recebe Win e L e pode bloquear. O `SessionLocked` fecha a sessão logo depois. Efeito de uso, sem vazamento; para o roteiro do passo 7.
+- **I-S7-14 · Janela entre `begin` e `ready`.** O hook lê `begin` e depois `ready` em duas leituras; se a thread do hook for suspensa por alguns milissegundos entre elas e o worker gravar os dois nesse intervalo, o cursor fica em "armando" (movimento bloqueado). Sai pelo Win+Alt+N do próprio dispositivo ou pela bandeja. Probabilidade desprezível; um único atômico com estado resolveria.
+- **I-S7-15 · O falso `HooksLost` por recorte do `SetCursorPos`** (herdado do I-S7-3): se o centro estacionado cair fora da área virtual, o ponto não bate e o relógio de 500 ms acusa perda a cada captura; nos três primeiros o hook é recriado, no quarto o controle desliga com o aviso. O centro do monitor da barreira está sempre dentro, então só acontece com a área virtual mudando no meio da captura.
+
+### Para o Maestro
+
+| Item | Estado |
+| --- | --- |
+| §13.2 regra 2, hooks (a a g) | **Cumprida**, com S7-05 e S7-07 |
+| `ffi.rs`, bloco a bloco, depois do aac844e | **Aprovado**; S7-01, S7-02, S7-03 e I-S7-11 fechados |
+| `HooksLost` | **Aprovado** |
+| Bloqueio de tela, Linux e Windows | **Aprovado** (resíduo aceito: Linux sem logind) |
+| `Returned`/`Refused` só do mesmo par; `begin`/`can_begin` | **Aprovado** |
+| Bloqueante | **Nenhum.** Critério 7: **PASSA** |
+| Antes da tag | Corrigir **S7-05**; conferir o CI Windows 40757283200 e o resultado dos testes de `ffi.rs` |
