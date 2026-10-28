@@ -367,3 +367,40 @@ fn input_state_without_the_s7_fields_decodes_as_none_and_false() {
     let back: InputState = serde_json::from_value(serde_json::to_value(&new).unwrap()).unwrap();
     assert_eq!(back, new);
 }
+
+/// §13.4 item 6: `unlink` undoes `link` on both sides, like a revoked peer.
+#[tokio::test]
+async fn memhub_unlink_takes_the_peer_away_on_both_sides() {
+    let hub = MemHub::new();
+    let mut a = hub.add_node("a", BOTH);
+    let mut b = hub.add_node("b", BOTH);
+    hub.link(a.id, b.id, INPUT_IN, INPUT_IN);
+    next(&mut a.rx).await;
+    next(&mut b.rx).await;
+    assert_eq!(a.host.peers().len(), 1);
+
+    hub.unlink(a.id, b.id);
+    assert!(matches!(next(&mut a.rx).await, ModuleInput::PeerDown(p) if p == b.id));
+    assert!(matches!(next(&mut b.rx).await, ModuleInput::PeerDown(p) if p == a.id));
+    assert!(a.host.peers().is_empty() && b.host.peers().is_empty());
+    assert_eq!(
+        a.host.send_reliable(b.id, returned(0.5)).await,
+        Err(SendError::NotConnected)
+    );
+    assert_eq!(
+        b.host.send_datagram(
+            a.id,
+            InputDatagram {
+                session: 9,
+                seq: 1,
+                t_mono_us: 0,
+                events: vec![],
+            }
+        ),
+        Err(SendError::NotConnected)
+    );
+
+    // Unlinking again (or two nodes never linked) says nothing.
+    hub.unlink(a.id, b.id);
+    assert!(a.rx.try_recv().is_err() && b.rx.try_recv().is_err());
+}

@@ -115,6 +115,23 @@ impl MemHub {
         }
     }
 
+    /// Undoes `link`, like a peer revoked on both sides (§13.4 item 6): the grants go, `peers()`
+    /// stops listing the other, sends answer NotConnected, and BOTH sides get
+    /// ModuleInput::PeerDown. Nodes that were not linked get nothing.
+    pub fn unlink(&self, a: PeerId, b: PeerId) {
+        let mut s = lock(&self.state);
+        let ab = s.grants.remove(&(a, b)).is_some();
+        let ba = s.grants.remove(&(b, a)).is_some();
+        if !(ab || ba) {
+            return;
+        }
+        for (me, other) in [(a, b), (b, a)] {
+            if let Some(node) = s.nodes.get(&me) {
+                let _ = node.tx.try_send(ModuleInput::PeerDown(other));
+            }
+        }
+    }
+
     /// Also delivers ModuleInput::Paused.
     pub fn set_paused(&self, node: PeerId, paused: bool) {
         let mut s = lock(&self.state);
