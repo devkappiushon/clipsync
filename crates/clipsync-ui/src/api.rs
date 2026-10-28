@@ -375,14 +375,18 @@ pub fn peer_id(s: &str, field: &str) -> Result<PeerId, UiError> {
 
 /// Item id of the clipboard box: 32 hex.
 pub fn event_id(s: &str, field: &str) -> Result<EventId, UiError> {
+    // Hex digits only: `from_str_radix` alone would also take a sign ("+f" read as "0f", S6-12).
+    let digit = |b: u8| (b as char).to_digit(16);
     let mut out = [0u8; 16];
     let ok = s.len() == 32
-        && s.as_bytes().chunks(2).enumerate().all(|(i, pair)| {
-            std::str::from_utf8(pair)
-                .ok()
-                .and_then(|h| u8::from_str_radix(h, 16).ok())
-                .map(|b| out[i] = b)
-                .is_some()
+        && s.as_bytes().chunks(2).zip(out.iter_mut()).all(|(pair, o)| {
+            match (digit(pair[0]), digit(pair[1])) {
+                (Some(hi), Some(lo)) => {
+                    *o = u8::try_from(hi * 16 + lo).unwrap_or_default();
+                    true
+                }
+                _ => false,
+            }
         });
     if ok {
         Ok(EventId(out))
@@ -524,5 +528,9 @@ mod tests {
         assert_eq!(id.0, [0x0f; 16]);
         assert!(event_id(&"zz".repeat(16), "id").is_err());
         assert!(event_id("0f0f", "id").is_err());
+        // S6-12: a sign is not a hex digit.
+        assert!(event_id(&"+f".repeat(16), "id").is_err());
+        assert!(event_id(&"-f".repeat(16), "id").is_err());
+        assert_eq!(event_id(&"AB".repeat(16), "id").unwrap().0, [0xab; 16]);
     }
 }
