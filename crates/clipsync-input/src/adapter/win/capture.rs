@@ -480,6 +480,11 @@ impl Worker {
     /// and the module registers a block with a fixed text; it only comes back when the module restarts
     /// (Sentinel S7-02, decided by the Maestro).
     fn recreate_hooks(&mut self) -> bool {
+        // Stopping (or the pause, which stops the adapter) wins over a hook that was lost at the same
+        // time: nothing is installed while the adapter is on its way out (Sentinel S7-08).
+        if self.shared.stop.load(Ordering::Acquire) {
+            return false;
+        }
         let _ = end_locally(&self.shared, None);
         let dead = lock(&self.shared.hooks).take();
         drop(dead);
@@ -680,6 +685,9 @@ impl CaptureAdapter for WinCapture {
             if let Some(worker) = worker {
                 let _ = worker.join();
             }
+            // The worker may have installed hooks between the first take and its exit.
+            let late = lock(&shared.hooks).take();
+            drop(late);
             let _ = end_locally(&shared, None);
         })
         .await
@@ -699,6 +707,8 @@ impl Drop for WinCapture {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+        let late = lock(&self.shared.hooks).take();
+        drop(late);
         let park = lock(&self.shared.park).take();
         drop(park);
     }
@@ -822,5 +832,26 @@ mod tests {
         }
         assert!(handle.is_finished(), "the worker did not leave");
         drop(queue);
+    }
+
+    /// Sentinel S7-08: a hook lost while the adapter is stopping is not recreated.
+    #[test]
+    fn a_lost_hook_is_not_recreated_while_stopping() {
+        let shared = Arc::new(Shared::new());
+        let (queue, inbox) = sync_channel(4);
+        let (out, _unread) = mpsc::channel(4);
+        shared.stop.store(true, Ordering::Release);
+        let mut worker = Worker {
+            shared: Arc::clone(&shared),
+            queue,
+            inbox,
+            out,
+            session_locked: false,
+            secure_desktop: false,
+            restarts: RestartPolicy::new(),
+            clock: Instant::now(),
+        };
+        assert!(!worker.recreate_hooks());
+        assert!(lock(&shared.hooks).is_none(), "no hook may be installed");
     }
 }
