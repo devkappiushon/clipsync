@@ -841,6 +841,150 @@ async fn mesh_never_sends_a_protocol_2_message_to_a_version_1_peer() {
     ep.close(0u32.into(), b"");
 }
 
+/// v1.16 on the wire: B written by hand with Hello `version`; A then drops B from peers.toml and
+/// reloads. Returns the first control frame B got (None when the stream ended without one) and
+/// the code A closed with.
+async fn revoke_hand_written_peer(version: u16) -> (Option<Frame>, Option<u64>) {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (node(&dir, "a"), node(&dir, "b"));
+    trust(&a, &b, "b", ALL);
+    let b_identity = b.profile.load_identity().unwrap();
+    let pins = Arc::new(PinSet::new([a.id]));
+    let server = tls::server_config(
+        &b_identity,
+        PinVerifier::new(VerifyMode::Mesh(pins)),
+        ALPN_MESH,
+    )
+    .unwrap();
+    let ep = quinn::Endpoint::server(server, b.addr).unwrap();
+    let mut ra = start(&a, false);
+    let conn = tokio::time::timeout(WAIT, async { ep.accept().await.unwrap().await.unwrap() })
+        .await
+        .unwrap();
+    let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+    read_control(&mut send, &mut recv).await.unwrap();
+    let hello = Hello {
+        version,
+        min_version: 1,
+        device_name: "b".into(),
+        modules: ModuleSet {
+            clipboard: true,
+            input: true,
+        },
+        listen_port: b.addr.port(),
+    };
+    write_frame(&mut send, &Frame::Hello(hello), MAX_CONTROL_FRAME_BYTES)
+        .await
+        .unwrap();
+    next_peer_up(&mut ra.input).await;
+
+    a.profile.save_peers(&Peers::default()).unwrap();
+    assert!(matches!(
+        control::request(&a.profile, ControlRequest::ReloadPeers).await,
+        Ok(ControlResponse::Ok)
+    ));
+    let frame = tokio::time::timeout(WAIT, read_control(&mut send, &mut recv))
+        .await
+        .unwrap()
+        .ok();
+    let code = match tokio::time::timeout(WAIT, conn.closed()).await.unwrap() {
+        quinn::ConnectionError::ApplicationClosed(c) => Some(c.error_code.into_inner()),
+        _ => None,
+    };
+    stop(ra).await;
+    ep.close(0u32.into(), b"");
+    (frame, code)
+}
+
+/// v1.16: a version 2 peer that leaves peers.toml is told `Bye{Revoked}` before the close; a
+/// version 1 peer would not decode it, so it only sees the close.
+#[tokio::test(flavor = "multi_thread")]
+async fn revoked_bye_goes_only_to_a_version_2_peer() {
+    let unknown = Some(u64::from(CloseCode::UnknownPeer.code()));
+    let (frame, code) = revoke_hand_written_peer(2).await;
+    assert!(
+        matches!(
+            frame,
+            Some(Frame::Bye {
+                code: CloseCode::Revoked
+            })
+        ),
+        "{frame:?}"
+    );
+    assert_eq!(code, unknown);
+    let (frame, code) = revoke_hand_written_peer(1).await;
+    assert!(frame.is_none(), "a version 1 peer gets no frame: {frame:?}");
+    assert_eq!(code, unknown);
+}
+
+/// v1.16 between two real agents: A revokes B; in up to 3 s B has taken A out of its own
+/// peers.toml and status, and says who removed it. B offline at that moment keeps A.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_revoked_peer_removes_the_revoker_itself() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (node(&dir, "a"), node(&dir, "b"));
+    trust(&a, &b, "b", ALL);
+    trust(&b, &a, "a", ALL);
+    let (mut ra, mut rb) = (start(&a, false), start(&b, false));
+    next_peer_up(&mut ra.clip).await;
+    next_peer_up(&mut rb.clip).await;
+
+    a.profile.save_peers(&Peers::default()).unwrap();
+    control::request(&a.profile, ControlRequest::ReloadPeers)
+        .await
+        .unwrap();
+    let began = Instant::now();
+    wait_until("b drops a from peers.toml", || async {
+        b.profile.load_peers().unwrap().get(&a.id).is_none()
+    })
+    .await;
+    assert!(
+        began.elapsed() <= Duration::from_secs(3),
+        "{:?}",
+        began.elapsed()
+    );
+    let sb = status(&b.profile).await.unwrap();
+    assert!(sb.peers.iter().all(|p| p.id != a.id), "{:?}", sb.peers);
+    assert_eq!(sb.recent_removals.len(), 1);
+    assert_eq!(
+        (
+            sb.recent_removals[0].peer,
+            sb.recent_removals[0].peer_name.as_str()
+        ),
+        (a.id, "a")
+    );
+    let sa = status(&a.profile).await.unwrap();
+    assert!(sa.peers.is_empty() && sa.recent_removals.is_empty());
+    stop(ra).await;
+    stop(rb).await;
+
+    // B offline when A revokes: B keeps A after it comes back (A just refuses its key).
+    let (c, d) = (node(&dir, "c"), node(&dir, "d"));
+    trust(&c, &d, "d", ALL);
+    trust(&d, &c, "c", ALL);
+    let rc = start(&c, false);
+    wait_until("c up", || async { status(&c.profile).await.is_some() }).await;
+    c.profile.save_peers(&Peers::default()).unwrap();
+    control::request(&c.profile, ControlRequest::ReloadPeers)
+        .await
+        .unwrap();
+    let rd = start(&d, false);
+    wait_until("d up", || async { status(&d.profile).await.is_some() }).await;
+    // d dials c (after DEFER when its id is the larger one) and is refused.
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert!(
+        d.profile.load_peers().unwrap().get(&c.id).is_some(),
+        "d keeps c"
+    );
+    assert_ne!(
+        peer_state(&d.profile, c.id).await,
+        Some(PeerState::Connected)
+    );
+    assert!(status(&d.profile).await.unwrap().recent_removals.is_empty());
+    stop(rc).await;
+    stop(rd).await;
+}
+
 /// A module whose `Status` reports a settable `last_block`.
 struct Blocking {
     last_block: Arc<std::sync::Mutex<Option<String>>>,

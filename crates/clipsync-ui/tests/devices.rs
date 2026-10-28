@@ -1,8 +1,9 @@
 //! 2 · Dispositivos (§12.9 item 2, fluxo 2): `input_in` without confirmation is
 //! `needs_confirmation`; with it `peers.toml` is written and the running agent applies it (the
 //! peer's clipboard now gets through); `device_revoke` with the wrong name is `name_mismatch`,
-//! with the right one the peer leaves this side's status and drops from the other side's mesh.
-//! Also `peer_connected` within 3 s. Owned by Rivet.
+//! with the right one the peer leaves the status and the list on both sides: the revoked side,
+//! told by `Bye{Revoked}` (v1.16), removes the revoker itself within 3 s, with one
+//! `device_removed` notification. Also `peer_connected` within 3 s. Owned by Rivet.
 
 // Helpers outside #[test] fns are test code too; clippy.toml's allow-*-in-tests does not reach them.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -17,6 +18,7 @@ use clipsync_proto::{
     PeerPerms, PeerState,
 };
 use clipsync_ui::UiEvent;
+use clipsync_ui::events::NotificationKind;
 use common::*;
 use serde_json::json;
 
@@ -63,6 +65,7 @@ async fn perms_need_full_trust_for_input_and_revoke_needs_the_typed_name() {
     let mut events_a = ui_a.subscribe();
     let began = tokio::time::Instant::now();
     let ui_b = start(dir.path(), "b").await;
+    let mut events_b = ui_b.subscribe();
     let ev = next_event(
         &mut events_a,
         "peer_connected b",
@@ -159,6 +162,14 @@ async fn perms_need_full_trust_for_input_and_revoke_needs_the_typed_name() {
     .await;
     assert_eq!(e.code, "unavailable");
 
+    // b's poll must have seen a connected, so that a leaving is a change it reports.
+    wait_until("b sees a connected", || async {
+        ok(&ui_b, json!({ "cmd": "devices_list" })).await["devices"][0]["state"]
+            == json!("connected")
+    })
+    .await;
+    tokio::time::sleep(POLL * 3).await;
+
     let revoke = |name: &str| json!({ "cmd": "device_revoke", "args": { "peer_id": idb.to_hex(), "typed_name": name } });
     let e = err(&ui_a, revoke("B")).await;
     assert_eq!(
@@ -173,19 +184,48 @@ async fn perms_need_full_trust_for_input_and_revoke_needs_the_typed_name() {
         ok(&ui_a, json!({ "cmd": "devices_list" })).await["devices"],
         json!([])
     );
-    // a saw b connected, so it reports b leaving; b loses the connection and cannot get back
-    // in (a refuses its key now).
     next_event(
         &mut events_a,
         "peer_disconnected b",
         |e| matches!(e, UiEvent::PeerDisconnected(p) if p.peer_id == idb.to_hex()),
     )
     .await;
-    wait_until("b no longer connected to a", || async {
-        ok(&ui_b, json!({ "cmd": "devices_list" })).await["devices"][0]["state"]
-            != json!("connected")
+    // b was told: it drops a from its own peers.toml, status and list within 3 s.
+    let told = tokio::time::Instant::now();
+    wait_until("b drops a", || async {
+        pb.load_peers().unwrap().get(&ida).is_none()
     })
     .await;
+    assert!(
+        told.elapsed() <= Duration::from_secs(3),
+        "{:?}",
+        told.elapsed()
+    );
+    assert!(peer_state(&pb, ida).await.is_none(), "gone from b's status");
+    assert_eq!(
+        ok(&ui_b, json!({ "cmd": "devices_list" })).await["devices"],
+        json!([])
+    );
+    next_event(
+        &mut events_b,
+        "peer_disconnected a",
+        |e| matches!(e, UiEvent::PeerDisconnected(p) if p.peer_id == ida.to_hex()),
+    )
+    .await;
+    // One notification, and no peer_blocked with it.
+    let mut removed = Vec::new();
+    let quiet = tokio::time::Instant::now() + POLL * 10;
+    while let Ok(Ok(ev)) = tokio::time::timeout_at(quiet, events_b.recv()).await {
+        match ev {
+            UiEvent::Notification(n) => removed.push(n),
+            UiEvent::PeerBlocked(b) => panic!("removal also gave peer_blocked: {b:?}"),
+            _ => {}
+        }
+    }
+    assert_eq!(removed.len(), 1, "{removed:?}");
+    assert_eq!(removed[0].kind, NotificationKind::DeviceRemoved);
+    assert_eq!(removed[0].title, "Dispositivo removido");
+    assert_eq!(removed[0].body, "a removeu este dispositivo");
     ui_a.shutdown().await;
     ui_b.shutdown().await;
 }

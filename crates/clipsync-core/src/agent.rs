@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use clipsync_proto::{
     AgentStatus, ControlRequest, ControlResponse, Module, ModuleCommand, ModuleInput, ModuleKind,
-    ModuleReply, ModuleStatus,
+    ModuleReply, ModuleStatus, PeerId,
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
@@ -70,6 +70,15 @@ pub async fn run(
         peers,
         paused: state.paused,
     })?);
+    // v1.16: a peer that removed us (Bye{Revoked}) leaves peers.toml the way a local revoke does.
+    let revocations = mesh.revocations().map(|mut rx| {
+        let (profile, mesh) = (p.clone(), mesh.clone());
+        tokio::spawn(async move {
+            while let Some(peer) = rx.recv().await {
+                remove_revoked(&profile, &mesh, peer).await;
+            }
+        })
+    });
     let host = mesh.host();
     let mut tasks = JoinSet::new();
     for (m, rx) in runners {
@@ -107,8 +116,25 @@ pub async fn run(
     })
     .await;
     tasks.abort_all();
+    if let Some(r) = revocations {
+        r.abort();
+    }
     mesh.shutdown().await;
     served
+}
+
+/// Writes peers.toml without `peer` and reloads the mesh, like `ReloadPeers` after a local
+/// revoke. A file that cannot be written still leaves the peer out of the running mesh.
+async fn remove_revoked(profile: &Profile, mesh: &Mesh, peer: PeerId) {
+    let mut peers = match profile.load_peers() {
+        Ok(p) => p,
+        Err(e) => return tracing::warn!(error = %e, "peers.toml unreadable; revocation not saved"),
+    };
+    peers.peer.retain(|e| e.id != peer);
+    if let Err(e) = profile.save_peers(&peers) {
+        tracing::warn!(error = %e, "peers.toml not written; revocation lasts until restart");
+    }
+    mesh.reload(peers).await;
 }
 
 struct Agent {
@@ -231,6 +257,7 @@ impl Agent {
             peers: self.mesh.peer_statuses(),
             modules,
             recent_blocks: self.mesh.recent_blocks(),
+            recent_removals: self.mesh.recent_removals(),
         }
     }
 

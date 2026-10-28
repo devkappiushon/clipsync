@@ -60,6 +60,21 @@ pub struct AgentStatus {
     /// Newest first, at most MAX_RECENT_BLOCKS. `default`: an older agent sends none.
     #[serde(default)]
     pub recent_blocks: Vec<BlockRecord>,
+    /// v1.16: peers that removed this device (`Bye{Revoked}`), newest first, at most
+    /// MAX_RECENT_REMOVALS. `default`: an older agent sends none.
+    #[serde(default)]
+    pub recent_removals: Vec<RemovalRecord>,
+}
+
+/// A peer told us, over its authenticated mesh connection, that it removed this device; the
+/// agent then removed it from peers.toml. Facts only.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct RemovalRecord {
+    /// Wall clock; display only.
+    pub at_unix_ms: u64,
+    pub peer: PeerId,
+    /// As it was in peers.toml.
+    pub peer_name: String,
 }
 
 /// One refusal, newest first in `AgentStatus::recent_blocks`. Facts only, never content.

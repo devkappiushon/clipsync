@@ -319,7 +319,9 @@ fn close_codes_are_stable_short_tokens() {
     }
     assert_eq!(CloseCode::KeyChanged.code(), 7);
     assert_eq!(CloseCode::UnknownPeer.reason(), b"unknown-peer");
-    assert_eq!(CloseCode::from_code(8), None);
+    assert_eq!(CloseCode::Revoked.code(), 8);
+    assert_eq!(CloseCode::Revoked.reason(), b"revoked");
+    assert_eq!(CloseCode::from_code(9), None);
 }
 
 #[test]
@@ -413,4 +415,42 @@ fn validate_device_name_rejects_control_and_bidi() {
             "{name:?}"
         );
     }
+}
+
+/// v1.16: `Bye{Revoked}` round-trips, and a status from an agent without the newer rings
+/// (0.1.0 had neither `recent_blocks` nor `recent_removals`) still reads, with both empty.
+#[test]
+fn revoked_bye_and_status_without_the_rings() {
+    let bye = Frame::Bye {
+        code: CloseCode::Revoked,
+    };
+    let bytes = encode_frame(&bye, MAX_CONTROL_FRAME_BYTES).unwrap();
+    assert!(matches!(
+        decode_frame_body(&bytes[4..]).unwrap(),
+        Frame::Bye {
+            code: CloseCode::Revoked
+        }
+    ));
+    let status = AgentStatus {
+        device_name: "a".into(),
+        id: PeerId([7; 32]),
+        listen: "127.0.0.1:47800".parse().unwrap(),
+        paused: false,
+        peers: vec![],
+        modules: vec![],
+        recent_blocks: vec![],
+        recent_removals: vec![RemovalRecord {
+            at_unix_ms: 1,
+            peer: PeerId([9; 32]),
+            peer_name: "b".into(),
+        }],
+    };
+    let mut v = serde_json::to_value(&status).unwrap();
+    let back: AgentStatus = serde_json::from_value(v.clone()).unwrap();
+    assert_eq!(back.recent_removals, status.recent_removals);
+    let o = v.as_object_mut().unwrap();
+    o.remove("recent_blocks");
+    o.remove("recent_removals");
+    let old: AgentStatus = serde_json::from_value(v).unwrap();
+    assert!(old.recent_blocks.is_empty() && old.recent_removals.is_empty());
 }

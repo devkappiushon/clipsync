@@ -54,6 +54,12 @@ pub fn notify_block(name: Option<&str>, reason: &str) -> String {
     }
 }
 
+pub const NOTIFY_REMOVED: &str = "Dispositivo removido";
+
+pub fn notify_removed(name: &str) -> String {
+    format!("{name} removeu este dispositivo")
+}
+
 // 5 · clipboard
 pub const CLIPBOARD_OFF: &str = "o módulo clipboard está desligado neste dispositivo";
 pub const NOTIFY_ITEM: &str = "Item recebido";

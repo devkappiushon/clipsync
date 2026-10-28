@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 
-use clipsync_proto::{BlockRecord, InputState, ModuleKind, PeerId, PeerState};
+use clipsync_proto::{BlockRecord, InputState, ModuleKind, PeerId, PeerState, RemovalRecord};
 use serde::{Deserialize, Serialize};
 
 use crate::clipboard::{self, ItemState};
@@ -139,6 +139,8 @@ pub enum NotificationKind {
     ItemReceived,
     DeviceConnected,
     Block,
+    /// v1.16: a peer removed this device (follows `notifications.block`).
+    DeviceRemoved,
 }
 
 /// Already filtered by the preferences; never clipboard content (§12.2 rule 7).
@@ -192,6 +194,8 @@ pub(crate) struct Snapshot {
     connected: BTreeMap<PeerId, PeerConnected>,
     /// The agent's `recent_blocks`, newest first.
     blocks: Vec<BlockRecord>,
+    /// The agent's `recent_removals` (peers that removed this device), newest first.
+    removals: Vec<RemovalRecord>,
     /// The clipboard box by id (32 hex), without previews; `None` when the module is off.
     inbox: Option<BTreeMap<String, ClipReceived>>,
     /// What the input module answered to `InputState`.
@@ -205,6 +209,11 @@ impl Snapshot {
             Some(s) => s.paused,
             None => ctx.profile.load_state().is_ok_and(|s| s.paused),
         };
+        let removals = o
+            .status
+            .as_ref()
+            .map(|s| s.recent_removals.clone())
+            .unwrap_or_default();
         let (connected, blocks) = match &o.status {
             Some(s) => (
                 s.peers
@@ -258,23 +267,15 @@ impl Snapshot {
             live: o.status.is_some(),
             connected,
             blocks,
+            removals,
             inbox,
             input: o.input,
         }
     }
 
-    /// Blocks in `now` that this look did not have, oldest first. The ring is newest first, so
-    /// they are the ones before our newest; a ring that lost it (new agent) is all new.
+    /// Blocks in `now` that this look did not have, oldest first.
     fn new_blocks<'a>(&self, now: &'a Snapshot) -> impl Iterator<Item = &'a BlockRecord> {
-        let fresh = match self.blocks.first() {
-            Some(top) => now
-                .blocks
-                .iter()
-                .position(|b| b == top)
-                .unwrap_or(now.blocks.len()),
-            None => now.blocks.len(),
-        };
-        now.blocks[..fresh].iter().rev()
+        fresh(&self.blocks, &now.blocks)
     }
 
     /// `layout_changed` (zones, offer) and `screen_lock_changed`, when both looks have an
@@ -334,6 +335,16 @@ impl Snapshot {
                 }
             }
         }
+        // Once per removal, no peer_blocked with it; peer_disconnected comes from `connected`.
+        for r in fresh(&self.removals, &now.removals) {
+            if notify.block {
+                out.push(UiEvent::Notification(Notification {
+                    kind: NotificationKind::DeviceRemoved,
+                    title: msg::NOTIFY_REMOVED.to_string(),
+                    body: msg::notify_removed(&clean(&r.peer_name)),
+                }));
+            }
+        }
         for b in self.new_blocks(now) {
             let ev = PeerBlocked {
                 peer_id: b.peer.map(|id| id.to_hex()),
@@ -369,6 +380,16 @@ impl Snapshot {
     }
 }
 
+/// Entries of a newest-first ring (`now`) that `was` did not have, oldest first: the ones before
+/// our newest; a ring that lost it (new agent) is all new.
+fn fresh<'a, T: PartialEq>(was: &[T], now: &'a [T]) -> impl Iterator<Item = &'a T> {
+    let n = match was.first() {
+        Some(top) => now.iter().position(|x| x == top).unwrap_or(now.len()),
+        None => now.len(),
+    };
+    now[..n].iter().rev()
+}
+
 /// The `rev` of `layout.toml` (0 when there is none yet).
 fn layout_rev(ctx: &Ctx) -> u64 {
     clipsync_input::layout::Layout::read(&ctx.profile.dir.join("layout.toml"))
@@ -391,6 +412,7 @@ pub(crate) async fn poll(ctx: Weak<Ctx>, first: Snapshot) {
         if !now.live {
             // No agent this tick: keep the ring, so the same blocks are not new next time.
             now.blocks = std::mem::take(&mut last.blocks);
+            now.removals = std::mem::take(&mut last.removals);
         }
         if now.inbox.is_none() {
             // A box that could not be read this tick is not a box emptied.

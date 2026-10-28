@@ -13,11 +13,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clipsync_proto::{
     ALPN_MESH, BlockRecord, ClipMsg, CloseCode, Datagram, EventId, Frame, Hello, InputDatagram,
-    MAX_CONTROL_FRAME_BYTES, MAX_FRAME_BYTES, MAX_RECENT_BLOCKS, MIN_PROTOCOL_VERSION, ModuleHost,
-    ModuleInput, ModuleKind, ModuleMsg, ModuleSet, PROTOCOL_VERSION, PeerId, PeerInfo, PeerPerms,
-    PeerState, PeerStatus, SendError, WireError, authorize_inbound, authorize_inbound_datagram,
-    authorize_outbound, authorize_outbound_datagram, decode_datagram, encode_datagram,
-    encode_frame, min_version, read_frame, write_frame,
+    MAX_CONTROL_FRAME_BYTES, MAX_FRAME_BYTES, MAX_RECENT_BLOCKS, MAX_RECENT_REMOVALS,
+    MIN_PROTOCOL_VERSION, ModuleHost, ModuleInput, ModuleKind, ModuleMsg, ModuleSet,
+    PROTOCOL_VERSION, PeerId, PeerInfo, PeerPerms, PeerState, PeerStatus, RemovalRecord, SendError,
+    WireError, authorize_inbound, authorize_inbound_datagram, authorize_outbound,
+    authorize_outbound_datagram, decode_datagram, encode_datagram, encode_frame, min_version,
+    read_frame, write_frame,
 };
 use quinn::{Connection, Endpoint, RecvStream, SendStream, VarInt};
 use tokio::sync::{Notify, mpsc, watch};
@@ -34,6 +35,8 @@ const BACKOFF_MAX: Duration = Duration::from_secs(30);
 const DEFER: Duration = Duration::from_secs(2);
 /// Time the control tasks get to put Bye on the wire before the connections close.
 const BYE_GRACE: Duration = Duration::from_millis(100);
+/// `Bye{Revoked}` only goes to a peer that decodes it (v1.16): a 0.1.0 would close with Protocol.
+const REVOKED_MIN_VERSION: u16 = 2;
 
 pub fn varint(code: CloseCode) -> VarInt {
     VarInt::from_u32(code.code())
@@ -87,6 +90,8 @@ pub struct MeshOptions {
 /// Running mesh. Dropping it does not stop the tasks: call `shutdown`.
 pub struct Mesh {
     inner: Arc<Inner>,
+    /// Taken once by the agent (`revocations`).
+    revoked: Mutex<Option<mpsc::UnboundedReceiver<PeerId>>>,
 }
 
 struct Inner {
@@ -102,6 +107,11 @@ struct Inner {
     peers: Mutex<HashMap<PeerId, Slot>>,
     /// Newest first, at most MAX_RECENT_BLOCKS. Locked on its own, never inside `peers`.
     blocks: Mutex<VecDeque<BlockRecord>>,
+    /// Peers that removed this device, newest first, at most MAX_RECENT_REMOVALS. Locked on its
+    /// own, never inside `peers`.
+    removals: Mutex<VecDeque<RemovalRecord>>,
+    /// To the agent: this peer sent `Bye{Revoked}`, take it out of peers.toml.
+    revoked: mpsc::UnboundedSender<PeerId>,
     next_gen: AtomicU64,
     stop: watch::Sender<bool>,
 }
@@ -116,6 +126,8 @@ struct Slot {
 
 struct Active {
     conn: Connection,
+    /// Tells the control task to send `Bye{Revoked}` (the peer left peers.toml).
+    revoke: Arc<Notify>,
     remote: ModuleSet,
     /// `Hello::version` of the peer on this connection.
     version: u16,
@@ -205,6 +217,7 @@ impl Mesh {
             .map(|e| (e.id, Slot::new(e)))
             .collect();
         let ids: Vec<PeerId> = slots.keys().copied().collect();
+        let (revoked, revoked_rx) = mpsc::unbounded_channel();
         let inner = Arc::new(Inner {
             id,
             identity: opts.identity,
@@ -217,6 +230,8 @@ impl Mesh {
             paused: AtomicBool::new(opts.paused),
             peers: Mutex::new(slots),
             blocks: Mutex::new(VecDeque::new()),
+            removals: Mutex::new(VecDeque::new()),
+            revoked,
             next_gen: AtomicU64::new(1),
             stop: watch::Sender::new(false),
         });
@@ -224,7 +239,30 @@ impl Mesh {
         for peer in ids {
             tokio::spawn(inner.clone().dial_loop(peer));
         }
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            revoked: Mutex::new(Some(revoked_rx)),
+        })
+    }
+
+    /// Peers that sent `Bye{Revoked}` over their authenticated mesh connection (v1.16). The agent
+    /// takes this once and removes each from peers.toml, then calls `reload`.
+    pub fn revocations(&self) -> Option<mpsc::UnboundedReceiver<PeerId>> {
+        self.revoked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+    }
+
+    /// Peers that removed this device lately, newest first.
+    pub fn recent_removals(&self) -> Vec<RemovalRecord> {
+        self.inner
+            .removals
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .cloned()
+            .collect()
     }
 
     pub fn local_id(&self) -> PeerId {
@@ -293,13 +331,15 @@ impl Mesh {
             .collect()
     }
 
-    /// New peers.toml (ReloadPeers): pins change at once; removed peers are closed and announced
-    /// down; new peers get a dialer; changed permissions are announced with a fresh PeerUp.
+    /// New peers.toml (ReloadPeers): pins change at once; removed peers are told `Bye{Revoked}`
+    /// (version 2 only, v1.16), closed and announced down; new peers get a dialer; changed
+    /// permissions are announced with a fresh PeerUp.
     pub async fn reload(&self, peers: Peers) {
         let inner = &self.inner;
         inner.pins.replace(peers.pins());
         let keep: HashSet<PeerId> = peers.peer.iter().map(|e| e.id).collect();
         let (mut down, mut up, mut spawn) = (Vec::new(), Vec::new(), Vec::new());
+        let mut closing = Vec::new();
         {
             let mut slots = inner.lock();
             slots.retain(|id, slot| {
@@ -307,7 +347,7 @@ impl Mesh {
                     return true;
                 }
                 if let Some(a) = &slot.active {
-                    close(&a.conn, CloseCode::UnknownPeer);
+                    closing.push((a.conn.clone(), a.revoke.clone(), a.version));
                     down.push(*id);
                 }
                 slot.wake.notify_one();
@@ -333,6 +373,20 @@ impl Mesh {
                     }
                 }
             }
+        }
+        // The control task writes the Bye; the close waits the same grace as a shutdown Bye.
+        let mut told = false;
+        for (_, revoke, version) in &closing {
+            if *version >= REVOKED_MIN_VERSION {
+                revoke.notify_one();
+                told = true;
+            }
+        }
+        if told {
+            tokio::time::sleep(BYE_GRACE).await;
+        }
+        for (conn, _, _) in &closing {
+            close(conn, CloseCode::UnknownPeer);
         }
         for id in spawn {
             tokio::spawn(inner.clone().dial_loop(id));
@@ -406,6 +460,27 @@ impl Inner {
             reason,
         });
         blocks.truncate(MAX_RECENT_BLOCKS);
+    }
+
+    /// The peer removed us: remember it (status) and ask the agent to remove it from peers.toml.
+    fn revoked_by(&self, peer: PeerId) {
+        let Some(peer_name) = self.lock().get(&peer).map(|s| s.entry.name.clone()) else {
+            return;
+        };
+        tracing::info!(peer = %peer, "removed by the peer");
+        let at_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+        {
+            let mut removals = self.removals.lock().unwrap_or_else(PoisonError::into_inner);
+            removals.push_front(RemovalRecord {
+                at_unix_ms,
+                peer,
+                peer_name,
+            });
+            removals.truncate(MAX_RECENT_REMOVALS);
+        }
+        let _ = self.revoked.send(peer);
     }
 
     async fn broadcast(&self, make: impl Fn() -> ModuleInput) {
@@ -637,6 +712,7 @@ impl Inner {
         recv: RecvStream,
     ) {
         let generation = self.next_gen.fetch_add(1, Ordering::SeqCst);
+        let revoke = Arc::new(Notify::new());
         let outcome = {
             let mut slots = self.lock();
             match slots.get_mut(&peer) {
@@ -652,6 +728,7 @@ impl Inner {
                         let fresh = old.is_none();
                         slot.active = Some(Active {
                             conn: conn.clone(),
+                            revoke: revoke.clone(),
                             remote: hello.modules,
                             version: hello.version,
                             dialed_by,
@@ -678,7 +755,10 @@ impl Inner {
             close(&old, CloseCode::Duplicate);
         }
         tracing::info!(peer = %peer, name = %info.name, "connected");
-        tokio::spawn(self.clone().control_task(conn.clone(), send, recv));
+        tokio::spawn(
+            self.clone()
+                .control_task(peer, conn.clone(), send, recv, revoke),
+        );
         tokio::spawn(self.clone().uni_task(peer, conn.clone()));
         tokio::spawn(self.clone().datagram_task(peer, conn.clone()));
         let watcher = self.clone();
@@ -720,15 +800,23 @@ impl Inner {
     /// Owns the dialer-opened control stream: Ping/Pong, Bye on shutdown.
     async fn control_task(
         self: Arc<Self>,
+        peer: PeerId,
         conn: Connection,
         mut send: SendStream,
         mut recv: RecvStream,
+        revoke: Arc<Notify>,
     ) {
         loop {
             let frame = tokio::select! {
                 f = read_control(&mut send, &mut recv) => f,
                 _ = self.until_stop() => {
                     let bye = Frame::Bye { code: CloseCode::Shutdown };
+                    let _ = write_frame(&mut send, &bye, MAX_CONTROL_FRAME_BYTES).await;
+                    let _ = send.finish();
+                    return;
+                }
+                () = revoke.notified() => {
+                    let bye = Frame::Bye { code: CloseCode::Revoked };
                     let _ = write_frame(&mut send, &bye, MAX_CONTROL_FRAME_BYTES).await;
                     let _ = send.finish();
                     return;
@@ -745,6 +833,10 @@ impl Inner {
                     }
                 }
                 Ok(Frame::Pong { .. }) => {}
+                // Only a connection that passed the pin and Hello gets here (ALPN_MESH).
+                Ok(Frame::Bye {
+                    code: CloseCode::Revoked,
+                }) => return self.revoked_by(peer),
                 Ok(Frame::Bye { code }) => return tracing::debug!(?code, "bye"),
                 Ok(_)
                 | Err(WireError::TooLarge { .. } | WireError::Decode | WireError::Invalid(_)) => {

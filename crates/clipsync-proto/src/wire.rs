@@ -56,10 +56,12 @@ pub enum CloseCode {
     Shutdown = 5,
     PairFailed = 6,
     KeyChanged = 7,
+    /// v1.16: the peer removed us from its peers.toml (sent as `Bye`, only to a version 2 peer).
+    Revoked = 8,
 }
 
 impl CloseCode {
-    pub const ALL: [CloseCode; 8] = [
+    pub const ALL: [CloseCode; 9] = [
         CloseCode::Normal,
         CloseCode::Version,
         CloseCode::UnknownPeer,
@@ -68,6 +70,7 @@ impl CloseCode {
         CloseCode::Shutdown,
         CloseCode::PairFailed,
         CloseCode::KeyChanged,
+        CloseCode::Revoked,
     ];
 
     pub fn code(self) -> u32 {
@@ -84,6 +87,7 @@ impl CloseCode {
             CloseCode::Shutdown => b"shutdown",
             CloseCode::PairFailed => b"pair-failed",
             CloseCode::KeyChanged => b"key-changed",
+            CloseCode::Revoked => b"revoked",
         }
     }
 

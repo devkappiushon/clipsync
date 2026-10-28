@@ -20,6 +20,8 @@ pub const MAX_EVENTS_PER_DATAGRAM: usize = 32;
 pub const MAX_INBOX_ITEMS: usize = 50;
 /// Ring of `AgentStatus::recent_blocks`.
 pub const MAX_RECENT_BLOCKS: usize = 20;
+/// `AgentStatus::recent_removals`: peers that removed this device lately (v1.16).
+pub const MAX_RECENT_REMOVALS: usize = 20;
 pub const CLIP_TTL_MS: u32 = 600_000;
 pub const SEEN_EVENTS_CAP: usize = 1_024;
 pub const PAIR_WINDOW_SECS: u64 = 120;
