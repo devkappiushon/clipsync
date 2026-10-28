@@ -19,14 +19,16 @@ use clipsync_win::{
     CursorPark, Hooks, Modifier, Notice, RawEvent, ResumeHotkey, Synth, WinButton, WinError,
 };
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 /// Events waiting between the hook thread and the worker (Sentinel R4).
 const QUEUE: usize = 8000;
+/// How often the idle worker looks at the stop flag.
+const STOP_POLL: Duration = Duration::from_millis(100);
 /// What the module's channel holds before the worker waits.
 const CHANNEL: usize = 4096;
 
@@ -55,7 +57,6 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 enum Msg {
     Out(Out, u64),
     Notice(Notice),
-    Stop,
 }
 
 /// What the three sides share. Everything the hook thread touches here is an atomic or a `try_lock`:
@@ -75,6 +76,9 @@ struct Shared {
     park_dpi: AtomicU32,
     held: [AtomicU64; 5],
     overflow: AtomicBool,
+    /// The adapter is stopping: the worker leaves by this flag, which does not depend on the queue
+    /// (the worker keeps a sender of its own, so the queue never closes by itself; Sentinel S7-07).
+    stop: AtomicBool,
     park: Mutex<Option<CursorPark>>,
     hooks: Mutex<Option<Hooks>>,
     /// Where the last capture began, to give the cursor back.
@@ -95,6 +99,7 @@ impl Shared {
             park_dpi: AtomicU32::new(96),
             held: Default::default(),
             overflow: AtomicBool::new(false),
+            stop: AtomicBool::new(false),
             park: Mutex::new(None),
             hooks: Mutex::new(None),
             last: Mutex::new(None),
@@ -337,8 +342,22 @@ struct Worker {
 }
 
 impl Worker {
-    fn emit(&self, event: CaptureEvent) -> bool {
-        self.out.blocking_send(event).is_ok()
+    /// Sends to the module's channel. A full channel is waited for in small steps, so a stop is
+    /// seen even when the module no longer reads.
+    fn emit(&self, mut event: CaptureEvent) -> bool {
+        loop {
+            match self.out.try_send(event) {
+                Ok(()) => return true,
+                Err(mpsc::error::TrySendError::Closed(_)) => return false,
+                Err(mpsc::error::TrySendError::Full(back)) => {
+                    if self.shared.stop.load(Ordering::Acquire) {
+                        return false;
+                    }
+                    event = back;
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            }
+        }
     }
 
     fn sync_lock(&mut self) {
@@ -349,7 +368,15 @@ impl Worker {
     }
 
     fn run(mut self) {
-        while let Ok(msg) = self.inbox.recv() {
+        loop {
+            if self.shared.stop.load(Ordering::Acquire) {
+                return;
+            }
+            let msg = match self.inbox.recv_timeout(STOP_POLL) {
+                Ok(msg) => msg,
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => return,
+            };
             if self.shared.overflow.swap(false, Ordering::AcqRel) {
                 // Whatever is still queued is dropped: no key typed minutes ago reaches the peer.
                 while self.inbox.try_recv().is_ok() {}
@@ -360,7 +387,6 @@ impl Worker {
                 continue;
             }
             let alive = match msg {
-                Msg::Stop => return,
                 Msg::Out(out, t) => self.on_out(out, t),
                 Msg::Notice(notice) => self.on_notice(notice),
             };
@@ -539,6 +565,7 @@ impl CaptureAdapter for WinCapture {
         barriers: &[BarrierSpec],
     ) -> Result<mpsc::Receiver<CaptureEvent>, InputError> {
         self.stop().await?;
+        self.shared.stop.store(false, Ordering::Release);
         let (out_tx, out_rx) = mpsc::channel(CHANNEL);
         let (queue_tx, queue_rx) = sync_channel(QUEUE);
         self.shared.install(barriers, &zones_now());
@@ -642,16 +669,14 @@ impl CaptureAdapter for WinCapture {
 
     async fn stop(&mut self) -> Result<(), InputError> {
         let shared = Arc::clone(&self.shared);
-        let queue = self.queue.take();
         let worker = self.worker.take();
+        self.queue = None;
         self.out = None;
         tokio::task::spawn_blocking(move || {
-            // The hooks first: nothing new reaches the queue; then the worker.
+            // The hooks first: nothing new reaches the queue; then the worker, by the flag.
+            shared.stop.store(true, Ordering::Release);
             let hooks = lock(&shared.hooks).take();
             drop(hooks);
-            if let Some(queue) = queue {
-                let _ = queue.send(Msg::Stop);
-            }
             if let Some(worker) = worker {
                 let _ = worker.join();
             }
@@ -666,12 +691,16 @@ impl CaptureAdapter for WinCapture {
 
 impl Drop for WinCapture {
     fn drop(&mut self) {
-        // The hooks must never outlive the adapter (§13.2 rule 2g).
+        // Neither the hooks nor the worker outlive the adapter (§13.2 rule 2g, Sentinel S7-07). The
+        // worker leaves by the flag within one poll, whatever the state of the queue.
+        self.shared.stop.store(true, Ordering::Release);
         let hooks = lock(&self.shared.hooks).take();
         drop(hooks);
-        if let Some(queue) = self.queue.take() {
-            let _ = queue.try_send(Msg::Stop);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
         }
+        let park = lock(&self.shared.park).take();
+        drop(park);
     }
 }
 
@@ -756,5 +785,42 @@ mod tests {
         shared.reset_input();
         assert!(!shared.begin.load(Ordering::SeqCst));
         assert!(!shared.ready.load(Ordering::SeqCst));
+    }
+
+    /// Sentinel S7-07: the worker keeps a sender of its own, so the queue never closes by itself. It
+    /// must still leave when told to, with the queue full and the module's channel full.
+    #[test]
+    fn the_worker_leaves_by_the_flag_even_with_everything_full() {
+        let shared = Arc::new(Shared::new());
+        let (queue, inbox) = sync_channel(1);
+        let (out, _unread) = mpsc::channel(1);
+        // the module's channel is full, and so is the queue
+        out.try_send(CaptureEvent::Deactivated).unwrap();
+        queue
+            .try_send(Msg::Out(Out::Hotkey(Hotkey::ToggleLock), 0))
+            .unwrap();
+        let worker = Worker {
+            shared: Arc::clone(&shared),
+            queue: queue.clone(),
+            inbox,
+            out,
+            session_locked: false,
+            secure_desktop: false,
+            restarts: RestartPolicy::new(),
+            clock: Instant::now(),
+        };
+        let handle = std::thread::spawn(move || worker.run());
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(
+            !handle.is_finished(),
+            "it is stuck on the full channel, as expected"
+        );
+        shared.stop.store(true, Ordering::Release);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !handle.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(handle.is_finished(), "the worker did not leave");
+        drop(queue);
     }
 }
