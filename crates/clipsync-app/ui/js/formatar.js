@@ -3,6 +3,8 @@
 import { selo } from "./componentes.js";
 
 export const INDISPONIVEL = "indisponível nesta versão";
+/** A troca de dispositivo depende do sistema (o portal do Linux não deixa começar a captura): o mesmo texto do erro do agente. */
+export const INDISPONIVEL_NESTE_SISTEMA = "indisponível nesta versão neste sistema";
 
 const hora = new Intl.DateTimeFormat("pt-BR", { timeStyle: "medium" });
 const diaHora = new Intl.DateTimeFormat("pt-BR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });

@@ -93,7 +93,8 @@ export function features() {
     layout_links: CAPACIDADES_INPUT,
     dead_corners: CAPACIDADES_INPUT,
     screen_lock: CAPACIDADES_INPUT,
-    switch_device: CAPACIDADES_INPUT,
+    // A troca por atalho ou botão precisa do can_begin() do adaptador: o portal do Linux não deixa (false), o Windows deixa.
+    switch_device: CAPACIDADES_INPUT && plataforma === "windows",
     layout_copy: CAPACIDADES_INPUT,
     os_notifications: true,
     // Windows com o módulo de input ligado: Win+Alt+N, L e P. No Linux não há tecla global sem o portal.

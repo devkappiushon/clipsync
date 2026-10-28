@@ -9,7 +9,7 @@ import { aviso, cabecalho, estadoErro, indisponivel } from "../areas.js";
 import { abrirDialogo, botao, cartao, esqueleto, selo } from "../componentes.js";
 import { h, novoId, trocar } from "../dom.js";
 import { obterApp, recurso } from "../estado.js";
-import { INDISPONIVEL, mensagemDe, seloDispositivo } from "../formatar.js";
+import { INDISPONIVEL, INDISPONIVEL_NESTE_SISTEMA, mensagemDe, seloDispositivo } from "../formatar.js";
 import { icone, svg } from "../icones.js";
 
 const MALHA_PX = 16;
@@ -677,6 +677,7 @@ export default function montar({ ir, assinar }) {
     const d = layout.devices.find((x) => x.peer_id === selecao.peerId);
     if (!d) return null;
     const idAtalho = novoId("layout-atalho");
+    const idIrNota = novoId("layout-ir-nota");
     const atalho = h(
       "select",
       { class: "entrada layout__atalho", id: idAtalho, disabled: !recurso("switch_device") },
@@ -731,7 +732,7 @@ export default function montar({ ir, assinar }) {
               ),
           ),
           h("dt", null, h("label", { for: idAtalho }, "Atalho para ir até ele")),
-          h("dd", null, h("div", { class: "linha" }, atalho, !recurso("switch_device") && indisponivel())),
+          h("dd", null, h("div", { class: "linha" }, atalho, !recurso("switch_device") && indisponivel(INDISPONIVEL_NESTE_SISTEMA))),
         ),
         !d.is_self &&
           h(
@@ -741,8 +742,10 @@ export default function montar({ ir, assinar }) {
               rotulo: "Ir para este dispositivo",
               icone: "avancar",
               desabilitado: !recurso("switch_device"),
+              "aria-describedby": recurso("switch_device") ? null : idIrNota,
               aoClicar: () => executar(() => api.switchToDevice({ peer_id: d.peer_id })),
             }),
+            !recurso("switch_device") && h("span", { class: "nota", id: idIrNota }, INDISPONIVEL_NESTE_SISTEMA),
             botao({
               rotulo: "Testar entrada (5 s)",
               icone: "teclado",
@@ -939,7 +942,7 @@ export default function montar({ ir, assinar }) {
           ),
         ),
         layout.screen_locked && h("p", { class: "nota" }, "Com a tela travada, o cursor não sai desta máquina."),
-        h("div", { class: "layout__ir" }, h("span", { class: "campo__rotulo" }, "Ir para dispositivo"), irPara, !recurso("switch_device") && indisponivel()),
+        h("div", { class: "layout__ir" }, h("span", { class: "campo__rotulo" }, "Ir para dispositivo"), irPara, !recurso("switch_device") && indisponivel(INDISPONIVEL_NESTE_SISTEMA)),
       ),
     );
   }

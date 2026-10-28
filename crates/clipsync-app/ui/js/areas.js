@@ -37,8 +37,8 @@ export function aviso(tom, ...filhos) {
 }
 
 /** Texto padrão de recurso sem backend nesta versão (contrato §12.2 regra 6). */
-export function indisponivel() {
-  return h("span", { class: "nota" }, INDISPONIVEL);
+export function indisponivel(texto = INDISPONIVEL) {
+  return h("span", { class: "nota" }, texto);
 }
 
 /**

@@ -2,7 +2,7 @@
 // bordas internas travadas, opções, oferta aos pares, trava de tela, troca de dispositivo e teste de entrada.
 // Validações do layout_set_link na ordem do contrato §12.5.
 
-import { EU, peerId } from "./dados.js";
+import { EU, features, peerId } from "./dados.js";
 import { atraso, cenario, emitir, erro, estado, plataforma, registrar } from "./nucleo.js";
 
 const SNAP = 16;
@@ -320,6 +320,8 @@ registrar({
 
   switch_to_device: ({ peer_id } = {}) => {
     exigirInput();
+    // Linux: o portal só começa a captura ao cruzar a barreira, e o agente recusa a troca (v1.31). A tela já desabilita o botão.
+    if (!features().switch_device) throw erro("denied", "ir para o dispositivo sem cruzar a borda: indisponível nesta versão neste sistema");
     const d = dispositivoDe(peer_id);
     estadoDosPares();
     if (d.state !== "connected") throw erro("offline", `${d.name} está offline.`);
