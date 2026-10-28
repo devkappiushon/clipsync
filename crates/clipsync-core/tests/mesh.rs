@@ -1043,6 +1043,88 @@ async fn a_revoked_peer_removes_the_revoker_itself() {
     stop(rd).await;
 }
 
+#[derive(Debug)]
+struct Shows(Arc<rustls::sign::CertifiedKey>);
+
+impl rustls::server::ResolvesServerCert for Shows {
+    fn resolve(
+        &self,
+        _: rustls::server::ClientHello<'_>,
+    ) -> Option<Arc<rustls::sign::CertifiedKey>> {
+        Some(self.0.clone())
+    }
+}
+
+/// S6-21: whoever answers at the peer's address without the peer's key (another key, or the
+/// peer's public certificate signing with another key) never makes A record "recusou a
+/// conexão". Each server trusts nobody, so it would refuse A's certificate if it ever saw it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_without_the_peers_key_never_records_a_refusal() {
+    for shows_the_peers_certificate in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (node(&dir, "a"), node(&dir, "b"));
+        trust(&a, &b, "b", ALL);
+        let other = clipsync_core::Identity::generate().unwrap();
+        let trusts_nobody = PinVerifier::new(VerifyMode::Mesh(Arc::new(PinSet::new([]))));
+        let cfg = if shows_the_peers_certificate {
+            let provider = Arc::new(rustls::crypto::ring::default_provider());
+            let key = provider
+                .key_provider
+                .load_private_key(other.key_der())
+                .unwrap();
+            let shown = rustls::sign::CertifiedKey::new(
+                vec![b.profile.load_identity().unwrap().cert_der()],
+                key,
+            );
+            let mut tls = rustls::ServerConfig::builder_with_provider(provider)
+                .with_protocol_versions(&[&rustls::version::TLS13])
+                .unwrap()
+                .with_client_cert_verifier(trusts_nobody)
+                .with_cert_resolver(Arc::new(Shows(Arc::new(shown))));
+            tls.alpn_protocols = vec![ALPN_MESH.to_vec()];
+            let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls).unwrap();
+            let mut cfg = quinn::ServerConfig::with_crypto(Arc::new(crypto));
+            cfg.transport_config(tls::transport_config());
+            cfg
+        } else {
+            tls::server_config(&other, trusts_nobody, ALPN_MESH).unwrap()
+        };
+        let ep = quinn::Endpoint::server(cfg, b.addr).unwrap();
+        let dialed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let answering = {
+            let (ep, dialed) = (ep.clone(), dialed.clone());
+            tokio::spawn(async move {
+                while let Some(incoming) = ep.accept().await {
+                    dialed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let _ = incoming.await;
+                }
+            })
+        };
+        let ra = start(&a, false);
+        // A dials b (after DEFER when its id is the larger one, then with backoff).
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        assert!(
+            dialed.load(std::sync::atomic::Ordering::SeqCst) > 0,
+            "A reached the server at b's address"
+        );
+        let sa = status(&a.profile).await.unwrap();
+        assert!(
+            sa.recent_blocks
+                .iter()
+                .all(|r| r.reason != clipsync_core::msg::PEER_REFUSED_US),
+            "shows the peer's certificate: {shows_the_peers_certificate}; {:?}",
+            sa.recent_blocks
+        );
+        assert_ne!(
+            peer_state(&a.profile, b.id).await,
+            Some(PeerState::Connected)
+        );
+        stop(ra).await;
+        answering.abort();
+        ep.close(0u32.into(), b"");
+    }
+}
+
 /// A module whose `Status` reports a settable `last_block`.
 struct Blocking {
     last_block: Arc<std::sync::Mutex<Option<String>>>,

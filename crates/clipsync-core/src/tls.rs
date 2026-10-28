@@ -86,6 +86,7 @@ pub struct PinVerifier {
     provider: Arc<CryptoProvider>,
     calls: AtomicUsize,
     rejected: Mutex<Option<PeerId>>,
+    proven: Mutex<Option<PeerId>>,
 }
 
 impl fmt::Debug for PinVerifier {
@@ -111,6 +112,7 @@ impl PinVerifier {
             provider: provider(),
             calls: AtomicUsize::new(0),
             rejected: Mutex::new(None),
+            proven: Mutex::new(None),
         })
     }
 
@@ -123,6 +125,21 @@ impl PinVerifier {
     /// Key of the last certificate refused by the pin (unknown peer, or changed key in Expect).
     pub fn last_rejected(&self) -> Option<PeerId> {
         *self.rejected.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// As a client: the server's certificate passed the pin AND the handshake signature checked
+    /// against it, so the server holds that key. A pin match alone proves nothing (the
+    /// certificate is public), and an unauthenticated CONNECTION_CLOSE text even less (S6-21).
+    pub fn proven(&self) -> Option<PeerId> {
+        *self.proven.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn allows(&self, id: &PeerId) -> bool {
+        match &self.mode {
+            VerifyMode::Mesh(pins) => pins.contains(id),
+            VerifyMode::Expect(want) => want == id,
+            VerifyMode::Pairing => true,
+        }
     }
 
     fn check(
@@ -141,12 +158,7 @@ impl PinVerifier {
             rejected(CertificateError::UnknownIssuer)
         })?;
         let id = pin_of(end_entity).map_err(|_| rejected(CertificateError::UnknownIssuer))?;
-        let allowed = match &self.mode {
-            VerifyMode::Mesh(pins) => pins.contains(&id),
-            VerifyMode::Expect(want) => *want == id,
-            VerifyMode::Pairing => true,
-        };
-        if allowed {
+        if self.allows(&id) {
             return Ok(id);
         }
         *self.rejected.lock().unwrap_or_else(PoisonError::into_inner) = Some(id);
@@ -261,7 +273,13 @@ impl ServerCertVerifier for PinVerifier {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        self.tls13(message, cert, dss)
+        let valid = self.tls13(message, cert, dss)?;
+        if let Ok(id) = pin_of(cert)
+            && self.allows(&id)
+        {
+            *self.proven.lock().unwrap_or_else(PoisonError::into_inner) = Some(id);
+        }
+        Ok(valid)
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
@@ -486,5 +504,82 @@ mod tests {
         assert!(set.contains(&PeerId([1; 32])));
         set.replace([PeerId([2; 32])]);
         assert!(!set.contains(&PeerId([1; 32])) && set.contains(&PeerId([2; 32])));
+    }
+
+    #[derive(Debug)]
+    struct Fixed(Arc<rustls::sign::CertifiedKey>);
+
+    impl rustls::server::ResolvesServerCert for Fixed {
+        fn resolve(
+            &self,
+            _: rustls::server::ClientHello<'_>,
+        ) -> Option<Arc<rustls::sign::CertifiedKey>> {
+            Some(self.0.clone())
+        }
+    }
+
+    /// A server that shows `cert_of`'s certificate but signs with `key_of`'s key: what anyone
+    /// who saw the peer's (public) certificate can do.
+    fn impostor(cert_of: &Identity, key_of: &Identity, v: Arc<PinVerifier>) -> Endpoint {
+        let p = provider();
+        let key = p.key_provider.load_private_key(key_of.key_der()).unwrap();
+        let shown = rustls::sign::CertifiedKey::new(vec![cert_of.cert_der()], key);
+        let mut tls = rustls::ServerConfig::builder_with_provider(p)
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_client_cert_verifier(v)
+            .with_cert_resolver(Arc::new(Fixed(Arc::new(shown))));
+        tls.alpn_protocols = vec![ALPN_MESH.to_vec()];
+        let crypto = QuicServerConfig::try_from(tls).unwrap();
+        let mut cfg = quinn::ServerConfig::with_crypto(Arc::new(crypto));
+        cfg.transport_config(transport_config());
+        Endpoint::server(cfg, "127.0.0.1:0".parse().unwrap()).unwrap()
+    }
+
+    /// S6-21: `proven` needs the pin AND the handshake signature; neither another key nor the
+    /// peer's certificate shown by someone without its key gets it.
+    #[tokio::test]
+    async fn proven_needs_the_pin_and_the_handshake_signature() {
+        let (a, b, c) = (ident("a"), ident("b"), ident("c"));
+        let trusts_a = || PinVerifier::new(VerifyMode::Mesh(Arc::new(PinSet::new([a.id()]))));
+        let wait = Duration::from_secs(10);
+        let ep = client();
+
+        let real = server(&b, trusts_a());
+        let v = PinVerifier::new(VerifyMode::Expect(b.id()));
+        let (conn, _) = tokio::join!(
+            dial(&ep, &a, v.clone(), real.local_addr().unwrap()),
+            accept_one(&real)
+        );
+        conn.unwrap();
+        assert_eq!(v.proven(), Some(b.id()), "the real peer proves its key");
+
+        let other_key = server(&c, trusts_a());
+        let v = PinVerifier::new(VerifyMode::Expect(b.id()));
+        let (conn, _) = tokio::join!(
+            tokio::time::timeout(
+                wait,
+                dial(&ep, &a, v.clone(), other_key.local_addr().unwrap())
+            ),
+            tokio::time::timeout(wait, accept_one(&other_key))
+        );
+        assert!(conn.unwrap().is_err());
+        assert_eq!((v.proven(), v.last_rejected()), (None, Some(c.id())));
+
+        let shows_b = impostor(&b, &c, trusts_a());
+        let v = PinVerifier::new(VerifyMode::Expect(b.id()));
+        let (conn, _) = tokio::join!(
+            tokio::time::timeout(
+                wait,
+                dial(&ep, &a, v.clone(), shows_b.local_addr().unwrap())
+            ),
+            tokio::time::timeout(wait, accept_one(&shows_b))
+        );
+        assert!(
+            conn.unwrap().is_err(),
+            "a bad signature fails the handshake"
+        );
+        assert_eq!(v.calls(), 1, "the pin itself matched");
+        assert_eq!((v.proven(), v.last_rejected()), (None, None));
     }
 }

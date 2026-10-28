@@ -682,7 +682,10 @@ impl Inner {
                 return Err(match verifier.last_rejected() {
                     Some(got) => DialFail::KeyChanged(got),
                     None => {
-                        if refused_our_certificate(&e) {
+                        // The close text is not authenticated before the handshake ends: only a
+                        // server that proved it holds the peer's key can be the peer refusing
+                        // us (S6-21).
+                        if refused_our_certificate(&e) && verifier.proven() == Some(peer) {
                             self.refused_by(peer);
                         }
                         other(&e)
@@ -717,7 +720,8 @@ impl Inner {
             }
             Ok(Err(HelloFail::Lost(e))) => {
                 // TLS 1.3: our side may finish the handshake before the peer checks our
-                // certificate, so its refusal can also arrive here.
+                // certificate, so its refusal can also arrive here. The handshake ended, so
+                // the peer's identity is proven.
                 if conn
                     .close_reason()
                     .is_some_and(|r| refused_our_certificate(&r))
