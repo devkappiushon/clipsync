@@ -26,7 +26,6 @@ impl LockWatch {
             Ok(s) => s,
             Err(e) => {
                 tracing::debug!("logind unavailable, the screen counts as unlocked: {e}");
-                eprintln!("DEBUG logind: {e}");
                 return Self {
                     locked,
                     available: false,
