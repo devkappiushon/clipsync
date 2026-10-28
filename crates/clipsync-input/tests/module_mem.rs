@@ -281,9 +281,14 @@ async fn release_all_only_from_the_session_owner() {
 async fn stats_request_for_foreign_session_gets_no_answer() {
     let (_hub, mut a, b) = dest_with_raw(true).await;
     send(&a, b.id, InputMsg::StatsRequest { session: 42 }).await;
+    // (the destination may announce its Zones: only Stats counts here)
     let got = tokio::time::timeout(Duration::from_millis(300), async {
         loop {
-            if let Some(ModuleInput::Reliable { .. }) = a.rx.recv().await {
+            if let Some(ModuleInput::Reliable {
+                msg: ModuleMsg::Input(InputMsg::Stats(_)),
+                ..
+            }) = a.rx.recv().await
+            {
                 return true;
             }
         }

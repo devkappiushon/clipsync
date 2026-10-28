@@ -65,6 +65,62 @@ pub struct Layout {
     pub links: Vec<Link>,
 }
 
+/// The barrier one machine installs for one link, with the destination side it leads to
+/// (contract §12.6 items 2 and 4). The other machine derives the mirror from the same link.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DerivedBarrier {
+    pub link: String,
+    /// Local side.
+    pub monitor: String,
+    pub edge: Edge,
+    pub from: f32,
+    pub to: f32,
+    /// Destination side.
+    pub peer: PeerId,
+    pub peer_monitor: String,
+    pub peer_edge: Edge,
+    pub peer_from: f32,
+    pub peer_to: f32,
+}
+
+impl DerivedBarrier {
+    fn new(link: &str, local: &Endpoint, remote: &Endpoint) -> Self {
+        Self {
+            link: link.to_owned(),
+            monitor: local.monitor.clone(),
+            edge: local.edge,
+            from: local.from,
+            to: local.to,
+            peer: remote.peer,
+            peer_monitor: remote.monitor.clone(),
+            peer_edge: remote.edge,
+            peer_from: remote.from,
+            peer_to: remote.to,
+        }
+    }
+
+    /// Position on the destination edge for a cursor at `pos` on the local edge.
+    pub fn map_pos(&self, pos: f32) -> f32 {
+        crate::config::map_pos((self.from, self.to), (self.peer_from, self.peer_to), pos)
+    }
+
+    /// Middle of the destination segment: where a hotkey switch lands.
+    pub fn peer_middle(&self) -> f32 {
+        (self.peer_from + self.peer_to) / 2.0
+    }
+}
+
+/// Dead corners (`options.dead_corner_px`): the segment `from..to` of an edge `len_px` long
+/// loses `dead_px` at each end of the EDGE (not of the segment). `None` when nothing is left.
+pub fn trim_dead_corner(from: f32, to: f32, len_px: u32, dead_px: u32) -> Option<(f32, f32)> {
+    if len_px == 0 {
+        return None;
+    }
+    let d = dead_px as f32 / len_px as f32;
+    let (a, b) = (from.max(d), to.min(1.0 - d));
+    (a < b).then_some((a, b))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LayoutError {
     Parse(String),
@@ -371,6 +427,31 @@ impl Layout {
         }
     }
 
+    /// The barriers `me` installs: one per link that has `me` on either side, in link order.
+    /// Both machines run this over the same file and get mirrored barriers.
+    pub fn barriers_for(&self, me: PeerId) -> Vec<DerivedBarrier> {
+        self.links
+            .iter()
+            .filter_map(|l| {
+                if l.a.peer == me {
+                    Some(DerivedBarrier::new(&l.id, &l.a, &l.b))
+                } else if l.b.peer == me {
+                    Some(DerivedBarrier::new(&l.id, &l.b, &l.a))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    pub fn device(&self, peer: PeerId) -> Option<&LayoutDevice> {
+        self.devices.iter().find(|d| d.peer == peer)
+    }
+
+    pub fn link(&self, id: &str) -> Option<&Link> {
+        self.links.iter().find(|l| l.id == id)
+    }
+
     /// `Ok(None)` when the file does not exist.
     pub fn read(path: &Path) -> Result<Option<Self>, LayoutError> {
         match std::fs::read_to_string(path) {
@@ -398,6 +479,19 @@ impl Layout {
             let _ = std::fs::remove_file(&tmp);
         }
         res.map_err(io)
+    }
+}
+
+impl Link {
+    /// `(local, remote)` when `me` is on one side of this link.
+    pub fn sides_for(&self, me: PeerId) -> Option<(&Endpoint, &Endpoint)> {
+        if self.a.peer == me {
+            Some((&self.a, &self.b))
+        } else if self.b.peer == me {
+            Some((&self.b, &self.a))
+        } else {
+            None
+        }
     }
 }
 
@@ -684,6 +778,9 @@ mod tests {
                 to: 0.5,
                 peer: "notebook-b".into(),
                 peer_edge: Edge::Left,
+                peer_monitor: None,
+                peer_from: None,
+                peer_to: None,
             }],
             ..InputConfig::default()
         };
@@ -702,6 +799,9 @@ mod tests {
                 to: 0.5,
                 peer: "notebook-b".into(),
                 peer_edge: Edge::Left,
+                peer_monitor: None,
+                peer_from: None,
+                peer_to: None,
             }],
             ..InputConfig::default()
         };
@@ -765,6 +865,72 @@ mod tests {
         let e = Layout::read(&p).unwrap_err();
         assert_eq!(e.code(), "parse");
         assert!(e.to_string().starts_with("layout.toml inválido"));
+    }
+
+    #[test]
+    fn barriers_are_derived_on_both_sides_of_a_link() {
+        let l = sample();
+        let on_1 = l.barriers_for(id(1));
+        let on_2 = l.barriers_for(id(2));
+        assert_eq!(on_1.len(), 1);
+        assert_eq!(on_2.len(), 1);
+        let (a, b) = (&on_1[0], &on_2[0]);
+        assert_eq!(
+            (a.monitor.as_str(), a.edge, a.from, a.to),
+            ("HDMI-1", Edge::Right, 0.5, 1.0)
+        );
+        assert_eq!(
+            (a.peer, a.peer_monitor.as_str(), a.peer_edge),
+            (id(2), "eDP-1", Edge::Left)
+        );
+        assert_eq!((a.peer_from, a.peer_to), (0.0, 0.1));
+        assert_eq!(
+            (b.monitor.as_str(), b.edge, b.from, b.to),
+            ("eDP-1", Edge::Left, 0.0, 0.1)
+        );
+        assert_eq!(
+            (b.peer, b.peer_monitor.as_str(), b.peer_edge),
+            (id(1), "HDMI-1", Edge::Right)
+        );
+        assert_eq!((b.peer_from, b.peer_to), (0.5, 1.0));
+        assert_eq!(a.link, "l1");
+        assert!(l.barriers_for(id(9)).is_empty());
+    }
+
+    #[test]
+    fn position_maps_linearly_between_the_two_segments() {
+        let b = &sample().barriers_for(id(1))[0];
+        // local 0.5..1.0 -> remote 0.0..0.1
+        assert!((b.map_pos(0.5) - 0.0).abs() < 1e-6);
+        assert!((b.map_pos(0.75) - 0.05).abs() < 1e-6);
+        assert!((b.map_pos(1.0) - 0.1).abs() < 1e-6);
+        // outside the local segment clamps to its ends
+        assert!((b.map_pos(0.2) - 0.0).abs() < 1e-6);
+        assert!((b.map_pos(1.3) - 0.1).abs() < 1e-6);
+        assert!((b.peer_middle() - 0.05).abs() < 1e-6);
+    }
+
+    #[test]
+    fn dead_corner_trims_the_edge_ends_and_can_empty_a_segment() {
+        assert_eq!(trim_dead_corner(0.0, 1.0, 1080, 0), Some((0.0, 1.0)));
+        let (a, b) = trim_dead_corner(0.0, 1.0, 1000, 8).unwrap();
+        assert!((a - 0.008).abs() < 1e-6 && (b - 0.992).abs() < 1e-6);
+        // a segment away from the corners is untouched
+        assert_eq!(trim_dead_corner(0.25, 0.75, 1000, 32), Some((0.25, 0.75)));
+        // a segment inside a corner disappears
+        assert_eq!(trim_dead_corner(0.0, 0.005, 1000, 8), None);
+        assert_eq!(trim_dead_corner(0.0, 1.0, 0, 8), None);
+    }
+
+    #[test]
+    fn sides_for_puts_me_first() {
+        let l = sample();
+        let (local, remote) = l.links[0].sides_for(id(2)).unwrap();
+        assert_eq!(local.peer, id(2));
+        assert_eq!(remote.peer, id(1));
+        assert!(l.links[0].sides_for(id(3)).is_none());
+        assert_eq!(l.device(id(1)).unwrap().name, "pc-pessoal");
+        assert!(l.link("l1").is_some() && l.link("l9").is_none());
     }
 
     #[test]

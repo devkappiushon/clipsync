@@ -75,7 +75,13 @@ pub enum InputError {
 pub trait CaptureAdapter: Send + 'static {
     /// `"fake"` | `"portal-inputcapture"`.
     fn name(&self) -> &'static str;
+    /// Asks the platform; on the portal this creates the session (dialog on first use).
     async fn zones(&mut self) -> Result<Vec<Zone>, InputError>;
+    /// What is known without asking the user (contract §12.6 item 6): the live zones once a
+    /// session exists, else a quiet estimate; empty when there is none.
+    fn known_zones(&self) -> Vec<Zone> {
+        Vec::new()
+    }
     /// Installs barriers and starts delivering events. A portal dialog may appear here.
     async fn start(
         &mut self,

@@ -97,3 +97,37 @@ pub fn layout_bad_dead_corner(max: u32) -> String {
 pub fn layout_bad_link_field(link: &str) -> String {
     format!("ligação {link}: id e monitor não podem ser vazios")
 }
+
+pub const LOCKED: &str = "travado nesta tela: a troca de dispositivo foi ignorada";
+pub const NOT_LINKED: &str = "não há ligação de layout com esse dispositivo";
+pub const NOT_AUTHORIZED: &str = "sem permissão para controlar esse dispositivo";
+pub const REMOTE_INPUT_OFF: &str = "teclado e mouse desligados no outro dispositivo";
+pub fn send_failed(detail: &str) -> String {
+    format!("falha ao enviar ao par: {detail}")
+}
+pub fn capture_ready(n: usize) -> String {
+    format!("{n} barreira(s) instalada(s) a partir do layout.toml")
+}
+pub fn returned_from(peer: &str) -> String {
+    format!("controle de {peer} encerrado: o cursor voltou")
+}
+pub fn layout_monitor_missing(link: &str, monitor: &str) -> String {
+    format!("ligação {link}: monitor {monitor} não encontrado neste dispositivo")
+}
+pub fn layout_segment_in_dead_corner(link: &str) -> String {
+    format!("ligação {link}: o trecho fica inteiro dentro do canto morto")
+}
+pub const PEER_TOO_OLD: &str =
+    "o outro dispositivo roda uma versão antiga do ClipSync e não entende o layout de telas";
+pub const LOCKED_ON: &str = "travado nesta tela";
+pub const LOCKED_OFF: &str = "trava desligada: as bordas voltam a trocar de dispositivo";
+pub const NO_LAYOUT_PATH: &str = "este agente não lê layout.toml (adaptadores de teste)";
+pub const LAYOUT_RELOADED: &str = "layout.toml relido e barreiras reinstaladas";
+pub const OFFER_BUSY: &str = "já existe um envio de layout em andamento";
+pub const NO_LAYOUT: &str = "não há layout.toml para enviar";
+pub fn zones_from(peer: &str) -> String {
+    format!("{peer} informou seus monitores")
+}
+pub fn offer_from(peer: &str) -> String {
+    format!("{peer} ofereceu um layout de telas")
+}

@@ -161,6 +161,15 @@ impl CaptureAdapter for PortalCapture {
         Ok(self.zones.clone())
     }
 
+    /// No dialog: the session's zones when it exists, else the DRM estimate.
+    fn known_zones(&self) -> Vec<Zone> {
+        if self.session.is_some() {
+            self.zones.clone()
+        } else {
+            super::outputs::sysfs_zones()
+        }
+    }
+
     async fn start(
         &mut self,
         barriers: &[BarrierSpec],

@@ -72,6 +72,9 @@ impl CaptureAdapter for FakeCapture {
     async fn zones(&mut self) -> Result<Vec<Zone>, InputError> {
         Ok(self.zones.clone())
     }
+    fn known_zones(&self) -> Vec<Zone> {
+        self.zones.clone()
+    }
     async fn start(
         &mut self,
         _barriers: &[BarrierSpec],
