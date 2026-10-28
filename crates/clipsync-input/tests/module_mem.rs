@@ -312,6 +312,7 @@ async fn rate_limit_drops_the_excess_and_counts_it() {
     .await;
     until("started", || b.emu.started()).await;
     let total = MAX_INPUT_DATAGRAMS_PER_SEC + 500;
+    let started = Instant::now();
     for seq in 0..total {
         a.host
             .send_datagram(b.id, dg(3, seq, vec![motion()]))
@@ -334,10 +335,13 @@ async fn rate_limit_drops_the_excess_and_counts_it() {
             _ => continue,
         }
     };
+    // Token bucket: the budget plus whatever refilled while the burst ran. The window runs to
+    // the answer, which is later than the last datagram, so the ceiling is never too tight.
+    let window = started.elapsed();
     assert!(
-        // token bucket: the budget plus whatever refilled while the burst ran
-        stats.received <= u64::from(MAX_INPUT_DATAGRAMS_PER_SEC) + 100,
-        "{stats:?}"
+        stats.received <= bucket_ceiling(window) as u64,
+        "{stats:?} in {window:?}, the bucket allows {}",
+        bucket_ceiling(window)
     );
     assert!(stats.received > 0);
     let ModuleReply::Status(s) = command(&b.tx, ModuleCommand::Status).await else {
@@ -387,6 +391,32 @@ async fn paused_destination_drops_datagrams_and_needs_a_new_enter() {
     assert_eq!(b.emu.emitted(), emitted);
 }
 
+/// Waits until the emulator stops moving. Returns its count and how long after `since` it last
+/// moved: the window in which the module could have been refilling its bucket.
+async fn settle(emu: &FakeEmulateHandle, since: Instant) -> (usize, Duration) {
+    let mut count = emu.emitted();
+    let mut moved_at = since.elapsed();
+    let mut quiet_since = Instant::now();
+    while quiet_since.elapsed() < Duration::from_millis(150) {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        let now = emu.emitted();
+        if now != count {
+            count = now;
+            moved_at = since.elapsed();
+            quiet_since = Instant::now();
+        }
+    }
+    (count, moved_at)
+}
+
+/// The token bucket starts full (`budget`) and refills `MAX_INPUT_DATAGRAMS_PER_SEC` per second,
+/// so in a window of `w` seconds it accepts at most `budget + rate * w`. Small slack for the
+/// 5 ms sampling and float rounding.
+fn bucket_ceiling(window: Duration) -> usize {
+    let rate = f64::from(MAX_INPUT_DATAGRAMS_PER_SEC);
+    MAX_INPUT_DATAGRAMS_PER_SEC as usize + (rate * window.as_secs_f64()).ceil() as usize + 20
+}
+
 #[tokio::test]
 async fn rate_limit_survives_a_new_enter() {
     let (_hub, a, b) = dest_with_raw(true).await;
@@ -403,7 +433,7 @@ async fn rate_limit_survives_a_new_enter() {
         if session == 2 {
             send(&a, b.id, enter(2)).await;
         }
-        for seq in 0..1500u32 {
+        for seq in 0..3000u32 {
             a.host
                 .send_datagram(b.id, dg(session, seq, vec![motion()]))
                 .unwrap();
@@ -413,15 +443,74 @@ async fn rate_limit_survives_a_new_enter() {
             }
         }
     }
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(
-        started.elapsed() < Duration::from_secs(1),
-        "test must stay inside one second"
-    );
-    assert_eq!(sent, 3000);
+    let (total, window) = settle(&b.emu, started).await;
+    assert_eq!(sent, 6000);
     // each Enter emits 3 positioning events; the rest are datagram events
-    let accepted = b.emu.emitted() - 6;
+    let accepted = total - 6;
     let budget = MAX_INPUT_DATAGRAMS_PER_SEC as usize;
-    assert!(accepted <= budget + 60, "accepted {accepted} of 3000");
-    assert!(accepted >= budget - 100, "accepted {accepted} of 3000");
+    // The ceiling follows the time the run really took, so a slow runner cannot fail it. It
+    // still has to leave room under `sent`, or it would prove nothing.
+    let ceiling = bucket_ceiling(window);
+    println!("rajada: aceitou {accepted} de {sent} em {window:?}, teto pelo tempo {ceiling}");
+    assert!(
+        ceiling < sent as usize,
+        "run took {window:?}: too slow to tell a limiter from none"
+    );
+    assert!(
+        accepted <= ceiling,
+        "accepted {accepted} of {sent} in {window:?}, the bucket allows {ceiling}"
+    );
+    assert!(accepted >= budget - 100, "accepted {accepted} of {sent}");
+}
+
+/// The case that broke the fixed margin of `budget + 60`: a sender that takes its time. A pause
+/// of 100 ms refills about 200 tokens, which is the limiter working, not leaking.
+#[tokio::test]
+async fn rate_limit_refills_at_the_documented_rate_when_the_sender_is_slow() {
+    let (_hub, a, b) = dest_with_raw(true).await;
+    send(
+        &a,
+        b.id,
+        InputMsg::Enter {
+            session: 1,
+            edge: Edge::Left,
+            pos: 0.5,
+        },
+    )
+    .await;
+    until("started", || b.emu.started()).await;
+    let started = Instant::now();
+    for (burst, seqs) in [(0u32, 0..1500u32), (1, 1500..3000)] {
+        if burst == 1 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        for seq in seqs {
+            a.host
+                .send_datagram(b.id, dg(1, seq, vec![motion()]))
+                .unwrap();
+            if seq % 100 == 0 {
+                tokio::task::yield_now().await;
+            }
+        }
+    }
+    let (total, window) = settle(&b.emu, started).await;
+    let accepted = total - 3;
+    let budget = MAX_INPUT_DATAGRAMS_PER_SEC as usize;
+    assert!(window >= Duration::from_millis(100), "{window:?}");
+    println!(
+        "sender lento: aceitou {accepted} em {window:?}, teto antigo {}, teto pelo tempo {}",
+        budget + 60,
+        bucket_ceiling(window)
+    );
+    // Past the old fixed margin, because the pause refilled the bucket ...
+    assert!(
+        accepted >= budget + 100,
+        "accepted {accepted}: the pause of 100 ms should have refilled the bucket"
+    );
+    // ... and never past what the rate allows for the time that passed.
+    assert!(
+        accepted <= bucket_ceiling(window),
+        "accepted {accepted} in {window:?}, the bucket allows {}",
+        bucket_ceiling(window)
+    );
 }
