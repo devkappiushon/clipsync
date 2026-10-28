@@ -1505,10 +1505,21 @@ async fn drive(
                 failure = Some(msg::adapter_failed(&e));
                 break;
             }
-            // The loopback test does not follow shortcuts, zones or the session lock.
+            CaptureEvent::SessionLocked(true) => {
+                // The explicit test obeys the same source lock as continuous capture. Stop
+                // before consuming the queued input after this event, even within a batch.
+                if session != 0 {
+                    let _ = host
+                        .send_reliable(to, ModuleMsg::Input(InputMsg::ReleaseAll { session }))
+                        .await;
+                }
+                failure = Some(msg::SOURCE_SCREEN_LOCKED.to_owned());
+                break;
+            }
+            // Unlocking never starts a new test; shortcuts and zone changes are not followed.
             CaptureEvent::Hotkey(_)
             | CaptureEvent::ZonesChanged(_)
-            | CaptureEvent::SessionLocked(_) => {}
+            | CaptureEvent::SessionLocked(false) => {}
         }
     }
 

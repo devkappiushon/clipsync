@@ -109,8 +109,8 @@ async fn the_support_bundle_carries_no_identifier() {
 
 /// S7 (§13.9): "layout do teclado" comes from the input module's `InputState`, and says
 /// "agente parado" with the agent stopped; on Windows "atalhos" too, inactive without a link of
-/// this machine in layout.toml (the hooks only exist then, §13.2 rule 2a). Exact texts and the
-/// active case: the unit tests of `diag.rs`.
+/// this machine in layout.toml. S8 checks the reason and uniqueness without treating
+/// configuration as proof that the hooks work.
 #[tokio::test(flavor = "multi_thread")]
 async fn diagnostics_show_the_keyboard_layout_and_on_windows_the_shortcuts() {
     let dir = tempfile::tempdir().unwrap();
@@ -143,13 +143,12 @@ async fn diagnostics_show_the_keyboard_layout_and_on_windows_the_shortcuts() {
     assert_ne!(keyboard["detail"], json!("agente parado"), "{keyboard}");
     let shortcuts = item(&d, "atalhos");
     if cfg!(windows) {
-        assert_eq!(
-            shortcuts,
-            Some(json!({
-                "area": "input", "name": "atalhos", "status": "warn",
-                "detail": "inativos: nenhuma ligação desta máquina no layout"
-            }))
-        );
+        let shortcuts = shortcuts.expect("contextual shortcut item");
+        assert_eq!(shortcuts["status"], "warn");
+        let detail = shortcuts["detail"].as_str().unwrap();
+        assert!(detail.contains("nenhuma ligação desta máquina"), "{detail}");
+        assert!(detail.contains("mouse físico"), "{detail}");
+        assert!(!detail.starts_with("ativos:"), "{detail}");
     } else {
         assert_eq!(shortcuts, None, "no shortcuts on Linux in this version");
     }
@@ -161,9 +160,20 @@ async fn diagnostics_show_the_keyboard_layout_and_on_windows_the_shortcuts() {
         json!("agente parado")
     );
     if cfg!(windows) {
+        let shortcuts = item(&d, "atalhos").unwrap();
+        assert_eq!(shortcuts["status"], "warn");
+        let detail = shortcuts["detail"].as_str().unwrap();
+        assert!(detail.contains("não conferido"), "{detail}");
+        assert!(detail.contains("agente parado"), "{detail}");
+        assert!(!detail.starts_with("ativos:"), "{detail}");
         assert_eq!(
-            item(&d, "atalhos").unwrap()["detail"],
-            json!("inativos: agente parado")
+            d["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|i| i["area"] == "input" && i["name"] == "atalhos")
+                .count(),
+            1
         );
     }
     ui.shutdown().await;

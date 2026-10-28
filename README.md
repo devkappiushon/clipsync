@@ -2,17 +2,17 @@
 
 Teclado, mouse e área de transferência entre os meus computadores, em um aplicativo só, sem servidor central. Cada módulo é opcional: dá para usar só teclado e mouse, só clipboard, ou os dois. A escolha é feita no `clipsync init` e fica em `config.toml` (`[modules]`).
 
-Estado em 2026-10-28: a v0.1.0 publicou a linha de comando; a v0.2.0 trouxe o app de desktop, com as telas e o agente no mesmo processo; a v0.3.0 traz teclado e mouse no Windows e o layout de telas entre Windows e Linux, por borda de monitor. O teclado e o mouse entre máquinas reais ainda não foram validados: o roteiro de teste está em `docs/contrato.md` §13.12. Detalhes: `docs/matriz-compatibilidade.md`.
+Estado em 2026-10-28: a v0.1.0 publicou a linha de comando; a v0.2.0 trouxe o app de desktop, com as telas e o agente no mesmo processo; a v0.3.0 trouxe teclado e mouse no Windows; a v0.3.1 simplifica o Layout por posição dos computadores, explica a configuração da passagem e melhora o teste e o diagnóstico. O teclado e o mouse entre máquinas reais ainda não foram validados: o roteiro de teste está em `docs/contrato.md` §13.12. Detalhes: `docs/matriz-compatibilidade.md`.
 
 ## Baixar
 
 Cada release traz o app de desktop e a linha de comando, mais o `SHA256SUMS`:
 
-- `clipsync-app-v0.3.0-linux-x86_64.AppImage` e `clipsync-app-v0.3.0-linux-amd64.deb`: app de desktop no Linux.
-- `clipsync-app-v0.3.0-windows-x86_64-setup.exe` e `clipsync-app-v0.3.0-windows-x86_64.msi`: app de desktop no Windows.
-- `clipsync-v0.3.0-linux-x86_64.tar.gz` e `clipsync-v0.3.0-windows-x86_64.zip`: só a linha de comando (`clipsync`), com este README.
+- `clipsync-app-v0.3.1-linux-x86_64.AppImage` e `clipsync-app-v0.3.1-linux-amd64.deb`: app de desktop no Linux.
+- `clipsync-app-v0.3.1-windows-x86_64-setup.exe` e `clipsync-app-v0.3.1-windows-x86_64.msi`: app de desktop no Windows.
+- `clipsync-v0.3.1-linux-x86_64.tar.gz` e `clipsync-v0.3.1-windows-x86_64.zip`: só a linha de comando (`clipsync`), com este README.
 
-Confira antes de executar (troque `v0.3.0` pela tag que você baixou):
+Confira antes de executar (troque `v0.3.1` pela tag que você baixou):
 
 ```sh
 # Linux e macOS
@@ -21,7 +21,7 @@ sha256sum -c SHA256SUMS --ignore-missing
 
 ```powershell
 # Windows (PowerShell): compare com a linha do pacote em SHA256SUMS
-Get-FileHash .\clipsync-app-v0.3.0-windows-x86_64-setup.exe -Algorithm SHA256
+Get-FileHash .\clipsync-app-v0.3.1-windows-x86_64-setup.exe -Algorithm SHA256
 ```
 
 ### App de desktop
@@ -31,12 +31,18 @@ O app traz as telas e o agente no mesmo processo, com ícone na bandeja. Fechar 
 No Linux, sem sudo, com o AppImage:
 
 ```sh
-scripts/instalar-app-linux.sh ~/Downloads/clipsync-app-v0.3.0-linux-x86_64.AppImage
+scripts/instalar-app-linux.sh ~/Downloads/clipsync-app-v0.3.1-linux-x86_64.AppImage
 ```
 
-O script copia o AppImage para `~/.local/bin/clipsync-app.AppImage` e cria o atalho "ClipSync" no menu de aplicativos. Rodar de novo com um AppImage mais novo atualiza. O app precisa do WebKitGTK 4.1; se o AppImage não abrir por falta de FUSE, instale o `libfuse2`. No GNOME, o ícone da bandeja depende da extensão AppIndicator. Com o `.deb`: `sudo apt install ./clipsync-app-v0.3.0-linux-amd64.deb`.
+O script copia o AppImage para `~/.local/bin/clipsync-app.AppImage` e cria o atalho "ClipSync" no menu de aplicativos. Rodar de novo com um AppImage mais novo atualiza. O app precisa do WebKitGTK 4.1; se o AppImage não abrir por falta de FUSE, instale o `libfuse2`. No GNOME, o ícone da bandeja depende da extensão AppIndicator. Com o `.deb`: `sudo apt install ./clipsync-app-v0.3.1-linux-amd64.deb`.
 
 No Windows, rode o `setup.exe` (ou o `.msi`). O instalador não é assinado, então o SmartScreen avisa: clique em "Mais informações" e depois em "Executar assim mesmo". O app usa o WebView2, que já vem no Windows 10 e 11 atualizados; se faltar, o instalador baixa.
+
+### Configurar a passagem do mouse
+
+1. Instale a mesma versão nas duas máquinas e faça o pareamento. No computador que recebe o controle, permita que o outro controle teclado e mouse.
+2. No computador com o mouse físico, abra **Layout de telas**, escolha a posição do outro computador ou arraste-o no desenho e clique em **Ligar nessa posição**. O app escolhe os monitores e os trechos livres.
+3. Confira a passagem e a volta. **Conferir a passagem do mouse** oferece um teste de entrada; resultado sem eventos é inconclusivo. A escolha manual de bordas fica em **Ajustes avançados**.
 
 ### Linha de comando
 

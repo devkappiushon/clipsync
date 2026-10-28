@@ -3,6 +3,8 @@
 import { EU, features, malha } from "./dados.js";
 import { cenario, emitir, erro, estado, plataforma, registrar } from "./nucleo.js";
 
+import { travessiaAtual } from "./travessia.js";
+
 registrar({
   app_state: () => ({
     initialized: estado.inicializado,
@@ -15,9 +17,10 @@ registrar({
     mesh: malha(),
     modules: { ...estado.modulos },
     input_supported: true,
-    version: "0.2.0",
+    version: "0.3.1",
     platform: plataforma,
     features: features(),
+    traversal: travessiaAtual(),
   }),
 
   agent_start: () => {

@@ -135,10 +135,13 @@ registrar({
         addr: "192.168.115.77:47800",
         perms: concedidas,
         remote_modules: { ...p.peer.modules },
-        remote_version: "0.2.0",
+        remote_version: 3,
         paired_at: Date.now(),
       };
       estado.dispositivos = [...estado.dispositivos.filter((d) => d.peer_id !== device.peer_id), device];
+      if (estado.layout && !estado.layout.devices.some((d) => d.peer_id === device.peer_id)) {
+        estado.layout.devices.push({ peer_id: device.peer_id, name: device.name, is_self: false, state: "connected", x: 6800, y: 360, hotkey: null, monitors_source: "live", monitors: [{ ref: "eDP-1", name: "eDP-1", index: 0, x: 0, y: 0, width: 1920, height: 1080, scale: 1 }] });
+      }
       encerrar("paired", { device });
       emitir("peer_connected", { peer_id: device.peer_id, short: device.short, name: device.name, addr: device.addr });
     });

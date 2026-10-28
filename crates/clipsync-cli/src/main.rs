@@ -114,10 +114,22 @@ fn init_logging() {
         .init();
 }
 
-async fn diagnose() -> Result<(), Fail> {
+async fn diagnose(profile: &Profile) -> Result<(), Fail> {
+    let status = match clipsync_core::control::request(
+        profile,
+        clipsync_proto::ControlRequest::Status,
+    )
+    .await
+    {
+        Ok(clipsync_proto::ControlResponse::Status(s)) => Some(s),
+        _ => None,
+    };
     let mut items = diag::system().await;
     items.extend(clipsync_clipboard::diagnose().await);
-    items.extend(clipsync_input::diagnose().await);
+    items.extend(
+        clipsync_input::diagnose_for(&profile.dir, status.as_ref().map(|s| s.id), status.as_ref())
+            .await,
+    );
     for i in items {
         println!(
             "{}",
@@ -190,7 +202,7 @@ async fn dispatch(cli: Cli) -> Result<(), Fail> {
         Cmd::Resume => cmds::pause(&profile, false).await,
         Cmd::Send { to, .. } => cmds::send(&profile, to).await,
         Cmd::Inbox => cmds::inbox(&profile).await,
-        Cmd::Diagnose => diagnose().await,
+        Cmd::Diagnose => diagnose(&profile).await,
         Cmd::Probe { what } => probe(&profile, what).await,
     }
 }

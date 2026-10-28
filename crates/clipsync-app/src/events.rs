@@ -40,13 +40,20 @@ pub fn spawn(app: AppHandle, ui: Ui) {
         loop {
             match events.recv().await {
                 Ok(event) => match serde_json::to_value(&event) {
-                    Ok(value) => forward(&app, value),
+                    Ok(value) => {
+                        let resync = event_name(&value) == Some("resync");
+                        forward(&app, value);
+                        if resync {
+                            tray::sync_paused(&app, &ui).await;
+                        }
+                    }
                     Err(error) => tracing::warn!(error = %error, "event did not serialize"),
                 },
                 Err(RecvError::Lagged(skipped)) => {
                     // O front perdeu eventos: pede que ele busque tudo de novo (§12.5 evento 11).
                     tracing::warn!(skipped, "event receiver lagged");
                     forward(&app, json!({ "event": "resync", "data": {} }));
+                    tray::sync_paused(&app, &ui).await;
                 }
                 Err(RecvError::Closed) => break,
             }
@@ -64,6 +71,12 @@ fn forward(app: &AppHandle, event: Value) {
             {
                 app.state::<AppState>().set_notify_prefs(prefs);
             }
+        }
+        Some("traversal_changed") => {
+            tray::set_traversal(
+                app,
+                event.pointer("/data/traversal").unwrap_or(&Value::Null),
+            );
         }
         Some("pause_changed") => {
             if let Some(paused) = paused_of(&event) {

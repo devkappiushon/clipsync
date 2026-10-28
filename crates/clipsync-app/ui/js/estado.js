@@ -4,6 +4,13 @@ import { api, ouvir } from "./api.js";
 import { aplicarTema } from "./tema.js";
 
 let app = null;
+let parDoLayout = null;
+export const indicarParNoLayout = (peerId) => { parDoLayout = peerId; };
+export function consumirParDoLayout() {
+  const peerId = parDoLayout;
+  parDoLayout = null;
+  return peerId;
+}
 const aoMudarApp = new Set();
 const assinantes = new Map();
 
@@ -54,6 +61,9 @@ function reconsultarApp() {
 
 function tratar({ event, data }) {
   switch (event) {
+    case "traversal_changed":
+      if (app) definirApp({ ...app, traversal: data.traversal });
+      break;
     case "pause_changed":
       if (app) definirApp({ ...app, paused: data.paused });
       // Pausar ou retomar muda também o que o agente informa em features (resume_hotkey_refused).
@@ -68,6 +78,7 @@ function tratar({ event, data }) {
     case "prefs_changed":
       aplicarAparencia(data.prefs.appearance);
       break;
+    case "layout_changed":
     case "peer_connected":
     case "peer_disconnected":
     case "peer_blocked":

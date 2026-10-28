@@ -22,7 +22,7 @@ pub use adapter::{
 #[cfg(target_os = "linux")]
 pub use adapter::{PortalCapture, PortalEmulate};
 pub use config::{AdapterChoice, BarrierConfig, InputConfig, map_pos, zone_ref};
-pub use diag::diagnose;
+pub use diag::{diagnose, diagnose_for};
 pub use layout::{
     DerivedBarrier, Endpoint, Layout, LayoutDevice, LayoutError, LayoutOptions, Link,
     trim_dead_corner,

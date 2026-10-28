@@ -514,3 +514,98 @@ async fn rate_limit_refills_at_the_documented_rate_when_the_sender_is_slow() {
         bucket_ceiling(window)
     );
 }
+
+// S8: a system lock is a stop signal even in the explicit loopback test.
+// Ignoring it would forward the queued activation or later input to the peer.
+#[tokio::test]
+async fn loopback_source_lock_before_activation_never_opens_the_destination() {
+    let hub = MemHub::new();
+    let a = spawn_module(&hub, "source");
+    let b = spawn_module(&hub, "dest");
+    hub.link(a.id, b.id, PeerPerms::default(), CONTROL);
+    for r in [&a, &b] {
+        assert!(matches!(
+            command(&r.tx, ModuleCommand::Status).await,
+            ModuleReply::Status(_)
+        ));
+    }
+
+    // Queue the lock before start, followed by an activation and a key that must never leave.
+    a.cap.session_locked(true);
+    a.cap.activate(0, 0.25);
+    a.cap.push(key(30, true));
+    a.cap.session_locked(false);
+    a.cap.deactivate();
+    let reply = command(
+        &a.tx,
+        ModuleCommand::InputLoopback {
+            to: b.id,
+            seconds: 5,
+        },
+    )
+    .await;
+
+    assert!(
+        matches!(reply, ModuleReply::Error(ref message)
+        if message == clipsync_input::msg::SOURCE_SCREEN_LOCKED),
+        "{reply:?}"
+    );
+    assert_eq!(hub.sent_count(a.id, b.id), 0);
+    assert!(!b.emu.started());
+    assert_eq!(b.emu.pressed_now(), 0);
+    assert_eq!(a.cap.released(), 1);
+    assert!(!a.cap.started());
+}
+
+#[tokio::test]
+async fn loopback_source_lock_releases_pressed_keys_and_drops_later_queued_input() {
+    let hub = MemHub::new();
+    let a = spawn_module(&hub, "source");
+    let b = spawn_module(&hub, "dest");
+    hub.link(a.id, b.id, PeerPerms::default(), CONTROL);
+    for r in [&a, &b] {
+        assert!(matches!(
+            command(&r.tx, ModuleCommand::Status).await,
+            ModuleReply::Status(_)
+        ));
+    }
+    let pending = {
+        let tx = a.tx.clone();
+        let to = b.id;
+        tokio::spawn(
+            async move { command(&tx, ModuleCommand::InputLoopback { to, seconds: 5 }).await },
+        )
+    };
+    a.cap.activate(0, 0.25);
+    a.cap.push(key(30, true));
+    until("key held before the source locks", || {
+        b.emu.pressed_now() == 1
+    })
+    .await;
+
+    // The motion starts a batch; the lock splits it before the later key and unlock.
+    a.cap.push(motion());
+    a.cap.session_locked(true);
+    a.cap.push(key(31, true));
+    a.cap.session_locked(false);
+    a.cap.push(key(32, true));
+    a.cap.deactivate();
+    let reply = pending.await.unwrap();
+
+    assert!(
+        matches!(reply, ModuleReply::Error(ref message)
+        if message == clipsync_input::msg::SOURCE_SCREEN_LOCKED),
+        "{reply:?}"
+    );
+    until("all destination keys released by source lock", || {
+        b.emu.pressed_now() == 0
+    })
+    .await;
+    assert!(b.emu.events().contains(&key(30, true)));
+    assert!(!b.emu.events().contains(&key(31, true)));
+    assert!(!b.emu.events().contains(&key(32, true)));
+    // Enter, Leave and ReleaseAll; never StatsRequest after a lock.
+    assert_eq!(hub.sent_count(a.id, b.id), 3);
+    assert_eq!(a.cap.released(), 1);
+    assert!(!a.cap.started());
+}

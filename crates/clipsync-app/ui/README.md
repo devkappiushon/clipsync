@@ -1,6 +1,6 @@
 # Interface do ClipSync (ui)
 
-Frontend estático do app Tauri 2: HTML, CSS e JavaScript puros, sem npm, sem bundler e sem conteúdo remoto. A casca (`crates/clipsync-app`) serve esta pasta como `frontendDist`. A lógica das telas fica no crate `clipsync-ui`; aqui só há apresentação. Contrato: `docs/contrato.md` §12.
+Frontend estático do app Tauri 2: HTML, CSS e JavaScript puros, sem npm, sem bundler e sem conteúdo remoto. A casca (`crates/clipsync-app`) serve esta pasta como `frontendDist`. A lógica das telas fica no crate `clipsync-ui`; aqui só há apresentação. Contrato: `docs/contrato.md` §12 e §14.
 
 ## Regras que valem em todo arquivo
 
@@ -62,6 +62,13 @@ Escolha pela URL: `/?cenario=<nome>#/<tela>`.
 | `cenario=estados` | par offline, par bloqueado por chave diferente, oferta de layout pendente, exportação do pacote falhando |
 | `cenario=pareamento` | pareamento já no passo do código, sem esperar (sair da tela cancela a tentativa) |
 | `cenario=windows` | PC Windows da S7: dois monitores (um 4K a 150%), teclado e mouse ligados, atalhos ativos, recusas de destino listadas como bloqueio |
+| `cenario=sem-ligacao` | pares conectados, nenhuma passagem local; combine com `plataforma=windows` para dois monitores na origem |
+| `cenario=receptor` | sem ligação local, com permissão de entrada: orienta configurar no computador do mouse físico |
+| `cenario=ligacao-remota` | há ligação entre dois pares, mas nenhuma nesta máquina |
+| `cenario=protocolo-antigo` | par conectado no protocolo 2; aviso não inventa a versão do app |
+| `cenario=sem-monitores` | pares sem monitores anunciados; não permite criar monitor fictício |
+| `cenario=input-desligado` | módulo de teclado e mouse desligado, Layout indisponível |
+| `cenario=teste-zero` | teste devolve zero eventos; resultado inconclusivo |
 | `plataforma=windows` | o mesmo, combinável com outro cenário (ex.: `cenario=sem-perfil&plataforma=windows` mostra o onboarding do Windows) |
 | `tema=claro` ou `tema=escuro` | tema inicial, para capturar as telas nos dois temas |
 
@@ -70,8 +77,18 @@ Escolha pela URL: `/?cenario=<nome>#/<tela>`.
 Sem navegador e sem npm, com o `node --test` embutido. Provam o simulador, não o agente (esse é testado em Rust, no `clipsync-ui`).
 
 ```sh
-node --test crates/clipsync-app/ui-dev/testes/oferta.test.mjs
+node --test crates/clipsync-app/ui-dev/testes/*.test.mjs
 ```
+
+## Configuração da passagem do mouse
+
+O fluxo principal do Layout usa a posição do computador (esquerda, direita, acima ou abaixo). Arrastar prepara a mesma escolha; `Ligar nessa posição` grava a posição e a ligação, com a revisão retornada pela primeira gravação. Os monitores e trechos externos são calculados com os dados reais do layout. Uma ligação existente é atualizada pelo id; várias ligações personalizadas pedem os ajustes avançados para não apagar trechos do usuário.
+
+Cantos mortos, atalhos, cópia para pares e editor manual de bordas ficam em `Ajustes avançados`. O estado de travessia vem de `app_state.traversal` e `traversal_changed`; configuração encontrada não é prova de captura funcionando. O aviso de protocolo usa número, não a versão do app.
+
+`Conferir a passagem do mouse` explica e abre o teste apenas no clique. O usuário cruza a borda e move o mouse. O resultado mostra eventos contabilizados e perdas; zero eventos é inconclusivo. O teste não comprova a volta pelo trecho de entrada nem mede latência de rede confiável entre relógios de processos distintos.
+
+`travessia.test.mjs` exercita os cálculos reais de `ui/js/travessia.js`: monitor externo alinhado mesmo com alturas diferentes, deslocamento sob o segundo monitor, coordenadas negativas, trechos internos/ocupados e cantos mortos (incluindo arredondamento f32), ausência de monitores, ligações somente remotas, atualização sem duplicação e interpretação de resultados. Os testes de oferta verificam o contrato do simulador; o agente real tem testes Rust separados.
 
 ## Acrescentar uma tela
 

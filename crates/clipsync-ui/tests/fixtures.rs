@@ -106,6 +106,7 @@ fn every_fixture_fits_its_type_and_round_trips() {
         "resync",
         "layout_changed",
         "screen_lock_changed",
+        "traversal_changed",
     ];
     for want in commands
         .map(|c| c.to_string())

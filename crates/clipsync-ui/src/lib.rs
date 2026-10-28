@@ -21,6 +21,7 @@ pub mod onboarding;
 pub mod pairing;
 pub mod prefs;
 pub mod status;
+pub mod traversal;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

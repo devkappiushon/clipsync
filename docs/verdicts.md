@@ -4268,3 +4268,81 @@ Mantém-se o limite aceito expressamente na **v1.32, §13.6 e §13.13.21**: não
 
 **O achado de diagnóstico Windows da revisão 8cc14c4 está fechado. Resultado final em ed4b7e1: critério 3 Passa; critério 4 Passa.** Não foram modificados fontes, iniciado servidor ou repetido o teste manual do app. O CI indicado terminou completamente verde antes deste registro.
 
+## S8 · diagnóstico e configuração da travessia · 2026-10-28
+
+**Veredito: implementação aprovada na revisão de código, nos testes locais e no simulador; travessia nas máquinas reais pendente.** Revisão independente do warden sobre a base `48f257fb126636a73f9d6dcd83b63619b163b6c7` com as alterações não commitadas, incluindo arquivos novos, contra o contrato v1.34 §14 e o plano `docs/superpowers/plans/2026-10-28-travessia.md`. Não houve commit, push, release nem instalação nesta rodada. Aprovação de código não confirma a causa do mouse não atravessar no PC do usuário.
+
+### Achados importantes corrigidos nesta revisão
+
+1. **S8-W1, teste Windows preso ao texto antigo.** `clipsync-ui/tests/diag.rs` exigia igualdade com o detalhe anterior de atalhos, incompatível com `diagnose_for`. O teste agora exige exatamente um item, motivo contextual, status de aviso e ausência de afirmação de hooks ativos. Correção conferida por leitura e pela checagem cruzada de todos os alvos Windows; o ramo de execução Windows não rodou aqui.
+2. **S8-W2, canto morto proposto como passagem.** Com uma ligação ocupando a borda útil de um monitor de 1080 px e cantos mortos de 8 px, o helper propunha o intervalo `0.9925925925925926..1`; o corte do backend o tornava vazio. O warden reproduziu esse resultado antes da correção. `trechosLivres` passou a excluir os cantos e lacunas que colapsam em f32, tentando outro monitor quando necessário. As regressões passaram na execução independente. A mesma rodada corrigiu o achado do Maestro no portal: notebook abaixo do LG deve escolher a borda externa do LG, mesmo com o Dell mais alto. A regra de alinhamento e desempate ficou explícita em §14.3.2.
+3. **S8-W3, erro posterior à gravação descrito como ligação intacta.** `layout::save` grava o arquivo antes de recarregar o agente; portanto um erro de configuração ou timeout não prova ausência de alteração. `falhaAoLigar` agora reserva “ligação não foi alterada” às recusas conhecidas anteriores à gravação, como `stale_rev`; falhas indeterminadas preservam o detalhe do backend e informam que a atualização não pôde ser confirmada. Não há repetição automática da escrita. Teste do helper e ambos os caminhos no portal passaram. A ressalva está em §14.3.3.
+
+Também foram alinhados os mocks: protocolo remoto é numérico; null/zero permanece `checking`; input desligado desabilita as capacidades de configuração. Nenhum achado importante permanece aberto nesta revisão. Observação visual de menor impacto: na cena final, o rótulo do terceiro computador (`pc-de-casa`) cruza a borda inferior do monitor Dell no desenho. O texto e os controles continuam legíveis; o ponto foi informado ao Maestro, sem bloquear os critérios funcionais da S8.
+
+### Evidência executada pelo warden
+
+Os binários Rust abaixo foram compilados pelo backend nesta rodada e executados diretamente pelo revisor, sem nova compilação e sem disputar o lock do Cargo.
+
+| Comando | Resultado observado |
+|---|---|
+| `target/debug/deps/clipsync_ui-7e8bf0593e797a41 traversal::tests --nocapture` | 5 passaram, 0 falhas: pares revogados/remotos, protocolos, histórico limpo, JSON antigo e permissão local de entrada. |
+| `target/debug/deps/traversal-c9cae87e62efa15c --nocapture` | 5 passaram, 0 falhas: API pública, perfil/input ausentes, layout inválido/ausente, saída sem conceder entrada na origem, pausa, trava e agente parado. A primeira tentativa no sandbox falhou por bloqueio de sockets (`Operation not permitted`); a repetição autorizada fora dessa restrição passou sem mudar código. |
+| `target/debug/deps/clipsync_input-55181c31da94d9c5 context_tests --nocapture` | 3 passaram, 0 falhas: contexto ausente, pausa/input/layout e contagem só de ligações locais para pares conhecidos. |
+| `target/debug/deps/module_mem-dd6fa58766c1b416 loopback_source_lock --nocapture` | 2 passaram, 0 falhas: bloqueio antes/depois da ativação, liberação dos pressionados e descarte de eventos posteriores. |
+| `target/debug/deps/diagnose_context-1f91801808fd9a6d --nocapture` | 1 passou, 0 falhas: diagnóstico mantém checagens de sistema sem agente e explica contexto ausente. |
+| `node crates/clipsync-app/ui-dev/testes/travessia.test.mjs` | 17 passaram, 0 falhas: geometria, monitores reais, escala/coordenadas negativas, trechos internos/ocupados/cantos, repetição sem duplicação, múltiplas ligações preservadas, resultado zero e falha parcial. |
+| `node crates/clipsync-app/ui-dev/testes/mock-travessia.test.mjs` | 2 passaram, 0 falhas: capacidades com input desligado e protocolo desconhecido. |
+| `node crates/clipsync-app/ui-dev/testes/oferta.test.mjs` | 3 passaram, 0 falhas: contrato do simulador, ofertas antigas e aceitação única. |
+| `node --check` sobre os arquivos JS de `ui/js` e `ui-dev` | 33 arquivos, 0 falhas. |
+| `scripts/conferir-unsafe.sh` | `unsafe isolado em crates/clipsync-win/src/ffi.rs: ok`. |
+| `scripts/conferir-privacidade.sh` | `privacidade dos hooks: ok (8 arquivos)`. |
+| `git diff --check` | Saída vazia, código 0. |
+
+A busca em `ui/` não encontrou `innerHTML`, `style=` ou travessão; os dois scripts HTML usam `src`. O diff de `Cargo.toml`, `Cargo.lock`, `clipsync-proto`, capabilities e `tauri.conf.json` permanece vazio. Nenhuma dependência, mensagem de rede ou permissão nova foi introduzida.
+
+### Integração executada pelo Maestro, com logs conferidos
+
+| Comando | Resultado e log desta sessão |
+|---|---|
+| `cargo fmt --all --check` | Código 0; `/tmp/clipsync-s8-final-fmt.log` vazio. |
+| `cargo test --locked --workspace --exclude clipsync-app` | Código 0; **441 passaram, 0 falhas, 3 ignorados** em `/tmp/clipsync-s8-final-tests.log`. Inclui `clipsync-ui`, que não pertence aos default-members. |
+| `cargo clippy --workspace --exclude clipsync-app --all-targets --locked -- -D warnings` | Código 0; `/tmp/clipsync-s8-final-clippy.log`, `Finished` em 2,02 s. |
+| `CC_x86_64_pc_windows_gnu=true AR_x86_64_pc_windows_gnu=true cargo clippy --target x86_64-pc-windows-gnu -p clipsync-input -p clipsync-win -p clipsync-ui -p clipsync-cli --all-targets --locked -- -D warnings` | Código 0; `/tmp/clipsync-s8-final-windows.log`, `Finished` em 8,76 s. É compilação/clippy cruzado, sem executar Windows. |
+
+O backend também entregou `/tmp/clipsync-s8-backend-tests.log` (292 passaram, 2 ignorados) e `/tmp/clipsync-s8-backend-clippy.log`, ambos lidos pelo warden. Não são somados aos 441 testes integrados porque repetem suítes. Os ciclos RED anteriores à implementação foram informados pelos implementadores, sem log RED persistido conferido pelo revisor: traversal retornava JSON null em vez de `no_local_link`; a CLI não tinha o item contextual; o loopback entregava 1 e 4 eventos apesar do bloqueio, com duas falhas. A execução GREEN independente está na tabela acima.
+
+### Portal Maestri e limites da prova visual
+
+O Maestro executou as ações pelo portal do simulador, com `evaluate`/medidas de DOM e screenshots. O warden inspecionou as imagens `/tmp/maestri-portal-52204e76-3cf1-46b7-adc8-6b8970caba64.png` e `/tmp/maestri-portal-3d5e435a-0d50-486f-befb-93371940a8e2.png`, sem dirigir o portal nem iniciar servidor.
+
+- Layout simples em 1280×800: canvas antes do editor avançado, formulário ao lado, botões de posição e teste recolhível. Na imagem final, canvas com y=209 e altura=320. Em 960×640, o Maestro mediu `scrollWidth=960`, igual ao viewport, sem vazamento horizontal.
+- `sem-ligacao` criou uma ligação apenas no clique. Trocar para abaixo atualizou o mesmo id e, após a correção, escolheu `LG 24GL600F/bottom`. Abrir tela, parear e conceder permissão não criaram ligações automaticamente. O pareamento simulado sem permissões mostrou “nenhuma” e ofereceu configurar na máquina com mouse físico.
+- `receptor` e `ligacao-remota` mostraram a ausência de saída local sem exigir layout para receber. `sem-monitores` deixou Ligar desabilitado. `input-desligado` mostrou a causa e “Abrir preferências”. `protocolo-antigo` exibiu protocolo 2 e recomendação de atualização sem atribuir release do app. `teste-zero` mostrou “Teste inconclusivo” e reabilitou o botão.
+- Conflito parcial injetado somente no simulador: a posição foi salva e uma gravação concorrente tornou `setLink` stale. Resultado `linksPreserved:true`, revisão 9, uma única `l1` anterior e aviso explícito de posição salva/ligação não alterada; botão reabilitado.
+- Falha após persistência injetada somente no simulador: `setLink` original salvou e o wrapper retornou `config`. Resultado `linksChanged:true`, uma única `l1` em LG/bottom; a tela informou que não pôde confirmar a atualização, manteve a mensagem “Layout salvo, mas o agente não aplicou a mudança” e recarregou. Não afirmou preservação falsa nem repetiu a escrita.
+- O simulador foi iniciado pelo Maestro em background e respondeu ao curl. Ao fim, o Maestro encerrou o PID 156631 (`servir-ui-dev.py`, porta 5174); o curl seguinte retornou conexão recusada, código 7/HTTP 000. O portal foi preservado.
+
+### Veredito por critério do contrato §14.7
+
+| Critério | Veredito e alcance |
+|---|---|
+| 1 · Backend | **Passa.** Estados conservadores, default `checking`, bloqueios históricos limpos, protocolo separado de release e `input_in` local sem bloquear saída; 10 testes dirigidos de traversal passaram. |
+| 2 · Frontend | **Passa no código e simulador.** Posição sem monitor/borda obrigatórios, trechos válidos, atualização por id, avançado opcional, falhas parciais claras, clique exclusivo e zero eventos inconclusivo. Geometria/erros executados em Node e fluxos conferidos pelo Maestro no portal. |
+| 3 · CLI/UI | **Passa na prova local e na compilação cruzada.** Helper compartilhado, contexto preservado sem agente, diagnóstico conservador e teste Windows atualizado para unicidade. Execução nativa do item de atalhos Windows continua pendente. |
+| 4 · Input | **Passa na regressão com FakeCapture/FakeEmulate/MemHub.** Os dois casos encerram captura, liberam pressionados e não entregam eventos posteriores. RED atribuído ao implementador; GREEN repetido pelo warden. Não comprova bloqueio real da sessão. |
+| 5 · Integração | **Passa nos alvos locais alcançáveis e no clippy cruzado.** 441/0/3, fmt, clippy e scripts. Tauri não foi compilado por falta de headers WebKitGTK; testes `cfg(windows)` não foram executados; CI desta alteração não foi disparado. |
+| 6 · Revisão | **Passa.** Warden registra esta seção; segurança independente está em `docs/seguranca.md`, seção S8. Três achados importantes fechados nesta rodada. |
+| 7 · Máquinas reais | **Pendente.** Faltam as saídas do PC Windows, confirmação da atualização instalada no notebook, travessia real/roteiro §13.12, instaladores e perguntas §13.14. O relato de atualização em andamento não prova atualização concluída. |
+
+A leitura de eventos confirmou emissão somente quando o resumo muda, consumo pela janela/bandeja e recuperação por `resync`/`Lagged`. A bandeja foi revisada e seus testes estão no código, mas não foi executada numa casca Tauri nesta revisão. Saúde real de hooks/portais, permissão do destino, retorno pelo trecho e ida/volta entre as máquinas permanecem fora da prova do simulador. Nenhuma permissão do sistema foi aceita pelo revisor; nenhum segredo foi aberto.
+
+
+
+## Preparação da v0.3.1: revisão e validação antes do commit
+
+O warden revisou versão, lockfile, notas e workflow. Oito crates em 0.3.1, dependências externas idênticas e versão do Tauri herdada do workspace. Corrigido o único achado: o job de publicação exige push de tag; workflow_dispatch apenas empacota, mesmo apontando para tag. Revisão aprovada.
+
+O Maestro executou `cargo test --workspace --exclude clipsync-app --locked -j 2`: 441 passaram, 0 falharam e 3 ignorados, saída 0. `node --test crates/clipsync-app/ui-dev/testes/*.test.mjs`: 22 passaram e 0 falharam. `cargo fmt --all --check`, os scripts de unsafe e privacidade e `git diff --check` passaram. `target/debug/clipsync --version` respondeu `clipsync 0.3.1`. Logs locais: `/tmp/clipsync-v031-tests.log` e `/tmp/clipsync-v031-js.log`.
+
+CI completo, empacotamento, publicação e instalação permanecem posteriores a este registro; não há alegação de travessia física validada.

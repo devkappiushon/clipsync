@@ -498,3 +498,16 @@ h3 {
   width: 100%;
   max-width: 720px;
 }
+
+/* O texto de travessia usa grade: a base de 240 px dos parágrafos do aviso é horizontal. */
+.travessia__texto {
+  display: grid;
+  gap: var(--s-2);
+  width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.travessia__texto > .btn {
+  justify-self: start;
+}

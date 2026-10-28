@@ -4,7 +4,7 @@ on:
   push:
     tags: ["v*"]
   # Disparo manual: gera os pacotes como artefatos para conferir antes da tag.
-  # Não publica release (o job publica só roda em tag).
+  # Não publica release (o job publica exige push de tag).
   workflow_dispatch:
 
 permissions:
@@ -140,13 +140,17 @@ jobs:
   release:
     name: publica release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
 
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -173,18 +177,9 @@ jobs:
         run: sha256sum clipsync-* > SHA256SUMS
 
       - name: notas do release
-        run: |
-          cat > notes.md <<'NOTAS'
-          App de desktop (Tauri) e linha de comando para Linux e Windows.
-
-          - App: as nove telas (dispositivos, pareamento, clipboard, layout de telas, diagnóstico, preferências e primeira execução), com o agente dentro do app e ícone na bandeja.
-          - Layout de telas: o cursor e o teclado cruzam entre Windows e Linux pelo trecho de borda de monitor ligado na tela Layout, nos dois sentidos, com volta pelo mesmo trecho.
-          - Linux: AppImage e .deb. Malha QUIC, pareamento, clipboard e teclado e mouse experimentais (X11 e XWayland).
-          - Windows: instalador .exe e .msi, sem assinatura (o SmartScreen avisa). Malha, pareamento, clipboard de texto e, desde a v0.3.0, teclado e mouse com o layout de telas por borda de monitor (atalhos Win+Alt+1 a 9, L e P), tudo experimental.
-          - CLI: os mesmos pacotes da v0.1.0.
-
-          Confira o SHA-256 em SHA256SUMS antes de executar.
-          NOTAS
+        env:
+          TAG: ${{ github.ref_name }}
+        run: cp "docs/releases/${TAG}.md" notes.md
 
       - name: gh release create
         env:

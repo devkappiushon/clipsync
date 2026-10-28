@@ -17,7 +17,7 @@
 }
 
 /* Erro e esqueleto de carga ocupam a largura toda, não só a coluna do canvas. */
-.layout__corpo > :not(.layout__principal, .layout__lateral, .layout__oferta) {
+.layout__corpo > :not(.layout__principal, .layout__simples, .layout__lateral, .layout__oferta) {
   grid-column: 1 / -1;
 }
 
@@ -478,4 +478,111 @@
   padding: 0;
   list-style: none;
   font-size: var(--fs-sm);
+}
+
+/* Fluxo principal por computador. O editor de bordas aparece nos ajustes avançados. */
+.layout:not([data-avancado]) .layout__lateral {
+  display: none;
+}
+
+.layout__avancado > summary,
+.layout__teste > summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: var(--s-2) 0;
+}
+
+.layout__avancado[open] > summary,
+.layout__teste[open] > summary {
+  margin-bottom: var(--s-2);
+}
+
+.layout__configurar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--s-4);
+}
+
+.layout__configurar > * {
+  min-width: 0;
+  flex: 1 1 17rem;
+}
+
+.layout__posicoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.layout__posicoes .btn[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.layout__previa {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.layout__borda--disponivel {
+  fill: var(--accent-soft);
+}
+
+.layout:not([data-avancado]) .layout__canvas {
+  min-height: 320px;
+}
+
+.layout__simples {
+  min-width: 0;
+}
+
+.layout__simples .cartao {
+  gap: var(--s-2);
+  padding: var(--s-3);
+}
+
+.layout__simples .cartao h2 {
+  font-size: var(--fs-md);
+}
+
+.layout__simples .layout__configurar {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.layout__simples .layout__posicoes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.layout__simples .layout__posicoes .btn {
+  padding-inline: var(--s-1);
+}
+
+.layout__avancado,
+.layout__lateral {
+  grid-column: 1 / -1;
+}
+
+@container (min-width: 50rem) {
+  .layout__corpo {
+    grid-template-columns: minmax(0, 1fr) 19rem;
+    align-items: start;
+  }
+
+  .layout__principal {
+    grid-column: 1;
+  }
+
+  .layout__simples {
+    grid-column: 2;
+  }
+
+  .layout[data-avancado] .layout__lateral {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
 }

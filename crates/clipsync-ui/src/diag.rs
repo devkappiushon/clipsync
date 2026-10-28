@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use clipsync_proto::{AgentStatus, DiagStatus, InputState, ModuleKind, PeerId};
+use clipsync_proto::{AgentStatus, DiagStatus, InputState};
 use serde::{Deserialize, Serialize};
 
 use crate::api::code;
@@ -127,11 +127,14 @@ fn timed_out(area: &str) -> Vec<clipsync_proto::DiagItem> {
 }
 
 /// The CLI's `clipsync diagnose`: system, clipboard and input, each bounded in time.
-async fn checks() -> Vec<DiagItem> {
+async fn checks(profile_dir: &Path, status: Option<&AgentStatus>) -> Vec<DiagItem> {
     let (sys, clip, input) = tokio::join!(
         tokio::time::timeout(CHECK_TIMEOUT, clipsync_core::diag::system()),
         tokio::time::timeout(CHECK_TIMEOUT, clipsync_clipboard::diagnose()),
-        tokio::time::timeout(CHECK_TIMEOUT, clipsync_input::diagnose()),
+        tokio::time::timeout(
+            CHECK_TIMEOUT,
+            clipsync_input::diagnose_for(profile_dir, status.map(|s| s.id), status)
+        ),
     );
     let mut all = sys.unwrap_or_else(|_| timed_out("sistema"));
     all.extend(clip.unwrap_or_else(|_| timed_out("clipboard")));
@@ -181,38 +184,12 @@ fn keyboard_item(agent_running: bool, input: Option<&InputState>) -> DiagItem {
     input_item(msg::DIAG_KEYBOARD, status, detail)
 }
 
-/// "atalhos" (Windows): active while the hooks exist, that is with the agent running, the input
-/// module on and at least one link of this machine in `layout.toml` (§13.2 rule 2a).
-fn shortcuts_item(agent_running: bool, input_on: bool, local_link: bool) -> DiagItem {
-    let (status, detail) = if !agent_running {
-        (ItemStatus::Warn, msg::DIAG_SHORTCUTS_NO_AGENT)
-    } else if !input_on {
-        (ItemStatus::Warn, msg::DIAG_SHORTCUTS_INPUT_OFF)
-    } else if !local_link {
-        (ItemStatus::Warn, msg::DIAG_SHORTCUTS_NO_LINK)
-    } else {
-        (ItemStatus::Ok, msg::DIAG_SHORTCUTS_ON)
-    };
-    input_item(msg::DIAG_SHORTCUTS, status, detail.to_string())
-}
-
-/// `clipsync_input::diagnose()` names "layout do teclado" and "atalhos" too on Windows, without
-/// the agent: its "atalhos" is always ok. Ours carry the agent's state (§13.9), so they replace
-/// the input items of the same name, and each name shows once.
+/// O layout do teclado anunciado pelo agente substitui a sondagem de mesmo nome.
+/// Atalhos e configuração de saída vêm do helper contextual compartilhado com a CLI.
 fn with_agent_state(mut items: Vec<DiagItem>, ours: Vec<DiagItem>) -> Vec<DiagItem> {
     items.retain(|i| !ours.iter().any(|o| o.area == i.area && o.name == i.name));
     items.extend(ours);
     items
-}
-
-/// Whether `layout.toml` links a monitor of this machine. An unreadable file links nothing.
-fn has_local_link(ctx: &Ctx) -> bool {
-    let me: Option<PeerId> = ctx.profile.load_identity().ok().map(|i| i.id());
-    let layout = clipsync_input::Layout::read(&ctx.profile.dir.join(clipsync_input::LAYOUT_FILE));
-    match (me, layout) {
-        (Some(me), Ok(Some(l))) => l.links.iter().any(|k| k.a.peer == me || k.b.peer == me),
-        _ => false,
-    }
 }
 
 /// What the screen and the bundle share.
@@ -226,20 +203,8 @@ struct Gathered {
 async fn gather(ctx: &Ctx) -> Gathered {
     let observed = status::observe(ctx).await;
     let status = observed.status;
-    let mut ours = vec![keyboard_item(status.is_some(), observed.input.as_ref())];
-    if cfg!(windows) {
-        let input_on = status.as_ref().is_some_and(|s| {
-            s.modules
-                .iter()
-                .any(|m| m.kind == ModuleKind::Input && m.enabled)
-        });
-        ours.push(shortcuts_item(
-            status.is_some(),
-            input_on,
-            has_local_link(ctx),
-        ));
-    }
-    let items = with_agent_state(checks().await, ours);
+    let ours = vec![keyboard_item(status.is_some(), observed.input.as_ref())];
+    let items = with_agent_state(checks(&ctx.profile.dir, status.as_ref()).await, ours);
     let cfg = ctx.profile.load_config().ok();
     let peers = ctx.profile.load_peers().unwrap_or_default();
     let devices: Vec<Device> = peers
@@ -744,66 +709,17 @@ mod tests {
         assert_eq!(ok("br(abnt2)").status, ItemStatus::Ok);
     }
 
-    /// CI 40757283200 (8cc14c4, Windows): the input crate's own "atalhos" (always ok) came first,
-    /// so the screen showed the shortcuts active without a local link.
     #[test]
-    fn the_agent_state_items_replace_the_input_crate_items_of_the_same_name() {
-        let theirs = |name: &str| input_item(name, ItemStatus::Ok, "do crate de input".into());
-        let checks = vec![
-            input_item("captura", ItemStatus::Ok, "win-hooks".into()),
-            theirs("layout do teclado"),
-            theirs("atalhos"),
-        ];
-        let ours = vec![
-            keyboard_item(false, None),
-            shortcuts_item(true, true, false),
-        ];
-        let items = with_agent_state(checks, ours);
-        let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
-        assert_eq!(names, ["captura", "layout do teclado", "atalhos"]);
-        assert_eq!(items[1].detail, "agente parado");
-        assert_eq!(
-            (items[2].status, items[2].detail.as_str()),
-            (
-                ItemStatus::Warn,
-                "inativos: nenhuma ligação desta máquina no layout"
-            )
-        );
-        // Another area with the same name stays.
+    fn observed_keyboard_item_replaces_the_probe_without_touching_other_areas() {
+        let theirs = input_item("layout do teclado", ItemStatus::Ok, "anterior".into());
         let other = DiagItem {
             area: "sistema".into(),
-            ..theirs("atalhos")
+            ..theirs.clone()
         };
-        assert_eq!(
-            with_agent_state(vec![other], vec![shortcuts_item(true, true, true)]).len(),
-            2
-        );
-    }
-
-    #[test]
-    fn shortcuts_are_active_only_with_agent_input_and_a_local_link() {
-        let detail = |a, i, l| shortcuts_item(a, i, l).detail;
-        assert_eq!(shortcuts_item(true, true, true).status, ItemStatus::Ok);
-        assert_eq!(
-            detail(true, true, true),
-            "ativos: Win+Alt+1 a 9, Win+Alt+L e Win+Alt+P"
-        );
-        assert_eq!(detail(false, true, true), "inativos: agente parado");
-        assert_eq!(
-            detail(true, false, true),
-            "inativos: módulo de input desligado"
-        );
-        assert_eq!(
-            detail(true, true, false),
-            "inativos: nenhuma ligação desta máquina no layout"
-        );
-        for (a, i, l) in [
-            (false, true, true),
-            (true, false, true),
-            (true, true, false),
-        ] {
-            assert_eq!(shortcuts_item(a, i, l).status, ItemStatus::Warn);
-        }
+        let items = with_agent_state(vec![theirs, other], vec![keyboard_item(false, None)]);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].area, "sistema");
+        assert_eq!(items[1].detail, "agente parado");
     }
 
     #[test]

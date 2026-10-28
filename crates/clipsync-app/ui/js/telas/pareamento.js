@@ -5,7 +5,7 @@ import { api } from "../api.js";
 import { aviso, cabecalho, estadoErro } from "../areas.js";
 import { botao, campo, cartao, confirmar, esqueleto, interruptor, segmentado, selo } from "../componentes.js";
 import { h, trocar } from "../dom.js";
-import { recurso } from "../estado.js";
+import { indicarParNoLayout, recurso } from "../estado.js";
 import { INDISPONIVEL, mensagemDe } from "../formatar.js";
 
 const JANELA_S = 120;
@@ -406,6 +406,10 @@ export default function montar({ ir, assinar }) {
             h("dt", null, "Permissões concedidas"),
             h("dd", null, rotuloGrants(d.perms)),
           ),
+        d?.remote_modules?.input && recurso("input") && aviso("info",
+          h("p", null, "Para passar o mouse, configure a posição do outro computador na máquina que tem o mouse físico. Parear não cria a passagem automaticamente."),
+          botao({ rotulo: "Configurar passagem do mouse", variante: "primario", aoClicar: () => { indicarParNoLayout(d.peer_id); ir("layout"); } }),
+        ),
         h(
           "div",
           { class: "linha" },

@@ -27,7 +27,7 @@ function par({ short, name, addr, state, blocked_reason = null, perms, remote_mo
     addr,
     perms,
     remote_modules,
-    remote_version: "0.2.0",
+    remote_version: 3,
     paired_at: AGORA - dias * DIA,
   };
 }
@@ -60,6 +60,7 @@ function dispositivosPadrao() {
     remote_modules: { clipboard: true, input: false },
     dias: 40,
   });
+  if (cenario === "protocolo-antigo") pessoal.remote_version = 2;
   if (cenario === "estados") {
     casa.state = "offline";
     antigo.state = "blocked";
@@ -80,27 +81,28 @@ estado.retomadaRecusada = cenario === "windows-recusa";
 estado.bloqueioRecusa = estado.retomadaRecusada;
 estado.pausado = estado.retomadaRecusada;
 estado.telaTravada = false;
-estado.modulos = { clipboard: true, input: true };
+estado.modulos = { clipboard: true, input: cenario !== "input-desligado" };
 estado.dispositivos = dispositivosPadrao();
 
 // S7: o input existe no Linux e no Windows (clipsync_input::SUPPORTED).
 const CAPACIDADES_INPUT = true;
 
 export function features() {
+  const inputDisponivel = CAPACIDADES_INPUT && estado.modulos.input && agenteDePe();
   return {
-    input: CAPACIDADES_INPUT,
-    peer_monitors: CAPACIDADES_INPUT,
-    layout_links: CAPACIDADES_INPUT,
-    dead_corners: CAPACIDADES_INPUT,
-    screen_lock: CAPACIDADES_INPUT,
+    input: inputDisponivel,
+    peer_monitors: inputDisponivel,
+    layout_links: inputDisponivel,
+    dead_corners: inputDisponivel,
+    screen_lock: inputDisponivel,
     // A troca por atalho ou botão precisa do can_begin() do adaptador: o portal do Linux não deixa (false), o Windows deixa.
-    switch_device: CAPACIDADES_INPUT && plataforma === "windows",
-    layout_copy: CAPACIDADES_INPUT,
+    switch_device: inputDisponivel && plataforma === "windows",
+    layout_copy: inputDisponivel,
     os_notifications: true,
     // Windows com o módulo de input ligado: Win+Alt+N, L e P. No Linux não há tecla global sem o portal.
-    global_shortcuts: plataforma === "windows" && estado.modulos.input === true,
+    global_shortcuts: plataforma === "windows" && inputDisponivel,
     peer_pause: false,
-    resume_hotkey_refused: estado.retomadaRecusada === true,
+    resume_hotkey_refused: inputDisponivel && estado.retomadaRecusada === true,
     peer_controls_column: false,
     peer_rtt: false,
     peer_last_activity: false,

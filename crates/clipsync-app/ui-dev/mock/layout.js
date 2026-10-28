@@ -57,6 +57,12 @@ function layoutPadrao() {
 }
 
 const base = layoutPadrao();
+if (["sem-ligacao", "receptor"].includes(cenario)) base.links = [];
+if (cenario === "sem-monitores") {
+  base.links = [];
+  for (const d of base.devices.filter((d) => !d.is_self)) { d.monitors = []; d.monitors_source = "none"; }
+}
+if (cenario === "ligacao-remota") base.links = [{ id: "l1", a: { peer_id: PESSOAL, monitor: "DP-1", edge: "bottom", from: 0, to: 1 }, b: { peer_id: CASA, monitor: "eDP-1", edge: "top", from: 0, to: 1 }, problem: null }];
 estado.layout = {
   rev: 7,
   self_id: EU.peer_id,
@@ -337,6 +343,7 @@ registrar({
 
   input_test: async ({ peer_id, seconds = 5 } = {}) => {
     exigirInput();
+    if (estado.pausado || estado.telaTravada) throw erro("denied", "Retome e destrave a tela antes de testar.");
     if (!Number.isInteger(seconds) || seconds < 5 || seconds > 60) throw erro("bad_request", "A duração vai de 5 a 60 segundos.", { field: "seconds" });
     const d = dispositivoDe(peer_id);
     estadoDosPares();
@@ -344,7 +351,7 @@ registrar({
     const par = estado.dispositivos.find((p) => p.peer_id === peer_id);
     if (par && !par.remote_modules.input) throw erro("denied", `${d.name} não aceita controle desta máquina.`);
     await atraso(1500);
-    const received = seconds * 120;
-    return { stats: { received, lost: 0, out_of_order: 1, p50_us: 410, p95_us: 1180, max_us: 3920 } };
+    const received = cenario === "teste-zero" ? 0 : seconds * 120;
+    return { stats: { received, lost: 0, out_of_order: received ? 1 : 0, p50_us: 410, p95_us: 1180, max_us: 3920 } };
   },
 });

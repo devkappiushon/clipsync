@@ -1,0 +1,12 @@
+{
+  "event": "traversal_changed",
+  "data": {
+    "traversal": {
+      "code": "paused",
+      "detail": "O ClipSync está pausado. Retome para usar teclado e mouse entre as telas.",
+      "local_links": 1,
+      "last_block": null,
+      "peers": []
+    }
+  }
+}

@@ -33,6 +33,7 @@ registrar({
       throw erro("needs_confirmation", "Conceder controle é confiança total. Confirme para continuar.", { field: "input_in" });
     }
     dispositivo.perms = { clipboard_in: clipboardIn, clipboard_out: clipboardOut, input_in: inputIn };
+    emitir("resync", {});
     return { device: dispositivo };
   },
 

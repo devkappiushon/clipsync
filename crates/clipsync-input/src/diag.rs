@@ -1,5 +1,6 @@
 //! `diagnose()`: portal versions, RemoteDesktop devices and Input Leap / Barrier conflicts.
-use clipsync_proto::{DiagItem, DiagStatus};
+use clipsync_proto::{AgentStatus, DiagItem, DiagStatus, ModuleKind, PeerId};
+use std::path::Path;
 
 const AREA: &str = "input";
 /// Process names (`/proc/*/comm`) of tools that grab input globally.
@@ -145,6 +146,101 @@ pub async fn diagnose() -> Vec<DiagItem> {
     out
 }
 
+/// Diagnóstico somente de leitura com o estado que a CLI/UI recebeu pelo controle local.
+/// Não lê chaves nem tokens, e não instala captura para inferir sua saúde.
+pub async fn diagnose_for(
+    profile_dir: &Path,
+    self_id: Option<PeerId>,
+    status: Option<&AgentStatus>,
+) -> Vec<DiagItem> {
+    let mut items = diagnose().await;
+    let context = context_item(profile_dir, self_id, status);
+    #[cfg(windows)]
+    {
+        items.retain(|i| i.area != AREA || i.name != "atalhos");
+        items.push(item(
+            "atalhos",
+            context.status,
+            format!(
+                "{}; Win+Alt+1 a 9, Win+Alt+L e Win+Alt+P dependem da captura",
+                context.detail
+            ),
+        ));
+    }
+    items.push(context);
+    items
+}
+
+fn context_item(
+    profile_dir: &Path,
+    self_id: Option<PeerId>,
+    status: Option<&AgentStatus>,
+) -> DiagItem {
+    let name = "travessia de saída";
+    let Some(status) = status else {
+        return item(
+            name,
+            DiagStatus::Warn,
+            "não conferido: agente parado; inicie o ClipSync para consultar o estado deste perfil",
+        );
+    };
+    let Some(id) = self_id else {
+        return item(
+            name,
+            DiagStatus::Warn,
+            "não conferido: identidade desta máquina não informada pelo agente",
+        );
+    };
+    if !status
+        .modules
+        .iter()
+        .any(|m| m.kind == ModuleKind::Input && m.enabled)
+    {
+        return item(
+            name,
+            DiagStatus::Warn,
+            "inativos: módulo de input desligado",
+        );
+    }
+    if status.paused {
+        return item(
+            name,
+            DiagStatus::Warn,
+            "inativos: ClipSync pausado; retome para testar a travessia",
+        );
+    }
+    let layout = match crate::Layout::read(&profile_dir.join(crate::LAYOUT_FILE)) {
+        Ok(layout) => layout,
+        Err(_) => {
+            return item(
+                name,
+                DiagStatus::Error,
+                "não conferido: layout ilegível ou inválido",
+            );
+        }
+    };
+    let links = layout.as_ref().map_or(0, |l| {
+        l.barriers_for(id)
+            .iter()
+            .filter(|b| status.peers.iter().any(|p| p.id == b.peer))
+            .count()
+    });
+    if links == 0 {
+        return item(
+            name,
+            DiagStatus::Warn,
+            "inativos: nenhuma ligação desta máquina no layout; organize as telas no computador com o mouse físico. Uma máquina que só recebe não precisa de ligação local para receber",
+        );
+    }
+    item(
+        name,
+        DiagStatus::Warn,
+        format!(
+            "{links} ligação(ões) local(is) configurada(s); captura e permissão no destino ainda não confirmadas. Teste a travessia no computador com o mouse físico"
+        ),
+    )
+}
+
 pub(crate) fn running_conflicts() -> Vec<String> {
     let Ok(dir) = std::fs::read_dir("/proc") else {
         return Vec::new();
@@ -174,5 +270,153 @@ fn windows_layout() -> String {
             format!("{name} ({klid})")
         }
         None => "não foi possível ler o layout".to_owned(),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod context_tests {
+    use super::*;
+    use crate::layout::{Endpoint, LayoutDevice, Link};
+    use clipsync_proto::Edge;
+    use clipsync_proto::{ModuleSet, ModuleStatus, PeerPerms, PeerState, PeerStatus};
+
+    fn status() -> AgentStatus {
+        AgentStatus {
+            device_name: "origem".into(),
+            id: PeerId([1; 32]),
+            listen: "127.0.0.1:47800".parse().unwrap(),
+            paused: false,
+            peers: vec![PeerStatus {
+                name: "destino".into(),
+                id: PeerId([2; 32]),
+                addr: None,
+                state: PeerState::Connected,
+                perms: PeerPerms::default(),
+                remote_modules: ModuleSet {
+                    input: true,
+                    clipboard: false,
+                },
+                remote_version: 3,
+            }],
+            modules: vec![ModuleStatus {
+                kind: ModuleKind::Input,
+                enabled: true,
+                adapter: None,
+                authorized_peers: vec![],
+                last_event: None,
+                last_block: None,
+            }],
+            recent_blocks: vec![],
+            recent_removals: vec![],
+        }
+    }
+    fn save_link(dir: &Path, a: PeerId, b: PeerId) {
+        let ep = |peer, edge| Endpoint {
+            peer,
+            monitor: "fake-0".into(),
+            edge,
+            from: 0.0,
+            to: 1.0,
+        };
+        crate::Layout {
+            devices: [a, b]
+                .into_iter()
+                .enumerate()
+                .map(|(n, peer)| LayoutDevice {
+                    peer,
+                    name: format!("tela{n}"),
+                    x: 0,
+                    y: 0,
+                    hotkey: None,
+                })
+                .collect(),
+            links: vec![Link {
+                id: "l1".into(),
+                a: ep(a, Edge::Right),
+                b: ep(b, Edge::Left),
+            }],
+            ..crate::Layout::default()
+        }
+        .write(&dir.join(crate::LAYOUT_FILE))
+        .unwrap();
+    }
+    #[test]
+    fn missing_context_does_not_invent_an_active_capture() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = status();
+        assert!(
+            context_item(dir.path(), None, None)
+                .detail
+                .contains("agente parado")
+        );
+        assert!(
+            context_item(dir.path(), None, Some(&s))
+                .detail
+                .contains("identidade")
+        );
+        assert!(!dir.path().join(crate::LAYOUT_FILE).exists());
+    }
+    #[test]
+    fn context_distinguishes_paused_disabled_invalid_and_absent_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = status();
+        assert!(
+            context_item(dir.path(), Some(s.id), Some(&s))
+                .detail
+                .contains("nenhuma ligação")
+        );
+        s.paused = true;
+        assert!(
+            context_item(dir.path(), Some(s.id), Some(&s))
+                .detail
+                .contains("pausado")
+        );
+        s.paused = false;
+        s.modules[0].enabled = false;
+        assert!(
+            context_item(dir.path(), Some(s.id), Some(&s))
+                .detail
+                .contains("desligado")
+        );
+        s.modules[0].enabled = true;
+        std::fs::write(dir.path().join(crate::LAYOUT_FILE), "[invalid").unwrap();
+        assert_eq!(
+            context_item(dir.path(), Some(s.id), Some(&s)).status,
+            DiagStatus::Error
+        );
+    }
+    #[test]
+    fn only_trusted_local_links_count_and_configuration_is_not_hook_health() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = status();
+        for (a, b) in [(PeerId([2; 32]), PeerId([3; 32])), (s.id, PeerId([3; 32]))] {
+            save_link(dir.path(), a, b);
+            assert!(
+                context_item(dir.path(), Some(s.id), Some(&s))
+                    .detail
+                    .contains("nenhuma ligação")
+            );
+        }
+        save_link(dir.path(), s.id, s.peers[0].id);
+        let item = context_item(dir.path(), Some(s.id), Some(&s));
+        assert_eq!(item.status, DiagStatus::Warn);
+        assert!(item.detail.contains("1 ligação"));
+        assert!(item.detail.contains("não confirmadas"));
+    }
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn contextual_windows_diagnosis_has_one_shortcut_item_without_claiming_hooks_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = status();
+        save_link(dir.path(), s.id, s.peers[0].id);
+        let items = diagnose_for(dir.path(), Some(s.id), Some(&s)).await;
+        let shortcuts: Vec<_> = items
+            .iter()
+            .filter(|i| i.area == "input" && i.name == "atalhos")
+            .collect();
+        assert_eq!(shortcuts.len(), 1);
+        assert_eq!(shortcuts[0].status, DiagStatus::Warn);
+        assert!(shortcuts[0].detail.contains("não confirmadas"));
     }
 }

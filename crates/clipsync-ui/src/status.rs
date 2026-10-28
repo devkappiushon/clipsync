@@ -144,6 +144,8 @@ pub struct AppState {
     /// "linux" | "windows".
     pub platform: String,
     pub features: Features,
+    #[serde(default)]
+    pub traversal: crate::traversal::Traversal,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,6 +246,7 @@ pub(crate) async fn app_state(ctx: &Ctx) -> Result<AppState, UiError> {
     };
     let modules: Modules = cfg.as_ref().map(|c| c.modules.into()).unwrap_or_default();
     let input_live = clipsync_input::SUPPORTED && modules.input && o.input.is_some();
+    let traversal = crate::traversal::observe(ctx, &o);
     Ok(AppState {
         initialized,
         profile_dir: p.dir.display().to_string(),
@@ -258,6 +261,7 @@ pub(crate) async fn app_state(ctx: &Ctx) -> Result<AppState, UiError> {
         version: env!("CARGO_PKG_VERSION").to_string(),
         platform: platform().to_string(),
         features: Features::new(input_live, o.input.as_ref()),
+        traversal,
     })
 }
 

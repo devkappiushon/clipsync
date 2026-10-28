@@ -33,6 +33,13 @@ pub enum UiEvent {
     Resync(Resync),
     LayoutChanged(LayoutChanged),
     ScreenLockChanged(ScreenLockChanged),
+    TraversalChanged(TraversalChanged),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TraversalChanged {
+    pub traversal: crate::traversal::Traversal,
 }
 
 impl UiEvent {
@@ -200,11 +207,13 @@ pub(crate) struct Snapshot {
     inbox: Option<BTreeMap<String, ClipReceived>>,
     /// What the input module answered to `InputState`.
     input: Option<InputState>,
+    traversal: crate::traversal::Traversal,
 }
 
 impl Snapshot {
     pub(crate) async fn take(ctx: &Ctx) -> Self {
         let o = status::observe(ctx).await;
+        let traversal = crate::traversal::observe(ctx, &o);
         let paused = match &o.status {
             Some(s) => s.paused,
             None => ctx.profile.load_state().is_ok_and(|s| s.paused),
@@ -270,6 +279,7 @@ impl Snapshot {
             removals,
             inbox,
             input: o.input,
+            traversal,
         }
     }
 
@@ -308,6 +318,11 @@ impl Snapshot {
 
     fn diff(&self, now: &Snapshot, notify: Notifications) -> Vec<UiEvent> {
         let mut out = Vec::new();
+        if now.traversal != self.traversal {
+            out.push(UiEvent::TraversalChanged(TraversalChanged {
+                traversal: now.traversal.clone(),
+            }));
+        }
         if now.paused != self.paused {
             out.push(UiEvent::PauseChanged(PauseChanged { paused: now.paused }));
         }

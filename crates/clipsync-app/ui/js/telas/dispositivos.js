@@ -5,8 +5,10 @@ import { api } from "../api.js";
 import { area, aviso, cabecalho, estadoVazio, indisponivel } from "../areas.js";
 import { botao, cartao, confirmar, interruptor, tabela } from "../componentes.js";
 import { h, trocar } from "../dom.js";
-import { obterApp, recurso } from "../estado.js";
+import { indicarParNoLayout, obterApp, observarApp, recurso } from "../estado.js";
 import { INDISPONIVEL, formatarMomento, mensagemDe, seloDispositivo } from "../formatar.js";
+
+import { resumoTravessia } from "../travessia-vista.js";
 
 const EVENTOS = ["peer_connected", "peer_disconnected", "peer_blocked", "resync"];
 
@@ -36,6 +38,9 @@ export default function montar({ ir, assinar }) {
   let selecionado = null;
   let dispositivos = [];
   let painelChave = null;
+  let orientacaoInput = null;
+  const travessia = h("div");
+  const pintarTravessia = () => trocar(travessia, resumoTravessia(obterApp(), { peerId: selecionado, ir, configurar: () => { indicarParNoLayout(selecionado); ir("layout"); } }));
   const painel = h("div", { class: "dispositivos__painel" });
   // Tabela à esquerda, painel do selecionado à direita; sem dispositivo não há painel e a tabela ocupa tudo.
   const colunas = h("div", { class: "colunas dispositivos__colunas" });
@@ -56,6 +61,7 @@ export default function montar({ ir, assinar }) {
         painelChave = chave;
         pintarPainel(atual);
       }
+      pintarTravessia();
       return pintarTabela(dados);
     },
   });
@@ -94,6 +100,7 @@ export default function montar({ ir, assinar }) {
         for (const tr of grade.querySelectorAll("tbody tr")) tr.setAttribute("aria-selected", String(tr.dataset.chave === selecionado));
         painelChave = JSON.stringify(d);
         pintarPainel(d);
+        pintarTravessia();
         painel.scrollIntoView({ block: "nearest" });
       },
     });
@@ -124,6 +131,7 @@ export default function montar({ ir, assinar }) {
       try {
         const { device } = await api.deviceSetPerms({ peer_id: dispositivo.peer_id, perms, acknowledge_full_trust: confirmacao });
         dispositivo.perms = device.perms;
+        if (mudanca.input_in === true) orientacaoInput = dispositivo.peer_id;
         lista.recarregar({ silencioso: true });
       } catch (erro) {
         mostrarErro(erro);
@@ -228,7 +236,7 @@ export default function montar({ ir, assinar }) {
               { class: "kv" },
               h("dt", null, "Endereço"),
               h("dd", { class: "mono" }, dispositivo.addr ?? "sem endereço"),
-              h("dt", null, "Versão do par"),
+              h("dt", null, "Protocolo do par"),
               h("dd", { class: "mono" }, dispositivo.remote_version ?? "desconhecida"),
               h("dt", null, "Pareado em"),
               h("dd", null, formatarMomento(dispositivo.paired_at)),
@@ -238,6 +246,7 @@ export default function montar({ ir, assinar }) {
               h("dd", null, indisponivel()),
             ),
           ),
+          orientacaoInput === dispositivo.peer_id && aviso("info", h("p", null, "Controle permitido para entrar aqui. Configure a passagem no computador que tem o mouse físico."), botao({ rotulo: "Configurar passagem", aoClicar: () => { indicarParNoLayout(dispositivo.peer_id); ir("layout"); } })),
           h("h3", null, "Permissões"),
           permissoes,
           acoes,
@@ -247,6 +256,7 @@ export default function montar({ ir, assinar }) {
   }
 
   const cancelar = assinar(EVENTOS, () => lista.recarregar({ silencioso: true }));
+  const cancelarApp = observarApp(pintarTravessia);
 
   const no = h(
     "div",
@@ -256,9 +266,10 @@ export default function montar({ ir, assinar }) {
       descricao: "Quem pode enviar, quem pode receber e quem pode controlar esta máquina.",
       acoes: [botaoParear()],
     }),
+    travessia,
     colunas,
   );
   colunas.append(lista.no, painel);
 
-  return { no, desmontar: cancelar };
+  return { no, desmontar: () => { cancelar(); cancelarApp(); } };
 }

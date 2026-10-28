@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.33, Keel, 2026-10-28)
+# Contrato · ClipSync MVP de hoje (v1.34, S8, 2026-10-28)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -38,6 +38,8 @@ v1.30 (Maestro, 2026-10-28): `CaptureAdapter::begin` para a troca por atalho ou 
 v1.31 (Maestro, 2026-10-28): posse do `wincore` confirmada com o Flux; S7-02 no adaptador: `HooksLost` termina a sessão e recria o `Hooks`, e mais de 3 quedas em 10 s param a captura com bloqueio até reiniciar ou `InputReload` (§13.6, critério 3, decisão 18); `CaptureAdapter::can_begin` (Vector, 87da922), false no portal do Linux, e a troca vira dado para a interface: `InputState::switch_supported` (§13.4 item 8) e `features.switch_device` (§13.9 decisão 4), com o Rivet primeiro; critérios 2 (l), 4 e 5; decisão 19.
 v1.32 (Maestro, 2026-10-28): §13.6 registra o adaptador Windows entregue pelo Flux em c2e73bc e as escolhas dele a afinar no roteiro (tecla repetida uma vez só, volta no segundo pixel a partir da borda, só modificadores e botões na ativação, roda a 120 por 15 px, Win+Alt+P sintético), e a decisão do Maestro de não dar trait de plataforma ao trabalhador do adaptador nesta versão, com o risco registrado; decisões 20 e 21.
 v1.33 (Maestro, 2026-10-28): §13.12 passo 5 ganha a prova do reaperto do Shift na volta (I-S7-16, ressalva do Flux na reverificação do Sentinel, 520e031).
+
+v1.34 (S8, Maestro/Codex, 2026-10-28): §14 reúne as pendências de diagnóstico e usabilidade do handoff; estado de saída conservador, configuração explícita da ligação, aviso de protocolo, teste guiado e diagnóstico da CLI com contexto. Sem nova dependência nem alteração do protocolo de rede.
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -1659,3 +1661,103 @@ O usuário responde por passo ("ok" ou o que viu), e o Argus registra.
 3. A disposição das telas: confirma "borda inferior do monitor 2 do PC leva ao topo do notebook"? Onde entra o terceiro PC?
 4. Precisa ir do notebook direto ao terceiro PC, sem passar pelo PC? Fica fora da S7.
 5. Precisa controlar, de outra máquina, programas abertos como administrador no PC? O Windows bloqueia essa entrada sem elevar o ClipSync, e a S7 não eleva.
+
+
+## 14. S8 · diagnóstico e configuração da travessia (v1.34)
+
+Pedido de 2026-10-28: estudar os documentos deixados pelo Claude e realizar os itens pendentes. Escopo desta rodada: os seis itens de `docs/handoff-codex.md` §7 e a investigação da §6. Mantém a stack existente (Rust, Tauri 2, HTML/CSS/JS sem framework). A hipótese de ausência de ligação no PC não é causa confirmada: sem as saídas do Windows e a travessia observada, o defeito real continua em investigação.
+
+### 14.1 Posse e limites
+
+| Responsável da rodada | Arquivos |
+|---|---|
+| Backend | `clipsync-ui/src/{status,traversal,lib,diag,events}.rs` e testes/fixtures correspondentes; `clipsync-input/src/{diag,lib}.rs`; `clipsync-cli/src/main.rs` e testes correspondentes; `clipsync-app/src/{tray,events,msg}.rs` e testes correspondentes |
+| Frontend | `crates/clipsync-app/ui/**` e `ui-dev/**` |
+| Arquiteto | `docs/contrato.md`, `docs/workboard.md`, `CONTEXTO.md`, `docs/superpowers/plans/2026-10-28-travessia.md` |
+| Input, depois de liberação do Maestro | `clipsync-input/src/module.rs` e teste de regressão do loopback; não disputa `diag.rs`/`lib.rs` com backend |
+| Warden e segurança | Novas seções em `docs/verdicts.md` e `docs/seguranca.md`; nunca reescrevem rodadas antigas |
+| Maestro | Integração, processos, verificação visual e comandos de validação; nenhum commit, push, tag, release ou instalação nesta rodada |
+
+Os caminhos de crates na tabela são relativos a `crates/`. Não há mudança de dependência, de capability, de `Hello`, de mensagem postcard, de `PROTOCOL_VERSION = 3` ou de `MIN_PROTOCOL_VERSION = 1`. Nenhuma leitura/gravação de `.env`, `config.json`, chaves ou tokens para diagnosticar. Não executar teste de input nem aceitar permissão do sistema automaticamente.
+
+### 14.2 Estado de saída, com evidência disponível
+
+`app_state` ganha o campo tipado `traversal`, com `#[serde(default)]` para leitura dos JSON antigos. Forma:
+
+```text
+Traversal = {code, detail, local_links, last_block: string|null, peers: [TraversalPeer]}
+TraversalPeer = {peer_id, code, detail, protocol_warning: string|null}
+```
+
+`code` é enum serializado em snake_case; `detail` é português limpo, pronto para exibição. Códigos: `not_initialized`, `agent_stopped`, `input_off`, `paused`, `screen_locked`, `layout_error`, `no_local_link`, `peer_offline`, `remote_input_off`, `peer_too_old`, `checking`, `unverified`, `active`. Padrão de campo ausente: `checking`, nunca um estado de sucesso.
+
+Regras:
+
+1. Ordem das condições locais: perfil ausente; agente parado/falho; input desligado ou indisponível; pausa; trava manual; layout ilegível/inválido; nenhuma ligação desta máquina; estado do input não recebido. Só depois avaliar os pares conectados e suas configurações. Um bloqueio local vale para a saída a qualquer par, mesmo se existir uma sessão antiga anunciada.
+2. `local_links` conta apenas ligações com uma ponta desta máquina e outra de um par ainda conhecido. Ligações entre dois pares remotos, ou para identidade revogada, não resolvem a falta de saída local. É contagem de configuração, não confirmação de barreira instalada, monitor presente ou hook saudável.
+3. `no_local_link`: explicar que o mouse desta máquina não sai pelas bordas. Configurar o layout no computador que tem o mouse físico; uma máquina que só recebe não precisa de ligação local para receber.
+4. Por par: offline antes de módulo remoto desligado; protocolo 1 não suporta a travessia contínua por monitor (`peer_too_old`); ausência de ligação entre esta máquina e esse par continua `no_local_link`. Protocolo remoto ausente/desconhecido nunca é inventado.
+5. Ligação local, módulos e conexão disponíveis resultam em `unverified`: configuração encontrada, falta testar. `active` significa apenas que o agente anuncia uma sessão de saída para esse par, não prova recebimento de eventos nem travessia funcional.
+6. `screen_locked` é a trava manual do ClipSync. Não a apresentar como bloqueio da sessão do sistema. Hooks, saúde da captura, permissão atual do portal e bloqueio do SO não têm telemetria própria nesta rodada; não inferir que estão ativos/liberados pela configuração.
+7. `last_block` contém o último bloqueio histórico de input, limpo e identificado como histórico. Não o interpretar por busca em texto nem transformá-lo em falha atual. Uma falha antiga não substitui o estado local atual.
+8. `perms.input_in` permite que o par controle ESTA máquina. Não é autorização de saída e não pode bloquear a classificação de saída. Orientar a conceder a permissão na máquina de destino; nunca conceder por conta própria.
+9. Dispositivos, Layout e bandeja usam esse mesmo estado. A ação sugerida é escolhida pelo `code` (abrir Layout/Diagnóstico/Preferências, retomar, destravar ou testar), sem comando novo. O polling existente emite o novo evento local `traversal_changed {traversal}` somente quando o resumo muda, inclusive por pausa, trava, agente, pares e layout. Não é mensagem de rede. Frontend e bandeja o consomem; evento perdido provoca recarga pelo `resync` existente.
+
+### 14.3 Ligação simples por posição e estado vazio
+
+Direção nova do usuário nesta rodada: diminuir escolhas, usar a lógica simples do Input Leap; escolher borda não deve ser obrigatório. Esta instrução substitui a exigência de escolha manual de borda no caminho padrão da S7. O suporte a trechos/monitores continua disponível no modo avançado.
+
+1. Depois de parear e de conceder `input_in`, oferecer configuração da posição relativa do computador: à esquerda, à direita, acima ou abaixo. O usuário escolhe destino e posição, sem selecionar monitor ou borda na via padrão.
+2. O app deriva a ligação em bordas externas dos monitores reais, na direção escolhida e na direção oposta no destino. Prioriza o monitor alinhado ao outro computador pela distância entre o centro do monitor e o centro da caixa do outro computador, no eixo perpendicular à passagem; empates usam o extremo na direção desejada, o índice e a referência. Assim, abaixo do monitor 2 continua usando sua borda externa mesmo quando o monitor 1 é mais alto. Usa o maior trecho livre do primeiro candidato com espaço útil, excluindo bordas internas travadas, trechos ocupados e cantos mortos; se o candidato não tem espaço, tenta o seguinte. Um trecho só é útil se permanece não vazio após o corte dos cantos mortos e a conversão para f32 usada pelo agente. A prévia mostra os nomes e o efeito da ligação calculada.
+3. O botão explícito `Ligar nesta posição` usa os comandos existentes: primeiro `layout_set_device`, depois `layout_set_link` com a revisão retornada pela primeira gravação. Criação usa `id: null`; havendo uma única ligação local com esse par, atualiza seu id. Múltiplas ligações avançadas são preservadas e encaminham ao modo avançado, sem simplificação automática. Se a posição salvar e a ligação for recusada antes da gravação, como em stale_rev, mostrar claramente “posição salva; ligação não alterada”, recarregar o estado e preservar a ligação anterior. Falha ao recarregar o agente ou resposta indeterminada pode ocorrer depois da gravação do arquivo: nesses casos, informar que a posição foi salva e não foi possível confirmar a atualização da ligação, preservar a mensagem do backend e recarregar, sem repetir a escrita automaticamente nem afirmar que a ligação anterior permaneceu. Arrastar pode preencher a sugestão, mantendo confirmação; arrasto/pareamento/permissão/abertura não gravam ligações por conta própria.
+4. O perfil gravado é o local: explicar que a configuração deve ser feita no computador com o mouse físico. `input_in` local não identifica essa origem. Não conceder controle, copiar layout ou aceitar oferta automaticamente.
+5. Se não houver monitores reais conhecidos ou um trecho externo livre, mostrar o motivo e permitir o editor avançado, sem inventar monitor ou substituir ligação existente. Todas as validações/cantos mortos/stale_rev da §12.5 continuam.
+6. O editor manual de monitores/bordas/trechos fica em opção avançada. O fluxo simples funciona sem entrar nele. Sem ligação LOCAL, explicar que o mouse não sai desta tela e orientar o computador com mouse físico; ligações só entre remotos não escondem o aviso.
+
+### 14.4 Aviso de protocolo
+
+`Device.remote_version` é a versão do protocolo da conexão, não a versão do app. Trocar o rótulo ambíguo “Versão do par” por “Protocolo do par”. `protocol_warning` informa quando o protocolo conhecido é menor que 3: protocolo 2 usa a compatibilidade sem o retorno por trecho da S7; protocolo 1 não tem a configuração por monitor. Orientar atualização dos dois apps, sem atribuir `0.2.1` ou qualquer release exato ao número do protocolo. Campo ausente aparece como desconhecido.
+
+### 14.5 Teste guiado de entrada
+
+1. Reusar `input_test {peer_id, seconds: 5}`. O comando já existe; o trabalho é torná-lo descoberto no fluxo de Layout e explicar a ação. Antes do clique, orientar o usuário a empurrar a borda ligada e mover o mouse durante o teste; avisar que pode aparecer o diálogo do portal, que só ele aceita.
+2. O teste nunca começa ao entrar na tela, parear, conceder permissão ou selecionar uma sugestão. Botão assíncrono mostra andamento e impede disparo duplicado enquanto aguarda.
+3. O loopback usa captura e envio reais e pode controlar o destino. Não prova o retorno pelo trecho da S7 nem o posicionamento no monitor do `EnterSpan`: o teste atual usa `Enter`. Não apresentar p50/p95 entre máquinas como medição de latência de rede confiável, pois os relógios monotônicos dos processos não compartilham origem.
+4. `received > 0` comprova somente eventos contabilizados no teste. `received == 0`, ausência de ativação, recusa ou timeout não viram “funcionando”: mostrar resultado inconclusivo ou o motivo da falha e apontar o Diagnóstico. Perdas e fora de ordem continuam visíveis.
+5. Correção no `drive` do loopback: `CaptureEvent::SessionLocked(true)` na origem encerra o teste, devolve o cursor, envia `Leave` e `ReleaseAll` quando houver sessão e descarta o restante da fila. Nenhum evento posterior segue ao destino. A falha é a const de tela bloqueada, sem tecla nem conteúdo no log. `SessionLocked(false)` não recomeça um teste encerrado.
+
+### 14.6 CLI com contexto do perfil
+
+Mantém `clipsync_input::diagnose()`. API nova no mesmo crate, sem dependência no core:
+
+```rust
+pub async fn diagnose_for(
+    profile_dir: &std::path::Path,
+    self_id: Option<clipsync_proto::PeerId>,
+    status: Option<&clipsync_proto::AgentStatus>,
+) -> Vec<clipsync_proto::DiagItem>;
+```
+
+A CLI passa o perfil resolvido por `--profile`/ambiente/padrão, consulta `Status` pelo controle e passa identidade quando conhecida. A UI usa o mesmo helper para os itens de configuração local. Sem perfil, identidade, agente ou layout legível, a coleta de sistema continua e explica o que não pôde conferir. O diagnóstico não cria layout, abre permissão, instala hooks nem inicia captura. O item de atalhos do Windows aparece uma vez e descreve as condições encontradas, sem declarar saúde dos hooks a partir delas. Pausa e falta de ligação local precisam aparecer no diagnóstico com contexto.
+
+### 14.7 Critérios de pronto
+
+1. **Backend:** testes de `app_state.traversal` cobrem ausência de perfil/agente/input, pausa, trava, layout inválido/ausente, ligação entre remotos, identidade revogada, par offline, input remoto desligado, protocolos 1/2/3/desconhecido, InputState ausente, configuração sem prova e sessão anunciada. Com `input_in` local false, uma saída configurada não vira recusada. Bloqueio histórico não vira condição atual; strings do par seguem `clean`.
+2. **Frontend:** cenários reproduzíveis para nenhuma ligação local, receptor sem layout, protocolo antigo e teste com zero eventos. Conferir posição relativa sem seleção obrigatória de monitor/borda, derivação de trechos externos livres, editor avançado e salvamento somente no clique; `stale_rev` não apaga ligação concorrente. Sem `innerHTML`, `style=`, script inline ou travessão em texto de interface.
+3. **CLI/UI:** testes do helper cobrem layout ausente/inválido, identidade ausente, agente parado, módulo desligado, pausa e ligação local; `diagnose --profile` mantém as checagens de sistema sem agente. No Windows, exatamente um item de atalhos e nenhuma afirmação de hook ativo sem observação.
+4. **Input:** regressão com fake e MemHub prova encerramento no `SessionLocked(true)` antes e depois de ativar, liberação do que estava pressionado e nenhum evento posterior entregue. O teste deve falhar antes da correção e passar depois.
+5. **Integração:** `cargo fmt --all --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`, checagem cruzada do Windows dos crates alcançáveis e os scripts de unsafe/privacidade. Tauri e testes `cfg(windows)` só ficam verificados se rodarem no ambiente correspondente; falta de headers/runner é registrada, não convertida em aprovação.
+6. **Revisão:** warden por critério e segurança da nova superfície de diagnóstico/configuração e do encerramento do teste. Novas seções em `docs/verdicts.md`/`docs/seguranca.md`, sem reescrever o histórico.
+7. **Manual, pendente do usuário:** saídas de versão/status/diagnose e ligação no PC Windows; atualização instalada no notebook; roteiro §13.12; instaladores numa máquina Windows real e as perguntas §13.14. Código e simulador aprovados não fecham esta prova.
+
+### 14.8 Reconciliação do histórico e pendências fora desta rodada
+
+S6 e releases 0.2.x já concluídos; `CONTEXTO.md` automático de 07:54 é anterior à S7. O S7-08 tem correção em `b683c56`, com guarda de parada antes de recriar hooks e remoção depois do join; não reimplementar como se estivesse aberto. Os critérios 1 a 7 da S7 são registrados como aprovados no handoff/vereditos; o critério 8 é manual e continua pendente. A conferência desta rodada ainda não substitui a revisão histórica por uma afirmação de execução real.
+
+Continuam fora deste recorte: decisão de licença e recópia; segurança antiga S1/S5 ainda aberta; cofre de segredos/ACL; centralização de `write_private`; novos sistemas/terceiro PC; localização completa do clap; mudanças de CI/release e publicação. Permanecem no workboard, sem serem marcadas como resolvidas.
+
+### 14.9 Preparação do release v0.3.1
+
+Pedido posterior do usuário: “faça o commit, quero testar no release, instalando a nova versão”. Autoriza commitar a S8 e preparar os pacotes. Versão do workspace e dos oito pacotes locais passa a 0.3.1, sem atualizar dependências. O Maestro possui Cargo.toml/Cargo.lock, README, notas e workflow de release nesta etapa. A restrição de não commitar da implementação inicial não se aplica a este novo pedido.
+
+As notas ficam em `docs/releases/v0.3.1.md`; o job de publicação faz checkout da tag sem persistir credenciais e lê `docs/releases/${TAG}.md`. O job de publicação exige evento push de tag v*; workflow_dispatch nunca publica, mesmo quando aponta para uma tag. Antes da publicação: suíte local, CI Linux/Windows no commit e empacotamento manual do mesmo commit. O push da tag v0.3.1 mantém a confirmação prevista em AGENTS.md. A instalação .deb exige o usuário; esta etapa não altera perfil nem aprova diálogo do sistema.
