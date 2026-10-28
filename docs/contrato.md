@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.26, Keel, 2026-10-28)
+# Contrato · ClipSync MVP de hoje (v1.27, Keel, 2026-10-28)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -31,6 +31,7 @@ v1.23 (decisão do Maestro, 2026-10-28, a partir do 13255e3 do Rivet e da falha 
 v1.24 (decisão do Maestro, 2026-10-28, a partir do d7a4d79 do Rivet): §5 regra 3i e §12.5 tela 3. Cancelar em `listening` ou `connecting` solta o endpoint e a porta de pareamento e fecha a conexão com PairFailed nos dois lados, por guardas no drop.
 v1.25 (pedido do Maestro, 2026-10-28): §13 nova, S7 · layout de telas de verdade. Input no Windows (hooks e SendInput) num crate próprio, `clipsync-win`, com `unsafe` só no `ffi.rs`, pendente da revisão do Sentinel; teclado pela posição física; proto v3 (`EnterSpan`, `Returned`, `Refused`, `ModuleHost::request_pause`); `Zones` em tempo real; release v0.3.0.
 v1.26 (Sentinel 7cd67a3 e decisão do Maestro, 2026-10-28): §13.3 item 7 com as condições C1 a C4 (C1 feito pelo Maestro em 2bd35a9); §13.2 regra 2 com R2 a R5 (o hook cai a cada mudança, estado de teclado de tamanho fixo, canal limitado a 8 000, redação provada por teste); R1: pausar tira os hooks e retomar com Win+Alt+P usa o `RegisterHotKey` (§13.2 regra 2g, `set_paused` no trait, `ResumeHotkey` no `clipsync-win`); §13.1: `diag.rs` e `prefs.rs` do `clipsync-ui` voltam ao Rivet, e o `autostart.rs` segue com o Flux.
+v1.27 (decisões do Flux em 40070d3, registradas a pedido do Maestro): §13.7 item 2 (`VK_SNAPSHOT` pelo VK, 0x54 e 0x55 descartados, bloco principal 0x01..=0x53 e 0x56..=0x58 mais 0x73 e 0x7E); §13.6 adaptador Windows (`normalize_abs` com teto, `barrier_crossing` no último pixel, `HotkeyTracker` com a tecla neutra `VK 0xE8`); §13.12 passos 2 e 3 com pontos de atenção; §13.13 decisão 10. Também (decisões do Maestro): §13.5 com `Notice::HooksLost`, `ResumeHotkey::register` e o laço de 500 ms do `DesktopSwitched`, e a dep `windows` com as features só na raiz (decisão 11); §13.9 com `keyboard_layout` no `InputState` e os atalhos "ativos" só com hook (decisão 12).
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -1347,7 +1348,7 @@ Limite técnico, provado pelo Keel com o rustc do projeto: `#[allow(unsafe_code)
 **Recomendação: (b).** Critério: a menor superfície de `unsafe` que cobre o requisito inteiro, com licença compatível e mantida por quem mantém a API do sistema. A opção (a) não cobre o requisito (nenhum crate bloqueia tudo e emula certo no desktop virtual), traz de 28 a 263 blocos `unsafe` de terceiros pouco mantidos e ainda não dispensa `unsafe` nosso.
 
 Como fica:
-1. Crate novo `crates/clipsync-win` (Flux). Os tipos compilam em todo sistema; as funções ficam em `cfg(windows)`. A dep `windows =0.62.2` só em `[target.'cfg(windows)'.dependencies]`, com exatamente estas features: `Win32_Foundation`, `Win32_UI_WindowsAndMessaging`, `Win32_UI_Input_KeyboardAndMouse`, `Win32_Graphics_Gdi`, `Win32_Devices_Display`, `Win32_UI_HiDpi`, `Win32_System_StationsAndDesktops`, `Win32_System_RemoteDesktop`, `Win32_System_Threading` e `Win32_System_LibraryLoader`. Feature nova é mudança de contrato.
+1. Crate novo `crates/clipsync-win` (Flux). Os tipos compilam em todo sistema; as funções ficam em `cfg(windows)`. A dep `windows =0.62.2` fica declarada com as features só no `Cargo.toml` raiz (7040a2f, v1.27), e o `clipsync-win` a usa com `workspace = true` em `[target.'cfg(windows)'.dependencies]`. Features, exatamente estas: `Win32_Foundation`, `Win32_UI_WindowsAndMessaging`, `Win32_UI_Input_KeyboardAndMouse`, `Win32_Graphics_Gdi`, `Win32_Devices_Display`, `Win32_UI_HiDpi`, `Win32_System_StationsAndDesktops`, `Win32_System_RemoteDesktop`, `Win32_System_Threading` e `Win32_System_LibraryLoader`. Feature nova é mudança de contrato.
 2. Lints próprios, sem `workspace = true`: `[lints.rust] unsafe_code = "deny"` e `unsafe_op_in_unsafe_fn = "deny"`; `[lints.clippy]` com as seis do workspace mais `undocumented_unsafe_blocks = "deny"` e `multiple_unsafe_ops_per_block = "deny"`.
 3. `unsafe` só em `crates/clipsync-win/src/ffi.rs`, que tem o único `#![allow(unsafe_code)]` do repositório. Um bloco por chamada, cada um com `// SAFETY:` dizendo por que os ponteiros e handles valem. O resto do crate não tem `unsafe` e expõe só a API segura da §13.5.
 4. Toda decisão (cruzamento, tradução, coordenadas, atalhos, o que bloquear) fica no `clipsync-input`, sob `forbid`. O `clipsync-win` só chama o sistema e converte tipos.
@@ -1356,11 +1357,11 @@ Como fica:
 7. **Condições do Sentinel (v1.26):**
    - **C1, conferência do isolamento (Maestro, feita em 2bd35a9).** O `scripts/conferir-unsafe.sh` roda no CI dos dois sistemas e falha com: `unsafe_code` em qualquer linha `.rs` fora do `ffi.rs` (allow, expect, várias linhas); a palavra `unsafe` no código fora do `ffi.rs` (comentário `//` não conta); crate de `crates/` sem `[lints]` com `workspace = true`, menos o `clipsync-win`; `ffi.rs` sem o `#![allow(unsafe_code)]` ou com mais de uma linha `unsafe_code`; `pub unsafe fn` no `ffi.rs`. Fica de fora uma parte do pedido do Sentinel: conferir que o `Cargo.toml` do `clipsync-win` mantém `unsafe_code = "deny"`, `undocumented_unsafe_blocks` e `multiple_unsafe_ops_per_block`. Hoje os três estão lá (conferido pelo Keel), mas nada no CI impede tirar.
    - **C2, o `ffi.rs` não exporta `unsafe`.** `mod ffi;` privado. Toda função de lá é segura e fecha a invariante dentro do bloco: nenhum `pub unsafe fn` nem `pub(crate) unsafe fn`. Cada `// SAFETY:` diz por que ponteiro, tamanho de buffer e handle valem, e não só repete a chamada.
-   - **C3, estado dos callbacks sem ponteiro cru.** O `Box<dyn FnMut>` dos callbacks mora num `thread_local!` (`RefCell` ou `Cell`), na thread dos hooks, que é a do laço de mensagens. Proibidos `static mut`, `Box::into_raw` e `GWLP_USERDATA` com ponteiro cru. Reentrada: `try_borrow_mut`; se falhar, "passa". Cada `extern "system"` roda dentro de `catch_unwind`: pânico devolve "passa", marca o hook como morto e manda `Notice::HookDied`, que encerra a sessão (§13.5). Pânico que cruza o limite C aborta o processo.
+   - **C3, estado dos callbacks sem ponteiro cru.** O `Box<dyn FnMut>` dos callbacks mora num `thread_local!` (`RefCell` ou `Cell`), na thread dos hooks, que é a do laço de mensagens. Proibidos `static mut`, `Box::into_raw` e `GWLP_USERDATA` com ponteiro cru. Reentrada: `try_borrow_mut`; se falhar, "passa". Cada `extern "system"` roda dentro de `catch_unwind`: pânico devolve "passa", marca o hook como morto e manda `Notice::HooksLost`, que encerra a sessão (§13.5, v1.27). Pânico que cruza o limite C aborta o processo.
    - **C4, handles com RAII.** `HHOOK`, `HWND`, `HDESK` e o registro do WTS fecham no `Drop`; o `input_desktop_is_default`, chamado antes de cada lote do `WinEmulate`, fecha o `HDESK` que abre. Teste no CI Windows: 10 000 chamadas sem o `process_handle_count()` subir.
    - **Cargo.lock (Maestro, §13.10).** Ao entrar o membro novo, o diff do `Cargo.lock` mostra só o pacote `clipsync-win` e as dependências dele; nenhuma versão muda e nenhum pacote externo aparece. Builds com `--locked`.
 
-   Os informativos I-S7-1 a I-S7-5 estão em `docs/seguranca.md`. Dois viram regra aqui: o teste de injetado cobre `LLKHF_INJECTED` e `LLKHF_LOWER_IL_INJECTED` (I-S7-1); e, com captura ativa, a thread dos hooks confere a cada 1 s se o `GetCursorPos` ainda é o ponto estacionado e, se não for, encerra a captura, porque o hook pode ter sido removido em silêncio (I-S7-3). Na ativação, o conjunto de teclas é reconciliado com `GetAsyncKeyState`.
+   Os informativos I-S7-1 a I-S7-5 estão em `docs/seguranca.md`. Dois viram regra aqui: o teste de injetado cobre `LLKHF_INJECTED` e `LLKHF_LOWER_IL_INJECTED` (I-S7-1); e, com captura ativa, a thread dos hooks confere a cada 1 s se o `GetCursorPos` ainda é o ponto estacionado e, se não for, manda `Notice::HooksLost`, que encerra a captura, porque o hook pode ter sido removido em silêncio (I-S7-3). Na ativação, o conjunto de teclas é reconciliado com `GetAsyncKeyState`.
 
 ### 13.4 Proto v3 (Rivet)
 `PROTOCOL_VERSION = 3`, `MIN_PROTOCOL_VERSION = 1`. Variantes novas no fim do `InputMsg`:
@@ -1392,7 +1393,7 @@ pub enum RawEvent {
     Key { vk: u32, scan: u32, extended: bool, up: bool },  // KBDLLHOOKSTRUCT
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum Verdict { Pass, Block }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum Notice { DisplayChanged, SessionLocked, SessionUnlocked, DesktopSwitched, HookDied, ResumeHotkey }   // HookDied: C3; ResumeHotkey: o RegisterHotKey da pausa (§13.2 regra 2g)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum Notice { DisplayChanged, SessionLocked, SessionUnlocked, DesktopSwitched, HooksLost }   // v1.27: HooksLost no lugar do HookDied; sem ResumeHotkey aqui
 #[derive(Debug, Clone, PartialEq)]
 pub struct Monitor { pub friendly: String, pub device: String, pub path: String, pub x: i32, pub y: i32, pub width: u32, pub height: u32, pub dpi: u32, pub primary: bool }
 pub enum Synth { MoveAbs { nx: i32, ny: i32 }, Button { button: WinButton, down: bool }, Wheel { delta: i32, horizontal: bool }, Key { key: WinKey, up: bool } }
@@ -1403,9 +1404,14 @@ pub enum Synth { MoveAbs { nx: i32, ny: i32 }, Button { button: WinButton, down:
     /// Thread própria com janela oculta de nível superior (janela só de mensagem não recebe o
     /// broadcast de WM_DISPLAYCHANGE), WTSRegisterSessionNotification, os hooks WH_MOUSE_LL e
     /// WH_KEYBOARD_LL e o laço de mensagens. `on_input` roda dentro do callback (§13.2 regra 2f).
+    /// v1.27: um WM_TIMER de 500 ms confere `input_desktop_is_default()` e manda `DesktopSwitched`
+    /// quando o valor muda, porque o Windows não avisa a troca de área de trabalho (o UAC não gera
+    /// mensagem). `HooksLost`: pânico num callback (C3) ou o relógio do I-S7-3 (cursor fora do ponto
+    /// estacionado com captura ativa); o callback devolve "passa", o hook fica marcado como morto, e
+    /// o aviso sai uma vez.
     pub fn start(on_input: Box<dyn FnMut(&RawEvent) -> Verdict + Send>, on_notice: Box<dyn FnMut(Notice) + Send>) -> Result<Hooks, WinError>;
 }
-#[cfg(windows)] pub struct Watcher;   // igual ao Hooks, sem hook: só Notice (máquina que só recebe)
+#[cfg(windows)] pub struct Watcher;   // igual ao Hooks, sem hook: só Notice (máquina que só recebe), com o mesmo laço de 500 ms
 #[cfg(windows)] impl Watcher { pub fn start(on_notice: Box<dyn FnMut(Notice) + Send>) -> Result<Watcher, WinError>; }
 #[cfg(windows)] pub fn monitors() -> Result<Vec<Monitor>, WinError>;   // EnumDisplayMonitors, GetMonitorInfoW, GetDpiForMonitor, QueryDisplayConfig
 #[cfg(windows)] pub fn virtual_screen() -> (i32, i32, i32, i32);      // SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN
@@ -1415,8 +1421,8 @@ pub enum Synth { MoveAbs { nx: i32, ny: i32 }, Button { button: WinButton, down:
 #[cfg(windows)] pub struct CursorPark; // enquanto vive: cursor estacionado em (x, y) e escondido (janela própria sob o ponto com cursor vazio)
 #[cfg(windows)] impl CursorPark { pub fn new(x: i32, y: i32) -> Result<CursorPark, WinError>; }
 #[cfg(windows)] pub fn keyboard_layout() -> Option<String>;           // KLID do GetKeyboardLayoutNameW, só para diagnóstico
-#[cfg(windows)] pub struct ResumeHotkey; // v1.26: enquanto vive, Win+Alt+P registrado no RegisterHotKey da janela oculta; Drop tira o registro
-#[cfg(windows)] impl ResumeHotkey { pub fn new(watcher: &Watcher) -> Result<ResumeHotkey, WinError>; }   // Err = o Windows recusou a combinação
+#[cfg(windows)] pub struct ResumeHotkey; // v1.27: thread própria com RegisterHotKey(Win+Alt+P) enquanto o módulo está pausado; Drop faz UnregisterHotKey
+#[cfg(windows)] impl ResumeHotkey { pub fn register(on_press: Box<dyn FnMut() + Send>) -> Result<ResumeHotkey, WinError>; }   // Err = o Windows recusou: retomada só pela bandeja (I-S7-2)
 #[cfg(windows)] pub fn async_key_down(vk: u16) -> bool;               // GetAsyncKeyState, só para reconciliar na ativação (I-S7-3)
 #[cfg(windows)] pub fn process_handle_count() -> Result<u32, WinError>;   // GetProcessHandleCount, só para o teste do C4
 ```
@@ -1447,6 +1453,10 @@ pub trait EmulateAdapter {   /* o de hoje, mais: */
     async fn enter(&mut self, zone: &Zone, zones: &[Zone], edge: Edge, pos: f32) -> Result<(), InputError> { self.emit(&entry_events_at(edge, pos, zone, zones)).await }
     /// Posição real do cursor, quando a plataforma diz (Windows). Portal: None.
     fn cursor(&self) -> Option<(i32, i32)> { None }
+    /// v1.27 (Keel, para fechar a §13.9 decisão 1): o layout do teclado desta máquina, quando
+    /// conhecido. Portal: o `xkb_symbols` que o EIS anuncia; Windows: o KLID. O módulo copia para o
+    /// `InputState.keyboard_layout`.
+    fn keyboard_layout(&self) -> Option<String> { None }
 }
 impl FakeCaptureHandle { pub fn hotkey(&self, h: Hotkey); pub fn set_zones(&self, z: Vec<Zone>); pub fn session_locked(&self, on: bool); pub fn barriers(&self) -> Vec<BarrierSpec>; }
 impl FakeEmulateHandle { pub fn set_locked(&self, on: bool); pub fn events(&self) -> Vec<InputEvent>; }
@@ -1469,13 +1479,13 @@ No `build`, `auto` vira o portal no Linux e o Windows no Windows. `AdapterChoice
 **Adaptador Windows (Flux, `src/adapter/win/`):**
 1. `WinCapture` (nome `"win-hooks"`):
    - `zones()` e `known_zones()` vêm de `monitors()`, sem diálogo; o nome de cada zona sai do `winmath`;
-   - `start` sobe o `Hooks`. A barreira é o segmento da §8 regra 7 sobre a zona. Ativa quando o cursor está no último pixel do segmento e o evento empurra para fora, ou quando o ponto novo cruza a linha do segmento (borda entre dois monitores locais). O evento que ativa é bloqueado;
+   - `start` sobe o `Hooks`. A barreira é o segmento da §8 regra 7 sobre a zona. Ativa quando o cursor está no último pixel do segmento e o evento empurra para fora, ou quando o ponto novo cruza a linha do segmento (borda entre dois monitores locais). O evento que ativa é bloqueado. v1.27 (Flux, 40070d3): chegar ou ficar no último pixel do trecho já conta como empurrão, porque o hook pode cortar o ponto na borda do desktop; com isso, andar junto à borda pode ativar (a afinar no roteiro, §13.12 passo 2);
    - durante a captura ativa: `CursorPark` no centro do monitor da barreira; delta = ponto do hook menos o ponto estacionado, em px lógicos pela escala desse monitor; roda vira `ScrollDiscrete` com `dy = -delta` no vertical e `dx = delta` no horizontal;
    - na ativação, solta localmente (`send` de soltar, que volta marcado como injetado e o hook ignora) tudo o que estava pressionado, e emite o pressionar dos seguros (item 4 do módulo). Na volta, pressiona de novo localmente o que ainda está fisicamente seguro;
    - `release_at` desfaz o `CursorPark` e põe o cursor na barreira, um pixel para dentro;
    - teclas por `keymap::from_windows`; atalhos Win+Alt+1 a 9, Win+Alt+L e Win+Alt+P, com ou sem captura ativa: as teclas do atalho são engolidas, e um toque de tecla neutra evita que o Win solto abra o menu Iniciar. Win+Alt+C e Win+Alt+V ficam "indisponível nesta versão";
-   - `Notice::DisplayChanged` vira `ZonesChanged`; `SessionLocked`, `SessionUnlocked` e `DesktopSwitched` viram `SessionLocked(bool)` (`input_desktop_is_default()` decide o valor depois de `DesktopSwitched`); `HookDied` encerra a sessão como `Deactivated` e avisa como bloqueio (v1.26, C3);
-   - `set_paused(true)` derruba o `Hooks` e sobe um `Watcher` com `ResumeHotkey`; `Notice::ResumeHotkey` vira `Hotkey(TogglePause)`. `set_paused(false)` derruba o `ResumeHotkey` e reinstala o `Hooks` se a regra 2a da §13.2 ainda valer. Se o `ResumeHotkey::new` falhar, o adaptador avisa como bloqueio com o texto da §13.2 regra 2g (v1.26).
+   - `Notice::DisplayChanged` vira `ZonesChanged`; `SessionLocked`, `SessionUnlocked` e `DesktopSwitched` viram `SessionLocked(bool)` (`input_desktop_is_default()` decide o valor depois de `DesktopSwitched`); `HooksLost` vira `SessionLocked(true)` mais `Error`, o que encerra a sessão (v1.27, C3 e I-S7-3);
+   - `set_paused(true)` derruba o `Hooks` e chama `ResumeHotkey::register` com um `on_press` que vira `Hotkey(TogglePause)`. `set_paused(false)` derruba o `ResumeHotkey` e reinstala o `Hooks` se a regra 2a da §13.2 ainda valer. Se o `register` falhar, a retomada fica só pela bandeja e pelo botão Pausar tudo, e o adaptador avisa como bloqueio com o texto da §13.2 regra 2g (v1.27).
 2. `WinEmulate` (nome `"win-sendinput"`):
    - `start` sobe o `Watcher`;
    - antes de cada lote, `input_desktop_is_default()` e a sessão desbloqueada; senão `Err(InputError::Locked)`, sem injetar nada;
@@ -1486,6 +1496,11 @@ No `build`, `auto` vira o portal no Linux e o Windows no Windows. `AdapterChoice
 3. `adapter::win::self_test()`, chamado pelo `self_test.rs` do Vector: sobe e desce os hooks, lê os monitores e confere a área de trabalho. Dá `Experimental("captura e emulação do Windows prontas, ainda sem prova nesta máquina")` até a matriz registrar o roteiro, ou `Unavailable(motivo)`.
 4. `winmath.rs` (puro, todo sistema): nome estável da zona (o nome amigável do `QueryDisplayConfig`; vazio, o `device` sem `\\.\`; repetido ganha " 2", " 3" na ordem do `path`; corte em 64 bytes na fronteira de caractere); zonas a partir dos monitores; cruzamento de barreira; normalização do `MoveAbs`; px físicos para lógicos por DPI; reconhecimento dos atalhos a partir da sequência de teclas.
 
+   Decisões do Flux em 40070d3 (v1.27), além do texto acima:
+   - `normalize_abs`: `n = ceil(pixel * 65536 / largura)`, com o pixel preso ao desktop virtual e `n` no máximo 65535. Supõe que o Windows leva `n` ao pixel `floor(n * largura / 65536)`. Pode errar 1 px, a conferir no roteiro (§13.12 passo 3);
+   - `barrier_crossing`: chegar ou ficar no último pixel do trecho conta como empurrão (ver `WinCapture` acima; a afinar no roteiro, §13.12 passo 2);
+   - `HotkeyTracker` trabalha em código evdev e diz, a cada tecla, `swallow` (engolir), `shortcut` (o atalho reconhecido) e `neutral_tap` (tocar a tecla neutra antes de soltar). A tecla neutra é `VK 0xE8` (`NEUTRAL_KEY`); um toque cobre o Win e o Alt, então nem o menu Iniciar nem o menu do Alt abrem. O estado é `Copy`, de tamanho fixo e sem alocação (R3).
+
 ### 13.7 Teclado entre plataformas
 1. **Decisão: o fio leva a posição física da tecla** (código evdev, como no §4), e quem recebe aplica o próprio layout. Dead keys, AltGr e ç são do layout do destino, então o destino precisa estar configurado com o layout do teclado físico da origem (§13.14). Motivo: o libei não aceita keymap do cliente (o keymap vai do EIS ao cliente), e o `SendInput` por scan code também usa o layout do Windows de destino. Isso corrige o prompt mestre §2.3 item 7, que supunha mandar o keymap da origem. Traduzir caractere por caractere não cabe nesta versão.
 2. `keymap.rs` (Flux, puro, testado nos dois CIs):
@@ -1495,10 +1510,10 @@ No `build`, `auto` vira o portal no Linux e o Windows no Windows. `AdapterChoice
    pub fn button_from_windows(b: clipsync_win::WinButton) -> u32;
    pub fn button_to_windows(code: u32) -> Option<clipsync_win::WinButton>;
    ```
-   - bloco principal: scan code do set 1 sem E0 é igual ao código evdev (de 0x01 `KEY_ESC` a 0x58 `KEY_F12`), menos o que segue;
+   - bloco principal (v1.27, Flux 40070d3): sem E0, aceita 0x01..=0x53 e 0x56..=0x58, iguais ao código evdev (de 0x01 `KEY_ESC` a 0x58 `KEY_F12`), mais 0x73 e 0x7E (ABNT2, abaixo). Sem VK que os explique, 0x54 e 0x55 são descartados: o 0x54 é o Alt+PrintScreen, que entra pelo VK, e o 0x55 não tem tecla nesses teclados;
    - com E0: 0x1C `KEY_KPENTER` (96), 0x1D `KEY_RIGHTCTRL` (97), 0x35 `KEY_KPSLASH` (98), 0x37 `KEY_SYSRQ` (99), 0x38 `KEY_RIGHTALT` (100, AltGr), 0x47 `KEY_HOME` (102), 0x48 `KEY_UP` (103), 0x49 `KEY_PAGEUP` (104), 0x4B `KEY_LEFT` (105), 0x4D `KEY_RIGHT` (106), 0x4F `KEY_END` (107), 0x50 `KEY_DOWN` (108), 0x51 `KEY_PAGEDOWN` (109), 0x52 `KEY_INSERT` (110), 0x53 `KEY_DELETE` (111), 0x5B `KEY_LEFTMETA` (125), 0x5C `KEY_RIGHTMETA` (126), 0x5D `KEY_COMPOSE` (127);
    - ABNT2: 0x73 `KEY_RO` (89, "/ ?"), 0x7E `KEY_KPCOMMA` (121, o "." extra do teclado numérico), 0x56 `KEY_102ND` (86, "\ |");
-   - por VK, nos dois sentidos: `VK_PAUSE` com `KEY_PAUSE` (119), `VK_NUMLOCK` com `KEY_NUMLOCK` (69); na emulação, `KEY_SYSRQ` sai como `VK_SNAPSHOT`;
+   - por VK, nos dois sentidos: `VK_PAUSE` com `KEY_PAUSE` (119), `VK_NUMLOCK` com `KEY_NUMLOCK` (69) e, desde a v1.27 (Flux 40070d3), `VK_SNAPSHOT` com `KEY_SYSRQ` (99). Na captura, o `VK_SNAPSHOT` é lido pelo VK, porque o Alt+PrintScreen chega com scan 0x54, que não tem evdev; na emulação, `KEY_SYSRQ` sai como `VK_SNAPSHOT`;
    - descartado: scan code com o bit 0x200 (o LCtrl falso que o Windows gera com o AltGr, 0x21D, e os Shift falsos);
    - botões: `BTN_LEFT` 0x110, `BTN_RIGHT` 0x111, `BTN_MIDDLE` 0x112, `BTN_SIDE` 0x113 (X1, voltar), `BTN_EXTRA` 0x114 (X2, avançar).
 
@@ -1516,6 +1531,10 @@ No `build`, `auto` vira o portal no Linux e o Windows no Windows. `AdapterChoice
 - **Vector (`clipsync-ui/src/layout.rs`):** a tela 4 no Windows lista os monitores reais pelo `known_zones()`; `tests/layout_windows.rs` reescrito para input ligado com adaptadores falsos; `input_off` só com o módulo desligado.
 - **Flux (cli):** `INPUT_SUPPORTED` dá lugar a `clipsync_input::SUPPORTED`; `clipsync init` oferece input no Windows; `probe input --capture` e `--emulate` passam a existir no Windows (o probe é do Vector).
 - **Pixel:** a tela 4 mostra os monitores do Windows com nome e escala quando for diferente de 100%; onboarding e Dispositivos sem "indisponível" no input quando `features` disser; Preferências mostram os atalhos como texto fixo, "ativos nesta máquina" no Windows e "indisponível nesta versão" no Linux; as mensagens de recusa aparecem como bloqueio; o mock ganha `?cenario=windows` (2 monitores, um com escala 1,5).
+
+Decisões do Maestro (v1.27), a pedido do Rivet:
+1. **Layout do teclado.** Campo novo `keyboard_layout: Option<String>` no fim do `InputState` (proto, Rivet), com `#[serde(default)]`. Quem preenche é o módulo (Vector): no Linux, o `portal.rs` com o nome do `xkb_symbols` que o EIS anuncia; no Windows, o `WinEmulate` com o KLID de `clipsync_win::keyboard_layout()`. Os dois entregam pelo `EmulateAdapter::keyboard_layout()` (§13.6). O `diag.rs` (Rivet) mostra a partir do `InputState`; com `None`, mostra "agente parado" ou "ainda não anunciado".
+2. **Atalhos ativos no Windows.** O diagnóstico diz "ativos" com o agente rodando, o input ligado e pelo menos uma ligação local no `layout.toml`, que é quando o hook existe (§13.2 regra 2a). Senão, diz "inativos" com o motivo. O `features.global_shortcuts` segue o que está acima: Windows com input ligado.
 
 ### 13.10 Deps, CI e release (Maestro)
 1. Deps aprovadas pelo Keel, fixadas com `=`: `windows =0.62.2` (só no `clipsync-win`, só `cfg(windows)`, features da §13.3 item 1) e `zbus =5.19.0` (só no `clipsync-input`, só Linux, `default-features = false`, feature `tokio`). As duas já estão no `Cargo.lock`, e nenhuma versão pode mudar lá.
@@ -1545,8 +1564,8 @@ No `build`, `auto` vira o portal no Linux e o Windows no Windows. `AdapterChoice
 Antes: parar o Input Leap nos dois (servidor no PC, cliente Flatpak no notebook); instalar o v0.3.0 nos dois; PC e notebook pareados; no notebook, em Dispositivos, ligar "pode controlar este dispositivo" para o PC (e no PC para o notebook, para o passo 8); no PC, na tela Layout, ligar a borda inferior do monitor 2 ao topo do `eDP-1`, com o atalho 1 no PC e o 2 no notebook, e copiar o layout para o notebook.
 
 1. Abrir Layout no PC. Deve ver: os 2 monitores do PC com nome e o `eDP-1` do notebook.
-2. Levar o mouse à borda inferior do monitor 2; depois à do monitor 1 e aos cantos. Deve ver: o cursor some do PC e aparece no topo do notebook, na posição proporcional; no monitor 1 e nos cantos, nada.
-3. No notebook, empurrar as bordas esquerda, direita e de baixo; depois subir pela de cima. Deve ver: nas três, nada; pela de cima, o cursor volta ao monitor 2 no ponto correspondente.
+2. Levar o mouse à borda inferior do monitor 2; depois à do monitor 1 e aos cantos. Deve ver: o cursor some do PC e aparece no topo do notebook, na posição proporcional; no monitor 1 e nos cantos, nada. Ponto de atenção (v1.27): andar com o mouse rente à borda inferior do monitor 2, sem empurrar para baixo, pode trocar de máquina; anotar se acontece.
+3. No notebook, empurrar as bordas esquerda, direita e de baixo; depois subir pela de cima. Deve ver: nas três, nada; pela de cima, o cursor volta ao monitor 2 no ponto correspondente. Ponto de atenção (v1.27): anotar se o cursor volta 1 px fora do ponto esperado.
 4. No notebook, num editor, digitar a frase da P4b (§13.7 item 4) e rolar a roda. Deve ver: o texto igual; a página rolando no sentido certo.
 5. Segurar Shift no PC, cruzar e digitar uma letra; soltar, voltar e digitar no PC. Depois apertar o botão perto da borda, cruzar segurando e soltar no notebook. Deve ver: maiúscula no notebook e minúscula no PC; a seleção começa na entrada do notebook, e nada fica preso no PC.
 6. Win+Alt+2, Win+Alt+1, Win+Alt+L duas vezes, Win+Alt+P; para retomar, Win+Alt+P de novo, ou, se o app avisou que o Windows não liberou Win+Alt+P, a bandeja ou o botão Pausar tudo (v1.26). Deve ver: vai ao notebook e volta; as bordas param e voltam a trocar; pausa (a bandeja mostra Retomar) e retoma; o menu Iniciar não abre.
@@ -1565,7 +1584,10 @@ O usuário responde por passo ("ok" ou o que viu), e o Argus registra.
 6. Keel: atalhos fixos e só no Windows nesta versão (Win+Alt+1 a 9, L e P).
 7. Maestro: proto v3 com o Rivet; release v0.3.0.
 8. Sentinel (v1.26, 7cd67a3): a §13.3 (b) e a §13.2 regra 2 aprovadas com as condições C1 a C4 e R2 a R5, escritas na §13.3 item 7 e na §13.2 regra 2. O C1 foi feito pelo Maestro (2bd35a9).
-9. Maestro (v1.26), sobre o R1 do Sentinel: pausar remove os hooks, e a §13.2 regra 2g vale. Win+Alt+P só pausa, pelo hook; retomar com Win+Alt+P usa o `RegisterHotKey` enquanto estiver pausado, e o registro sai ao retomar. Se o Windows recusar a combinação, a retomada fica pela bandeja e pelo botão Pausar tudo, e o roteiro §13.12 passo 6 diz isso. Keel: o trait ganha `set_paused` (§13.6) e o `clipsync-win` ganha `ResumeHotkey` e `Notice::ResumeHotkey` (§13.5).
+9. Maestro (v1.26), sobre o R1 do Sentinel: pausar remove os hooks, e a §13.2 regra 2g vale. Win+Alt+P só pausa, pelo hook; retomar com Win+Alt+P usa o `RegisterHotKey` enquanto estiver pausado, e o registro sai ao retomar. Se o Windows recusar a combinação, a retomada fica pela bandeja e pelo botão Pausar tudo, e o roteiro §13.12 passo 6 diz isso. Keel: o trait ganha `set_paused` (§13.6) e o `clipsync-win` ganha `ResumeHotkey` (§13.5; na v1.27, `ResumeHotkey::register` com thread própria, no lugar do `Notice::ResumeHotkey`).
+10. Flux (v1.27, 40070d3), aceitas pelo Maestro: `VK_SNAPSHOT` entra pelo VK; 0x54 e 0x55 sem VK são descartados; o bloco principal é 0x01..=0x53 e 0x56..=0x58, mais 0x73 e 0x7E (§13.7 item 2). `normalize_abs` com `ceil(pixel * 65536 / largura)`, que pode errar 1 px; `barrier_crossing` conta chegar ou ficar no último pixel como empurrão, o que pode ativar andando junto à borda; `HotkeyTracker` em evdev com `swallow`, `shortcut` e `neutral_tap`, pela tecla neutra `VK 0xE8` (§13.6 item 4 do adaptador Windows). Os dois pontos que podem errar entram como atenção no roteiro (§13.12 passos 2 e 3).
+11. Maestro (v1.27), a pedido do Flux para cumprir C3, I-S7-3 e o R1 (§13.5): `Notice::HooksLost` no lugar do `HookDied` (pânico num callback ou o relógio do I-S7-3; o adaptador trata como `SessionLocked(true)` mais `Error`); `ResumeHotkey::register(on_press)` com thread própria, no lugar do `ResumeHotkey::new(&Watcher)` e do `Notice::ResumeHotkey`; `DesktopSwitched` sai de um laço de 500 ms (`WM_TIMER`) que confere `input_desktop_is_default()`. A dep `windows` tem as features só na raiz (7040a2f), e o `clipsync-win` usa `workspace = true`.
+12. Maestro (v1.27), a pedido do Rivet (§13.9): `keyboard_layout` no fim do `InputState`, preenchido pelo módulo e mostrado pelo diagnóstico; atalhos "ativos" no diagnóstico do Windows só quando o hook existe.
 
 ### 13.14 Perguntas que só o usuário responde
 1. O terceiro PC: sistema e versão, sessão gráfica (Windows, GNOME Wayland, KDE ou X11) e quantos monitores? KDE e X11 ficam fora da S7.
