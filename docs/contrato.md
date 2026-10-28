@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.31, Keel, 2026-10-28)
+# Contrato · ClipSync MVP de hoje (v1.32, Keel, 2026-10-28)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -36,6 +36,7 @@ v1.28 (Maestro, 2026-10-28): C1 fechado, com o script conferindo também os lint
 v1.29 (decisão do Maestro, I-S7-2, a pedido do Pixel em 020451d): a recusa do Win+Alt+P vira o campo `resume_hotkey_refused` no fim do `InputState` (§13.4 item 7) e em `features` (§13.9 decisão 3), com o Rivet primeiro; critérios 2 (i), 4 e 5 da §13.11 e §13.13 decisão 15.
 v1.30 (Maestro, 2026-10-28): `CaptureAdapter::begin` para a troca por atalho ou botão (§13.6, pedido do Flux; critério 2 (k); decisão 16); revisão do `ffi.rs` pelo Sentinel (c8cf755) e as correções: `Modifier`, `modifier_down` e `button_down` no lugar do `async_key_down` (S7-01, §13.5), envio parcial como falha, ponteiro da consulta de monitores e teste do pânico (aac844e), e o `scripts/conferir-privacidade.sh` (S7-04, 96c89fa, §13.2 regra 2e); decisão 17. §13.1: o `adapter/wincore.rs` (com `tests/wincore.rs`), criado em a559bdb e 57dcde0, fica com o Flux.
 v1.31 (Maestro, 2026-10-28): posse do `wincore` confirmada com o Flux; S7-02 no adaptador: `HooksLost` termina a sessão e recria o `Hooks`, e mais de 3 quedas em 10 s param a captura com bloqueio até reiniciar ou `InputReload` (§13.6, critério 3, decisão 18); `CaptureAdapter::can_begin` (Vector, 87da922), false no portal do Linux, e a troca vira dado para a interface: `InputState::switch_supported` (§13.4 item 8) e `features.switch_device` (§13.9 decisão 4), com o Rivet primeiro; critérios 2 (l), 4 e 5; decisão 19.
+v1.32 (Maestro, 2026-10-28): §13.6 registra o adaptador Windows entregue pelo Flux em c2e73bc e as escolhas dele a afinar no roteiro (tecla repetida uma vez só, volta no segundo pixel a partir da borda, só modificadores e botões na ativação, roda a 120 por 15 px, Win+Alt+P sintético), e a decisão do Maestro de não dar trait de plataforma ao trabalhador do adaptador nesta versão, com o risco registrado; decisões 20 e 21.
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -1453,7 +1454,8 @@ pub enum InputError { /* as de hoje, mais: */ Locked }   // tela bloqueada ou á
 pub trait CaptureAdapter {   /* o de hoje, mais: */
     /// Troca as barreiras sem recriar a sessão (no portal, sem diálogo novo).
     async fn set_barriers(&mut self, barriers: &[BarrierSpec]) -> Result<(), InputError> { Err(InputError::Other("unsupported".into())) }
-    /// Devolve o cursor na barreira `barrier`, em `pos` (0 a 1), um pixel para dentro da zona.
+    /// Devolve o cursor na barreira `barrier`, em `pos` (0 a 1), dentro da zona (no Windows, no
+    /// segundo pixel a partir da borda, v1.32).
     async fn release_at(&mut self, barrier: usize, pos: f32) -> Result<(), InputError> { let _ = (barrier, pos); self.release().await }
     /// v1.28 (Vector, no lugar do `set_paused` da v1.26): true quando o adaptador segura hooks do
     /// sistema enquanto roda (Windows). Só então pausar para o adaptador (§13.2 regra 2g); o portal
@@ -1511,7 +1513,7 @@ No `build`, `auto` vira o portal no Linux e o Windows no Windows. `AdapterChoice
    - `start` sobe o `Hooks`. A barreira é o segmento da §8 regra 7 sobre a zona. Ativa quando o cursor está no último pixel do segmento e o evento empurra para fora, ou quando o ponto novo cruza a linha do segmento (borda entre dois monitores locais). O evento que ativa é bloqueado. v1.27 (Flux, 40070d3): chegar ou ficar no último pixel do trecho já conta como empurrão, porque o hook pode cortar o ponto na borda do desktop; com isso, andar junto à borda pode ativar (a afinar no roteiro, §13.12 passo 2);
    - durante a captura ativa: `CursorPark` no centro do monitor da barreira; delta = ponto do hook menos o ponto estacionado, em px lógicos pela escala desse monitor; roda vira `ScrollDiscrete` com `dy = -delta` no vertical e `dx = delta` no horizontal;
    - na ativação, solta localmente (`send` de soltar, que volta marcado como injetado e o hook ignora) tudo o que estava pressionado, e emite o pressionar dos seguros (item 4 do módulo). Na volta, pressiona de novo localmente o que ainda está fisicamente seguro;
-   - `release_at` desfaz o `CursorPark` e põe o cursor na barreira, um pixel para dentro;
+   - `release_at` desfaz o `CursorPark` e põe o cursor na barreira, no segundo pixel a partir da borda, um antes do pixel que ativa a barreira, para o próximo movimento curto não reativar (`winmath::inside_point`, v1.32);
    - `begin(barreira, pos)` (v1.30) faz o mesmo que um cruzamento: `CursorPark` no centro do monitor da barreira, e o local passa a ser capturado e bloqueado;
    - teclas por `keymap::from_windows`; atalhos Win+Alt+1 a 9, Win+Alt+L e Win+Alt+P, com ou sem captura ativa: as teclas do atalho são engolidas, e um toque de tecla neutra evita que o Win solto abra o menu Iniciar. Win+Alt+C e Win+Alt+V ficam "indisponível nesta versão";
    - `Notice::DisplayChanged` vira `ZonesChanged`; `SessionLocked`, `SessionUnlocked` e `DesktopSwitched` viram `SessionLocked(bool)` (`input_desktop_is_default()` decide o valor depois de `DesktopSwitched`);
@@ -1521,9 +1523,18 @@ No `build`, `auto` vira o portal no Linux e o Windows no Windows. `AdapterChoice
    - `start` sobe o `Watcher`;
    - antes de cada lote, `input_desktop_is_default()` e a sessão desbloqueada; senão `Err(InputError::Locked)`, sem injetar nada;
    - `Motion`: posição nova = cursor atual mais delta vezes a escala do monitor atual, presa à união dos monitores, mandada como `MoveAbs`. Não usa movimento relativo, para a aceleração do Windows não agir duas vezes;
-   - `enter`: `MoveAbs` direto no ponto (monitor, borda, `pos`), um pixel para dentro;
+   - `enter`: `MoveAbs` direto no ponto (monitor, borda, `pos`), no segundo pixel a partir da borda (`winmath::inside_point`, v1.32);
    - teclas por `keymap::to_windows`; `ScrollDiscrete` vira roda com o sinal trocado no vertical; `Scroll` em px vira roda com 120 por 15 px, acumulando o resto (valor inicial, a afinar no roteiro);
    - `release_all` solta o que este emulador pressionou; `cursor()` = `cursor_pos()`.
+
+   **Entregue em c2e73bc (v1.32):** `WinCapture`, `WinEmulate` e o `self_test` do Windows sobre o `clipsync-win`, com `begin`, `RestartPolicy` (a política do `HooksLost`) e `resolve_barriers` no `wincore` (21 testes em `tests/wincore.rs`). Escolhas do Flux fora do texto acima, a afinar no roteiro §13.12:
+   - tecla repetida (o KEYDOWN repetido do Windows) vai ao destino uma vez só, e o destino repete sozinho; só as transições saem;
+   - ao voltar, o cursor cai no segundo pixel a partir da borda (acima), para não reativar a barreira;
+   - ao ativar, solta localmente tudo o que estava pressionado e leva ao destino só modificadores e botões (R3), reconciliados com `GetAsyncKeyState` pelo `modifier_down` e o `button_down`;
+   - roda suave em px vira 120 unidades por 15 px, com o resto acumulado;
+   - o Win+Alt+P do `RegisterHotKey` reage também a input sintético (o `RegisterHotKey` não distingue) e só alterna a pausa, nada mais.
+
+   **Decisão do Maestro (v1.32), risco registrado:** o trabalhador do adaptador Windows (`adapter/win/`) não ganha trait de plataforma nesta versão, então não roda com um `clipsync-win` falso. A lógica pura fica coberta pelo `wincore` e pelo `winmath` nos dois CIs; o fluxo completo (hooks reais, estacionar o cursor, `SendInput`, troca de área de trabalho) se prova no CI Windows (`crates/clipsync-win/tests/windows.rs`, com a medida de handles separada do aquecimento em a9d0b00) e no roteiro §13.12. Risco: um defeito na costura entre o trabalhador e o `clipsync-win` só aparece no CI Windows ou na máquina do usuário.
 3. `adapter::win::self_test()`, chamado pelo `self_test.rs` do Vector: sobe e desce os hooks, lê os monitores e confere a área de trabalho. Dá `Experimental("captura e emulação do Windows prontas, ainda sem prova nesta máquina")` até a matriz registrar o roteiro, ou `Unavailable(motivo)`.
 4. `winmath.rs` (puro, todo sistema): nome estável da zona (o nome amigável do `QueryDisplayConfig`; vazio, o `device` sem `\\.\`; repetido ganha " 2", " 3" na ordem do `path`; corte em 64 bytes na fronteira de caractere); zonas a partir dos monitores; cruzamento de barreira; normalização do `MoveAbs`; px físicos para lógicos por DPI; reconhecimento dos atalhos a partir da sequência de teclas.
 
@@ -1638,6 +1649,8 @@ O usuário responde por passo ("ok" ou o que viu), e o Argus registra.
 17. Sentinel (v1.30, revisão do `ffi.rs` em c8cf755, sem bloqueante, com quatro BAIXO): S7-01 (o `async_key_down` lia qualquer tecla) virou `Modifier`, `modifier_down` e `button_down`; S7-03 (ponteiro da consulta de monitores) e a parte do crate do S7-02 (teste do pânico nos callbacks) foram corrigidos pelo Flux em aac844e; S7-04 (grep de log no CI) virou o `scripts/conferir-privacidade.sh` do Maestro em 96c89fa (§13.2 regra 2e). Do S7-02 falta a parte do adaptador.
 18. Maestro (v1.31): o `adapter/wincore.rs` e o `tests/wincore.rs` ficam com o Flux (§13.1). S7-02, parte do adaptador: `HooksLost` termina a sessão em curso (`Leave` e `ReleaseAll`) e o `WinCapture` recria o `Hooks` na hora; mais de 3 quedas em 10 s param a captura com um bloqueio de texto fixo, até reiniciar o módulo ou `InputReload` (§13.6). Substitui o "`SessionLocked(true)` mais `Error`" da v1.27 (decisão 11).
 19. Vector (v1.31, 87da922) e Maestro: `CaptureAdapter::can_begin()`, false no portal do Linux, que só captura ao cruzar a borda; a troca é recusada lá com texto fixo (§13.6). A interface recebe isso como dado: `InputState::switch_supported` (padrão true para agente antigo) e `features.switch_device` (false sem agente), e a tela Layout desabilita "Ir para dispositivo" (§13.4 item 8 e §13.9 decisão 4). O Rivet vai primeiro e avisa Vector e Pixel.
+20. Flux (v1.32, c2e73bc), a afinar no roteiro: tecla repetida sai uma vez só; a volta cai no segundo pixel a partir da borda; a ativação solta tudo localmente e leva só modificadores e botões; a roda suave usa 120 por 15 px com resto acumulado; o Win+Alt+P do `RegisterHotKey` reage a input sintético e só alterna a pausa (§13.6).
+21. Maestro (v1.32): o trabalhador do adaptador Windows não ganha trait de plataforma nesta versão. O fluxo completo se prova no CI Windows (`tests/windows.rs`) e no roteiro §13.12; o risco fica registrado na §13.6.
 
 ### 13.14 Perguntas que só o usuário responde
 1. O terceiro PC: sistema e versão, sessão gráfica (Windows, GNOME Wayland, KDE ou X11) e quantos monitores? KDE e X11 ficam fora da S7.
