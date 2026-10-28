@@ -22,7 +22,6 @@ use clipsync_proto::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::agent::INPUT_SUPPORTED;
 use crate::api::{self, code as base};
 use crate::devices::DeviceState;
 use crate::events::{LayoutChanged, LayoutReason, UiEvent};
@@ -543,7 +542,7 @@ fn path(ctx: &Ctx) -> PathBuf {
 pub(crate) fn require_input(ctx: &Ctx) -> Result<Config, UiError> {
     ctx.require_profile()?;
     let cfg = ctx.profile.load_config()?;
-    if cfg.modules.input && INPUT_SUPPORTED {
+    if cfg.modules.input && clipsync_input::SUPPORTED {
         Ok(cfg)
     } else {
         Err(UiError::new(code::INPUT_OFF, txt::INPUT_OFF))

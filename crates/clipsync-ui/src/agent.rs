@@ -18,10 +18,6 @@ use crate::api::code;
 use crate::status::AgentMode;
 use crate::{Ctx, UiError, clean, lock, msg};
 
-/// Only `layout.rs` (Vector) still reads this: its Windows screen 4 comes with §13.9. Everything
-/// else asks `clipsync_input::SUPPORTED`; this goes away with its last use (§13.11 item 3).
-pub(crate) const INPUT_SUPPORTED: bool = cfg!(target_os = "linux");
-
 /// Bind, modules and the control socket; the input portal may take a while on first use.
 const START_TIMEOUT: Duration = Duration::from_secs(15);
 const START_POLL: Duration = Duration::from_millis(25);
