@@ -34,6 +34,7 @@ Exec="$destino"
 Icon=clipsync
 Terminal=false
 Categories=Utility;
+StartupWMClass=clipsync-app
 StartupNotify=true
 DESKTOP
 mv -f "$apps_dir/clipsync.desktop.novo" "$apps_dir/clipsync.desktop"
