@@ -80,10 +80,10 @@ const SIMBOLOS = {
 
 const NS = "http://www.w3.org/2000/svg";
 
-/** Cria um elemento SVG com atributos. Também serve às telas que desenham em SVG (layout). */
-export function svg(tag, atributos = {}, ...filhos) {
+/** Cria um elemento SVG com atributos (null vale como nenhum, igual ao h()). Também serve às telas que desenham em SVG (layout). */
+export function svg(tag, atributos, ...filhos) {
   const no = document.createElementNS(NS, tag);
-  for (const [chave, valor] of Object.entries(atributos)) {
+  for (const [chave, valor] of Object.entries(atributos ?? {})) {
     if (valor == null || valor === false) continue;
     no.setAttribute(chave, valor === true ? "" : String(valor));
   }

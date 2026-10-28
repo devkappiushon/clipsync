@@ -81,7 +81,13 @@ export default function montar({ ir, assinar }) {
     // Seleção de ligação que já não existe cai.
     if (selecao?.tipo === "borda" && selecao.linkId && !layout.links.some((l) => l.id === selecao.linkId)) selecao = null;
     if (selecao?.tipo === "dispositivo" && !layout.devices.some((d) => d.peer_id === selecao.peerId)) selecao = null;
-    pintarTudo();
+    try {
+      pintarTudo();
+    } catch (erro) {
+      // Falha ao desenhar nunca fica muda: a tela mostra o erro em vez de um canvas vazio.
+      console.error("falha ao pintar o layout", erro);
+      trocar(corpo, estadoErro(erro, () => carregar()));
+    }
   }
 
   function pintarTudo() {
