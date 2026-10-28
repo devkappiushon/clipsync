@@ -502,42 +502,6 @@ impl WinCapture {
         }
     }
 
-    /// A session was opened by a switch (shortcut or button) instead of a crossing: park the cursor at
-    /// the middle of the barrier's monitor and capture from now on. The modifiers and buttons held now
-    /// go to the peer pressed, as in a crossing, but no `Activated` is sent (the module already opened
-    /// the session).
-    pub async fn begin_capture(&mut self, barrier: usize, pos: f32) -> Result<(), InputError> {
-        let (Some(out), true) = (self.out.clone(), self.queue.is_some()) else {
-            return Err(InputError::Other("capture not started".into()));
-        };
-        let shared = Arc::clone(&self.shared);
-        let held = shared.held();
-        let presses = tokio::task::spawn_blocking(move || {
-            shared.begin.store(true, Ordering::Release);
-            let presses = park_and_carry(&shared, barrier, held);
-            if presses.is_err() {
-                shared.begin.store(false, Ordering::Release);
-                let _ = end_locally(&shared, None);
-            } else {
-                *lock(&shared.last) = Some((barrier, pos));
-            }
-            presses
-        })
-        .await
-        .map_err(|e| InputError::Other(e.to_string()))??;
-        let t_mono_us = mono_us();
-        for ev in presses {
-            if out
-                .send(CaptureEvent::Input { t_mono_us, ev })
-                .await
-                .is_err()
-            {
-                break;
-            }
-        }
-        Ok(())
-    }
-
     fn last_barrier(&self) -> Option<(usize, f32)> {
         *lock(&self.shared.last)
     }
@@ -614,6 +578,42 @@ impl CaptureAdapter for WinCapture {
         tokio::task::spawn_blocking(move || end_locally(&shared, cursor))
             .await
             .map_err(|e| InputError::Other(e.to_string()))?
+    }
+
+    // A session was opened by a switch (shortcut or button) instead of a crossing: park the cursor at
+    // the middle of the barrier's monitor and capture from now on. The modifiers and buttons held now
+    // go to the peer pressed, as in a crossing, but no `Activated` is sent (the module already opened
+    // the session).
+    async fn begin(&mut self, barrier: usize, pos: f32) -> Result<(), InputError> {
+        let (Some(out), true) = (self.out.clone(), self.queue.is_some()) else {
+            return Err(InputError::Other("capture not started".into()));
+        };
+        let shared = Arc::clone(&self.shared);
+        let held = shared.held();
+        let presses = tokio::task::spawn_blocking(move || {
+            shared.begin.store(true, Ordering::Release);
+            let presses = park_and_carry(&shared, barrier, held);
+            if presses.is_err() {
+                shared.begin.store(false, Ordering::Release);
+                let _ = end_locally(&shared, None);
+            } else {
+                *lock(&shared.last) = Some((barrier, pos));
+            }
+            presses
+        })
+        .await
+        .map_err(|e| InputError::Other(e.to_string()))??;
+        let t_mono_us = mono_us();
+        for ev in presses {
+            if out
+                .send(CaptureEvent::Input { t_mono_us, ev })
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+        Ok(())
     }
 
     fn holds_hooks(&self) -> bool {

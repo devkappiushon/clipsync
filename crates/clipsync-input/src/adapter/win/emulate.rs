@@ -68,11 +68,6 @@ impl WinEmulate {
         }
     }
 
-    /// The KLID of the keyboard layout of this machine, for the diagnostic only.
-    pub fn keyboard_layout(&self) -> Option<String> {
-        clipsync_win::keyboard_layout()
-    }
-
     /// Before every batch: with the screen locked or the secure desktop up, nothing is injected.
     fn ensure_unlocked(&self) -> Result<(), InputError> {
         if self.state.session_locked.load(Ordering::Relaxed)
@@ -259,6 +254,11 @@ impl EmulateAdapter for WinEmulate {
         let (x, y) = winmath::inside_point(zone, edge, pos);
         self.motion_rest = (0.0, 0.0);
         Self::send(&[move_abs(x, y)])
+    }
+
+    /// The KLID of this machine's keyboard layout, for the diagnostic only.
+    fn keyboard_layout(&self) -> Option<String> {
+        clipsync_win::keyboard_layout()
     }
 
     fn cursor(&self) -> Option<(i32, i32)> {
