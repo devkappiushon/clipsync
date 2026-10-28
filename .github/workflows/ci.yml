@@ -44,6 +44,11 @@ jobs:
         shell: bash
         run: scripts/conferir-unsafe.sh
 
+      # Condição R5 e achado S7-04 do Sentinel: nada de log de tecla no código dos hooks.
+      - name: privacidade dos hooks
+        shell: bash
+        run: scripts/conferir-privacidade.sh
+
       - name: cargo fmt
         run: cargo fmt --all -- --check
 
@@ -77,6 +82,11 @@ jobs:
       - name: unsafe isolado
         shell: bash
         run: scripts/conferir-unsafe.sh
+
+      # Condição R5 e achado S7-04 do Sentinel: nada de log de tecla no código dos hooks.
+      - name: privacidade dos hooks
+        shell: bash
+        run: scripts/conferir-privacidade.sh
 
       # Prova que o release compila para Windows e que o alvo fica sem aviso.
       # O roteiro e2e da CLI é cfg(unix); os testes de portal são ignorados.
