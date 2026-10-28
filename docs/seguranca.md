@@ -503,3 +503,55 @@ Informativos novos desta rodada:
 - **I-S6-14 · Cópias do mesmo `write_private`.** Agora há três (core, `clipsync-ui/src/autostart/fsio.rs` e `clipsync-input/src/layout.rs`). Funcionam, mas a próxima correção tem que ser feita nos três; vale um crate comum quando houver espaço.
 - **I-S6-15 · S6-21, resíduo teórico.** O close de nível Initial não é autenticado, e o cliente só descarta as chaves Initial ao enviar o primeiro pacote Handshake. Em teoria, um atacante no caminho que forjasse o fechamento depois de o servidor real provar a chave e antes desse descarte ainda produziria a entrada. A janela é de um ou dois pacotes e o efeito é só um aviso falso; não tentei reproduzir.
 - **I-S6-16 · Licença mostrada em "Sobre"** agora é "Todos os direitos reservados" (constante `LICENSE`, 6454fe2). Nada de segurança; registro para o README e o release dizerem o mesmo.
+
+## S7 · decisão unsafe (ed26b66)
+
+**Veredito: APROVADA COM CONDIÇÕES.** Vale para a §13.3 (crate `clipsync-win` com `windows =0.62.2`, `unsafe` só em `src/ffi.rs`, lints próprios, greps no CI) e para a §13.2 regra 2 (privacidade dos hooks). O Flux pode começar o `clipsync-win` agora. As condições C1 a C4 e R1 a R4 são do código e do `ffi.rs`: eu as confiro na revisão bloco a bloco antes do v0.3.0, e uma condição aberta ali é BLOQUEANTE. Revisado só por leitura, pelo registro do crates.io e por provas em projeto de teste; **não há Windows nesta máquina**, então o comportamento real dos hooks (flag de injetado, `LowLevelHooksTimeout`, `RegisterHotKey`) é lido da documentação, não visto.
+
+### O que conferi (evidência)
+
+| Afirmação | Resultado |
+| --- | --- |
+| `windows 0.62.2` está no `Cargo.lock` e o Tauri já o puxa | **Sim.** Listado por `tao`, `tauri`, `tauri-runtime`, `tauri-runtime-wry`, `tauri-winrt-notification`, `webview2-com`, `webview2-com-sys` e `wry`. Os `windows-collections`, `-future`, `-numerics` e `-threading` do lock vêm dele e não são ativados pelas features da §13.3 (nenhuma é `Foundation_*`). |
+| Versão confiável | crates.io: **não retirada** (`yanked: false`), publicada em 2025-10-06 por `kennykerr` (mantenedor do windows-rs, repositório `microsoft/windows-rs`), licença MIT OR Apache-2.0. Fixar com `=` e o checksum do lock cobrem a troca silenciosa. |
+| As 10 features existem e bastam | Existem todas (lidas no `Cargo.toml` do crate no registro local). Achei 22 chamadas da §13.5 nos módulos dessas features, incluindo `SetWindowsHookExW`, `OpenInputDesktop`, `GetUserObjectInformationW`, `WTSRegisterSessionNotification`, `QueryDisplayConfig`, `GetDpiForMonitor`, `SendInput`. Nenhuma pede feature fora da lista. |
+| `zbus =5.19.0` no lock | Sim (fora do meu pedido, só a conferência da §13.10). |
+| `forbid` não aceita `allow` em módulo (E0453) | **Confirmado** num projeto de teste: `forbid` no workspace mais `#[allow(unsafe_code)]` num módulo dá `E0453`. |
+| `[lints] workspace = true` junto de `[lints.rust]` | **Confirmado**: o Cargo recusa o manifesto. Logo o crate próprio da §13.3 (b) é mesmo o único caminho. |
+| Os 7 crates de hoje herdam `forbid` | Sim: 7 de 7 têm `[lints] workspace = true`. Não há `unsafe` no código de hoje (3 menções só em comentário). |
+| Com `deny`, quem garante "só no `ffi.rs`"? | **Só o grep.** No projeto de teste, `deny` mais `#![allow(unsafe_code)]` no `ffi.rs` compila; **um `#[allow(unsafe_code)]` em qualquer outro arquivo do mesmo crate também compila.** O clippy pegou o bloco sem `// SAFETY:`. Então a prova do CI é a única trava do isolamento dentro do `clipsync-win`, e ela tem furos (C1). |
+
+### Condições da §13.3 (unsafe)
+
+- **C1 · Fechar os furos do `scripts/conferir-unsafe.sh`.** Executei o script (7040a2f) num repositório de teste, com o `ffi.rs` válido e um segundo arquivo no `clipsync-win`. **Passam sem acusar:** `#[allow(dead_code, unsafe_code)]`, `#[expect(unsafe_code)]`, `#![allow(\n unsafe_code\n)]` em várias linhas, `unsafe` com a chave na linha de baixo e `#[unsafe(no_mangle)]`. Acusa só `allow(unsafe_code)` e `unsafe {` na mesma linha. Corrigir: fora do `ffi.rs`, falhar em **qualquer linha** com `unsafe_code` e em qualquer `\bunsafe\b` que não seja comentário de linha (hoje há 3 comentários que dizem "unsafe": `clipsync-cli/src/text.rs:100`, `clipsync-clipboard/src/adapter/win.rs:2` e `clipsync-ui/tests/autostart.rs:26`; reescrever como "inseguro" ou excluir linha que começa com `//`). Somar duas verificações: todo `crates/*/Cargo.toml` exceto o `clipsync-win` tem `[lints] workspace = true`, e o `clipsync-win` tem `unsafe_code = "deny"` e as duas lints de clippy da §13.3 item 2. Sem isso um crate novo sem `[lints]` nasce sem o `forbid`.
+- **C2 · `ffi.rs` não exporta `unsafe`.** `mod ffi;` privado; toda função de lá é segura e fecha a invariante dentro do bloco (nenhum `pub` ou `pub(crate) unsafe fn`). Cada `// SAFETY:` diz por que ponteiro, tamanho de buffer e handle valem, não só repete a chamada.
+- **C3 · Estado dos callbacks sem ponteiro cru.** O hook de baixo nível não recebe dado do usuário, então o `Box<dyn FnMut>` precisa de um lugar: `thread_local!` (`RefCell` ou `Cell`; a thread dos hooks é a mesma do laço de mensagens). Proibido `static mut`, `Box::into_raw` e `GWLP_USERDATA` com ponteiro cru (o caminho da janela oculta). Reentrada: `try_borrow_mut` e, se falhar, "passa". Cada `extern "system"` roda dentro de `catch_unwind` (o workspace é `panic = unwind`, `Cargo.toml:32`): pânico devolve "passa", marca o hook como morto e o `Notice` encerra a sessão. Pânico que cruza o limite C aborta o processo.
+- **C4 · Handles com RAII.** `HHOOK`, `HWND`, `HDESK` e o registro WTS fecham no `Drop`. O `input_desktop_is_default` roda antes de cada lote do `WinEmulate`: sem guarda, cada chamada vaza um `HDESK`. Teste no CI Windows: 10 000 chamadas sem o `GetProcessHandleCount` subir.
+- **Para o Maestro (§13.10).** Ao entrar o membro novo, o diff do `Cargo.lock` tem de mostrar só o pacote `clipsync-win` e a lista de dependências dele; nenhuma versão muda e nenhum pacote externo aparece. Builds com `--locked`.
+
+### Condições da §13.2 regra 2 (privacidade dos hooks)
+
+As alíneas (a) a (g) estão certas no desenho. Condições para elas valerem de fato:
+
+- **R1 · A pausa contradiz o roteiro.** (g) diz que pausar tudo remove os hooks; o passo 6 da §13.12 retoma com Win+Alt+P, que só existe com o hook de teclado vivo. As duas não cabem. **Recomendo: a pausa remove os hooks** (hook de teclado vivo durante a pausa quebra a promessa que a pausa faz ao usuário); Win+Alt+P só pausa, retomar é pela bandeja ou pela CLI, e o passo 6 do roteiro muda. Decisão de produto, então vai ao Maestro. Até decidirem, vale (g) como está escrita.
+- **R2 · (a) vale a cada mudança, não só na subida.** O hook cai na hora quando a última ligação local sai do `layout.toml`, quando o par da ligação é bloqueado ou revogado, e quando o módulo desliga. Ligação para par que não está pareado não conta.
+- **R3 · Estado do teclado fora da captura é um conjunto de tamanho fixo.** O `winmath` fala em reconhecer atalho "a partir da sequência de teclas" (§13.6, `winmath.rs`): tem de ser função do conjunto pressionado agora mais a tecla que chegou, sem `Vec`, fila, janela de tempo ou contador por tecla. Teste: o tipo do estado é `Copy` e sem alocação. A alínea (c) diz "o pressionar do que está seguro" na ativação: fixar **só modificadores e botões**, como o item 4 do módulo, nunca letra.
+- **R4 · O canal "sem limite" vira limitado.** O callback continua sem esperar: `try_send` num canal limitado (ordem de 8 000 eventos). Se encher, a captura termina (`Leave` e `ReleaseAll`), a fila é descartada e nada sai depois. Motivo: fila sem limite é histórico de teclas na memória e, com a rede travada, tecla digitada minutos antes chegando de uma vez ao destino. Na saída da sessão, o que sobrou na fila nunca é enviado.
+- **R5 · Redação (e) por prova, não só por regra.** `impl Debug` manual de `RawEvent` e de `Key`, com teste de que `format!("{:?}")` não contém vk, scan nem extended. CI: nenhum `tracing::*!`, `println!`, `eprintln!` ou `dbg!` com argumento em `crates/clipsync-win/src/` e `adapter/win/`; `assert!` e `assert_eq!` com evento só em testes.
+
+### Pontos aceitos e informativos
+
+- **I-S7-1 · Injetado passa direto (b): aprovado.** Faz o que deve: programa local não dispara atalho nem abre sessão com tecla sintética, e o próprio ClipSync não entra em laço. Limite a documentar: o que o Windows marca como injetado inclui teclado na tela, sessão remota (RDP) e drivers de macro ou KVM. Com captura ativa, esse input vai para a máquina local e não para o destino; falha para o lado local, sem vazar tecla. Testar `LLKHF_INJECTED` e também `LLKHF_LOWER_IL_INJECTED`.
+- **I-S7-2 · Hook de teclado ocioso e `RegisterHotKey`.** Fora da captura, o hook de teclado existe só para os atalhos Win+Alt+N, L e P, e vê toda tecla da máquina (restrito por (c)). Alternativa sem hook: `RegisterHotKey`, que só avisa quando o atalho exato é apertado, e o hook de teclado sobe só durante a captura. Win+Alt+dígito é do shell (jump list) e Win+L é reservado, então pode não registrar; **não testei, sem Windows**. Pedido ao Flux: testar no PC e registrar o resultado antes de escrever o hook ocioso. Se registrar, o hook ocioso some. Se não, fica como a §13.2 manda.
+- **I-S7-3 · Hook removido em silêncio.** O Windows tira o hook que estoura o `LowLevelHooksTimeout`, sem aviso. Com o mouse em `CursorPark` o usuário ficaria sem cursor visível. Barato de cobrir: com captura ativa, a thread dos hooks confere a cada 1 s se o `GetCursorPos` ainda é o ponto estacionado; se não for, encerra a captura. O mesmo vale para o conjunto de teclas, que esvazia ao soltar: se o hook morrer com tecla segura, a tecla "fica presa" no conjunto; reconciliar com `GetAsyncKeyState` na ativação.
+- **I-S7-4 · Teclas de senha na captura ativa.** Com a captura ativa, toda tecla vai ao destino, inclusive senha digitada nele. É o desenho (destino com `input_in` concedido pelo usuário). O limite de segurança é o §13.2 regra 1 (bloqueio e área segura), que o critério 7 da §13.11 manda eu rever no código.
+- **I-S7-5 · Fora do escopo desta decisão e a rever no `ffi.rs`:** `CursorPark` (janela própria sob o cursor: some no `Drop` e com o processo; se o hook morrer, ver I-S7-3), o laço de mensagens e o `Drop` do `Hooks` (sem deadlock se rodar na thread dos hooks), e os buffers de `GetUserObjectInformationW`.
+
+### Resumo para o Maestro
+
+| Item | Veredito |
+| --- | --- |
+| §13.3 (b), crate próprio, `windows =0.62.2`, features, `ffi.rs` único | **Aprovada**, com C1 a C4 |
+| §13.3 item 5, greps do CI | **Aprovada com C1** (furos executados) |
+| §13.2 regra 2, hooks | **Aprovada**, com R1 a R5 |
+| Bloqueante agora | **Nenhum.** O Flux pode começar o `clipsync-win`. |
