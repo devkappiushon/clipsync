@@ -200,17 +200,31 @@ fn untested(module: ModuleName, enabled: bool, supported: bool) -> TestResult {
     }
 }
 
-fn tested(module: ModuleName, outcome: SelfTestOutcome) -> TestResult {
-    let (status, detail) = match &outcome {
-        SelfTestOutcome::Validated(d) => (TestStatus::Validated, d),
-        SelfTestOutcome::Experimental(d) => (TestStatus::Experimental, d),
-        SelfTestOutcome::Unavailable(d) => (TestStatus::Unavailable, d),
-    };
+fn tested(module: ModuleName, status: TestStatus, detail: &str) -> TestResult {
     TestResult {
         module,
         status,
         detail: Some(clean(detail)),
     }
+}
+
+fn clipboard_result(outcome: SelfTestOutcome) -> TestResult {
+    let (status, detail) = match &outcome {
+        SelfTestOutcome::Validated(d) => (TestStatus::Validated, d),
+        SelfTestOutcome::Experimental(d) => (TestStatus::Experimental, d),
+        SelfTestOutcome::Unavailable(d) => (TestStatus::Unavailable, d),
+    };
+    tested(ModuleName::Clipboard, status, detail)
+}
+
+fn input_result(outcome: clipsync_input::SelfTestOutcome) -> TestResult {
+    use clipsync_input::SelfTestOutcome as O;
+    let (status, detail) = match &outcome {
+        O::Validated(d) => (TestStatus::Validated, d),
+        O::Experimental(d) => (TestStatus::Experimental, d),
+        O::Unavailable(d) => (TestStatus::Unavailable, d),
+    };
+    tested(ModuleName::Input, status, detail)
 }
 
 /// The test opens its own adapter, so a running agent would see the synthetic text and offer
@@ -234,12 +248,16 @@ async fn pause_for_test(ctx: &Ctx) -> Result<bool, UiError> {
     }
 }
 
-/// Clipboard: `clipsync_clipboard::self_test` (a fake one when the profile uses fake adapters).
-/// Input: not called until its `self_test` exists (Vector, L7).
+/// Clipboard: `clipsync_clipboard::self_test` (a fake one when the profile uses fake adapters),
+/// with the agent paused around it. Input: `clipsync_input::self_test`, which only asks the
+/// portals (no session, no dialog), so it runs at the same time and needs no pause.
 pub(crate) async fn self_test(ctx: &Ctx) -> Result<SelfTest, UiError> {
     ctx.require_profile()?;
     let cfg = ctx.profile.load_config()?;
-    let clipboard = if cfg.modules.clipboard {
+    let clipboard = async {
+        if !cfg.modules.clipboard {
+            return Ok(untested(ModuleName::Clipboard, false, true));
+        }
         let fake = ClipboardConfig::from_table(cfg.clipboard.as_ref())
             .is_ok_and(|c| c.adapter == AdapterChoice::Fake);
         let paused = pause_for_test(ctx).await?;
@@ -256,15 +274,18 @@ pub(crate) async fn self_test(ctx: &Ctx) -> Result<SelfTest, UiError> {
         if paused && let Err(e) = ctx.request(ControlRequest::Resume).await {
             tracing::warn!(code = %e.code, "agent not resumed after the self test");
         }
-        tested(ModuleName::Clipboard, outcome)
-    } else {
-        untested(ModuleName::Clipboard, false, true)
+        Ok::<_, UiError>(clipboard_result(outcome))
     };
+    let input = async {
+        if cfg.modules.input && INPUT_SUPPORTED {
+            input_result(clipsync_input::self_test().await)
+        } else {
+            untested(ModuleName::Input, cfg.modules.input, INPUT_SUPPORTED)
+        }
+    };
+    let (clipboard, input) = tokio::join!(clipboard, input);
     Ok(SelfTest {
-        results: vec![
-            clipboard,
-            untested(ModuleName::Input, cfg.modules.input, INPUT_SUPPORTED),
-        ],
+        results: vec![clipboard?, input],
     })
 }
 

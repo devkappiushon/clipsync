@@ -171,3 +171,24 @@ async fn self_test_runs_the_clipboard_and_leaves_the_agent_as_it_was() {
     assert_eq!(app_state(&ui).await["paused"], json!(true));
     ui.shutdown().await;
 }
+
+/// Item 3 of the S6 fixes: with input on, `clipsync_input::self_test` is called (it only asks
+/// the portals), so the input result is never `not_tested`.
+#[tokio::test(flavor = "multi_thread")]
+async fn self_test_calls_the_input_module_when_it_is_on() {
+    let dir = tempfile::tempdir().unwrap();
+    init_profile(dir.path(), "a", BOTH);
+    let ui = start(dir.path(), "a").await;
+    let r = ok(&ui, json!({ "cmd": "onboarding_self_test" })).await;
+    let input = &r["results"][1];
+    assert_eq!(input["module"], json!("input"));
+    #[cfg(target_os = "linux")]
+    assert!(
+        ["validated", "experimental", "unavailable"].contains(&input["status"].as_str().unwrap()),
+        "{input}"
+    );
+    #[cfg(not(target_os = "linux"))]
+    assert_eq!(input["status"], json!("unavailable"), "{input}");
+    assert!(!input["detail"].as_str().unwrap().is_empty());
+    ui.shutdown().await;
+}
