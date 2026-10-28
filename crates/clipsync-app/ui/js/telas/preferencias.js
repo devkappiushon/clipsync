@@ -1,5 +1,6 @@
-// Tela 7 · Preferências: atalhos (texto, indisponíveis nesta versão), início com a sessão, notificações por tipo,
-// aparência, idioma e Sobre. Toda mudança grava na hora pelo prefs_set; se falhar, o controle volta e o erro aparece.
+// Tela 7 · Preferências em duas colunas: atalhos (texto, indisponíveis nesta versão) e início com a sessão à esquerda;
+// notificações por tipo, aparência e idioma à direita; versão, licença e crédito na linha de rodapé.
+// Toda mudança grava na hora pelo prefs_set; se falhar, o controle volta e o erro aparece.
 
 import { api } from "../api.js";
 import { area, aviso, cabecalho, indisponivel } from "../areas.js";
@@ -43,7 +44,18 @@ export default function montar({ ir, assinar }) {
       atual = await api.prefsGet();
       return atual;
     },
-    pintar: (prefs) => h("div", { class: "pilha" }, cartaoAtalhos(prefs), cartaoInicio(prefs), cartaoNotificacoes(prefs), cartaoAparencia(prefs), cartaoSobre(prefs)),
+    pintar: (prefs) =>
+      h(
+        "div",
+        { class: "preferencias__corpo" },
+        h(
+          "div",
+          { class: "preferencias__grade" },
+          h("div", { class: "preferencias__coluna" }, cartaoAtalhos(prefs), cartaoInicio(prefs)),
+          h("div", { class: "preferencias__coluna" }, cartaoNotificacoes(prefs), cartaoAparencia(prefs), cartaoIdioma()),
+        ),
+        rodape(prefs),
+      ),
   });
 
   /** Grava e guarda o que o agente devolveu. Em erro, mostra a mensagem e relança para o controle voltar. */
@@ -72,7 +84,7 @@ export default function montar({ ir, assinar }) {
               colunas: [
                 { chave: "acao", rotulo: "Ação" },
                 { chave: "tecla", rotulo: "Atalho", render: (a) => tecla(a.tecla) },
-                { chave: "estado", rotulo: "Estado", render: () => (ligado ? "ativo" : h("span", { class: "muted" }, INDISPONIVEL)) },
+                ...(ligado ? [{ chave: "estado", rotulo: "Estado", render: () => "ativo" }] : []),
               ],
               linhas: lista,
               chaveLinha: (a) => a.acao,
@@ -89,7 +101,7 @@ export default function montar({ ir, assinar }) {
 
   function cartaoInicio(prefs) {
     return cartao({
-      titulo: "Início com a sessão",
+      titulo: "Inicialização",
       filhos: [
         interruptor({
           rotulo: "Iniciar o ClipSync ao entrar na sessão",
@@ -142,7 +154,7 @@ export default function montar({ ir, assinar }) {
       },
     });
     return cartao({
-      titulo: "Aparência e idioma",
+      titulo: "Aparência",
       filhos: [
         h("div", { class: "preferencias__campo" }, h("span", { class: "campo__rotulo" }, "Tema"), tema),
         interruptor({
@@ -151,31 +163,19 @@ export default function montar({ ir, assinar }) {
           marcado: prefs.appearance.reduce_motion,
           aoMudar: (valor) => salvar({ appearance: { ...atual.appearance, reduce_motion: valor } }),
         }),
-        h(
-          "dl",
-          { class: "kv" },
-          h("dt", null, "Idioma"),
-          h("dd", null, "Português (Brasil)", h("span", { class: "nota" }, " Outros idiomas: " + INDISPONIVEL + ".")),
-        ),
       ],
     });
   }
 
-  function cartaoSobre(prefs) {
+  function cartaoIdioma() {
     return cartao({
-      titulo: "Sobre",
-      filhos: [
-        h(
-          "dl",
-          { class: "kv" },
-          h("dt", null, "Versão"),
-          h("dd", { class: "mono" }, prefs.version),
-          h("dt", null, "Licença"),
-          h("dd", null, prefs.license),
-        ),
-        h("p", { class: "nota preferencias__credito" }, "feito por montesouza.dev"),
-      ],
+      titulo: "Idioma",
+      filhos: [h("p", null, "Português (Brasil)"), h("p", { class: "nota" }, `Outros idiomas: ${INDISPONIVEL}.`)],
     });
+  }
+
+  function rodape(prefs) {
+    return h("footer", { class: "nota preferencias__rodape" }, `ClipSync ${prefs.version} · ${prefs.license} · feito por montesouza.dev`);
   }
 
   const cancelar = assinar(EVENTOS, () => regiao.recarregar({ silencioso: true }));
