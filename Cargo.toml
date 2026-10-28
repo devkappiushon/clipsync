@@ -9,6 +9,7 @@ default-members = [
     "crates/clipsync-clipboard",
     "crates/clipsync-input",
     "crates/clipsync-cli",
+    "crates/clipsync-win",
 ]
 
 [workspace.package]
