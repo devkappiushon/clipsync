@@ -42,11 +42,17 @@ export default function montar({ ir, assinar }) {
   let relogio = null;
   let saiu = false;
 
-  const corpo = h("div", { class: "pareamento__corpo" });
+  // Duas colunas: à esquerda o passo atual, à direita as permissões iniciais (liberadas depois do código).
+  const corpo = h("div", { class: "colunas pareamento__colunas" });
+  const botaoCabecalho = botao({ rotulo: "Cancelar pareamento", icone: "fechar", hidden: true, aoClicar: () => cancelar() });
   const no = h(
     "div",
     { class: "pareamento" },
-    cabecalho({ titulo: "Pareamento", descricao: "Confirme o mesmo código nas duas máquinas. O código vem da conexão, não da rede." }),
+    cabecalho({
+      titulo: "Pareamento",
+      descricao: "Confirme o mesmo código nas duas máquinas. O código vem da conexão, não da rede.",
+      acoes: [botaoCabecalho],
+    }),
     corpo,
   );
 
@@ -74,6 +80,7 @@ export default function montar({ ir, assinar }) {
   }
 
   async function carregar() {
+    corpo.classList.add("colunas--unica");
     trocar(corpo, esqueleto({ linhas: 4 }));
     try {
       estado = await api.pairState();
@@ -103,22 +110,20 @@ export default function montar({ ir, assinar }) {
       await api.pairCancel({ attempt_id: estado.attempt_id });
     });
 
-  function botaoCancelar(rotulo = "Cancelar") {
-    return botao({ rotulo, icone: "fechar", aoClicar: cancelar });
-  }
-
   function linhaTempo() {
     const tempo = h("span", { class: "pareamento__tempo", role: "timer", "aria-label": "Tempo restante" });
     ligarRelogio(tempo, estado.expires_unix_ms);
     return tempo;
   }
 
-  function painelOcioso() {
-    const seletor = segmentado({
+  /** Abas Aceitar e Conectar: só se escolhe com o pareamento parado; depois ficam visíveis e inertes. */
+  function abas() {
+    const ocioso = estado.step === "idle";
+    return segmentado({
       rotulo: "Modo de pareamento",
       opcoes: [
-        { valor: "aceitar", rotulo: "Aceitar" },
-        { valor: "conectar", rotulo: "Conectar" },
+        { valor: "aceitar", rotulo: "Aceitar", desabilitada: !ocioso },
+        { valor: "conectar", rotulo: "Conectar", desabilitada: !ocioso },
       ],
       valor: modo,
       aoMudar: (valor) => {
@@ -126,7 +131,9 @@ export default function montar({ ir, assinar }) {
         pintar();
       },
     });
+  }
 
+  function cartaoOcioso() {
     let conteudo;
     if (modo === "aceitar") {
       conteudo = h(
@@ -191,36 +198,59 @@ export default function montar({ ir, assinar }) {
         h("div", { class: "linha" }, botao({ rotulo: "Conectar", variante: "primario", icone: "avancar", aoClicar: conectar })),
       );
     }
-    return [seletor, conteudo];
+    return cartao({ filhos: [conteudo] });
   }
 
-  function painelEsperando() {
-    return [
-      h(
-        "dl",
-        { class: "kv" },
-        h("dt", null, "Endereços desta máquina"),
-        h("dd", null, h("ul", { class: "pareamento__enderecos mono" }, (estado.addresses ?? []).map((a) => h("li", null, a)))),
-        h("dt", null, "Porta"),
-        h("dd", { class: "mono" }, String(estado.port ?? "")),
-        h("dt", null, "Tempo restante"),
-        h("dd", null, linhaTempo()),
-      ),
-      h("p", { class: "pareamento__passo" }, h("span", { class: "girador", "aria-hidden": "true" }), "Esperando a outra máquina conectar."),
-      h("div", { class: "linha" }, botaoCancelar()),
-    ];
+  /** Endereço desta máquina com o botão Copiar; o anúncio para leitor de tela vai numa região de status. */
+  function enderecoCopiavel(endereco) {
+    const anuncio = h("span", { class: "so-leitor", role: "status" });
+    const copiar = botao({
+      rotulo: "Copiar",
+      variante: "discreto",
+      icone: "copiar",
+      "aria-label": `Copiar o endereço ${endereco}`,
+      aoClicar: async () => {
+        const rotulo = copiar.querySelector(".btn__rotulo");
+        try {
+          await navigator.clipboard.writeText(endereco);
+          rotulo.textContent = "Copiado";
+          anuncio.textContent = "Endereço copiado";
+        } catch {
+          rotulo.textContent = "Não copiou";
+          anuncio.textContent = "Não foi possível copiar o endereço";
+        }
+        setTimeout(() => {
+          rotulo.textContent = "Copiar";
+          anuncio.textContent = "";
+        }, 2000);
+      },
+    });
+    return h("li", { class: "pareamento__endereco" }, h("span", { class: "mono" }, endereco), copiar, anuncio);
   }
 
-  function painelConectando() {
-    return [
-      h("p", { class: "pareamento__passo" }, h("span", { class: "girador", "aria-hidden": "true" }), `Conectando a ${enderecoDigitado.trim() || "outra máquina"}.`),
-      h("div", { class: "linha" }, botaoCancelar()),
-    ];
+  function cartaoEscutando() {
+    return h(
+      "section",
+      { class: "cartao" },
+      h("div", { class: "cartao__cabecalho" }, h("h2", null, "Aguardando a outra máquina"), selo("acento", "escutando")),
+      h("p", null, "Na outra máquina, escolha Conectar e digite este endereço:"),
+      h("ul", { class: "pareamento__enderecos" }, (estado.addresses ?? []).map(enderecoCopiavel)),
+      h("p", { class: "pareamento__restante" }, h("span", { class: "nota" }, "Tempo restante para conectar"), linhaTempo()),
+    );
   }
 
-  function painelCodigo() {
+  function cartaoConectando() {
+    return cartao({
+      filhos: [h("p", { class: "pareamento__passo" }, h("span", { class: "girador", "aria-hidden": "true" }), `Conectando a ${enderecoDigitado.trim() || "outra máquina"}.`)],
+    });
+  }
+
+  function cartaoCodigo() {
     const par = estado.peer;
-    return [
+    return h(
+      "section",
+      { class: "cartao pareamento__confirmacao" },
+      h("h2", null, "Código de confirmação"),
       par &&
         h(
           "p",
@@ -232,10 +262,10 @@ export default function montar({ ir, assinar }) {
           h("span", { class: "muted" }, ` · módulos: ${rotuloModulos(par.modules ?? {})}`),
         ),
       h("p", { class: "pareamento__codigo", "aria-live": "polite", "aria-label": `Código ${estado.code}` }, estado.code),
-      h("p", null, "Confirme que a outra máquina mostra o mesmo código."),
+      h("p", { class: "muted" }, "Confirme que a outra máquina mostra o mesmo código. Se for diferente, alguém pode estar no meio da conexão."),
       h(
         "div",
-        { class: "linha" },
+        { class: "linha pareamento__decisao" },
         botao({
           rotulo: "São iguais",
           variante: "primario",
@@ -249,27 +279,51 @@ export default function montar({ ir, assinar }) {
               confiancaTotal = false;
             }),
         }),
-        botao({ rotulo: "São diferentes, cancelar", variante: "perigo", icone: "fechar", aoClicar: cancelar }),
-        h("span", { class: "nota" }, "Tempo restante: ", linhaTempo()),
+        botao({ rotulo: "São diferentes, cancelar", variante: "perigo", icone: "fechar", aoClicar: () => cancelar() }),
       ),
-    ];
+      h("p", { class: "nota" }, "Tempo restante: ", linhaTempo()),
+    );
   }
 
+  function cartaoConfirmado() {
+    return cartao({
+      titulo: "Código confirmado",
+      filhos: [h("p", null, `Escolha, no painel de permissões, o que ${(estado.peer ?? { name: "a outra máquina" }).name} pode fazer com esta máquina. Depois, clique em Concluir.`)],
+    });
+  }
+
+  function cartaoAguardandoPar() {
+    return cartao({
+      titulo: "Aguardando a outra máquina",
+      filhos: [
+        h("p", { class: "pareamento__passo" }, h("span", { class: "girador", "aria-hidden": "true" }), "Esperando a outra máquina confirmar as permissões dela."),
+        h("p", { class: "muted" }, "Sem decisão em 2 minutos, o pareamento é recusado nos dois lados."),
+      ],
+    });
+  }
+
+  /** Painel da direita: sempre visível, mas só se mexe nele depois que o código foi confirmado. */
   function painelPermissoes() {
+    const ativo = estado.step === "permissions";
     const par = estado.peer ?? { name: "a outra máquina" };
     const motivoClipboard = disponiveis.clipboard ? null : "Um dos lados não tem o módulo de clipboard.";
     const motivoInput = !recurso("input") ? INDISPONIVEL : disponiveis.input ? null : "O par não tem o módulo de teclado e mouse.";
-    return [
+    const nota = ativo ? null : estado.step === "waiting_peer" ? "Suas escolhas foram enviadas." : "Libera depois de confirmar o código.";
+    return h(
+      "section",
+      { class: "cartao pareamento__permissoes" },
       h("h2", null, "Permissões iniciais"),
-      h("p", { class: "muted" }, `Tudo desligado por padrão. Ligue só o que ${par.name} pode fazer com esta máquina; dá para mudar depois em Dispositivos.`),
+      h("p", { class: "muted" }, `Tudo desligado por padrão. Ligue só o que ${par.name} pode fazer aqui. Dá para mudar depois em Dispositivos.`),
+      nota && h("p", { class: "nota", role: "status" }, nota),
       h(
         "div",
         { class: "pilha" },
+        h("h3", { class: "pareamento__grupo" }, "Área de transferência"),
         interruptor({
           rotulo: "Pode me enviar clipboard",
           descricao: motivoClipboard ?? "O texto que ele copiar chega à caixa desta máquina.",
           marcado: grants.clipboard_in,
-          desabilitado: motivoClipboard !== null,
+          desabilitado: !ativo || motivoClipboard !== null,
           aoMudar: (valor) => {
             grants.clipboard_in = valor;
           },
@@ -278,16 +332,17 @@ export default function montar({ ir, assinar }) {
           rotulo: "Pode receber meu clipboard",
           descricao: motivoClipboard ?? "O texto que você copiar aqui vai para ele.",
           marcado: grants.clipboard_out,
-          desabilitado: motivoClipboard !== null,
+          desabilitado: !ativo || motivoClipboard !== null,
           aoMudar: (valor) => {
             grants.clipboard_out = valor;
           },
         }),
+        h("h3", { class: "pareamento__grupo pareamento__grupo--separado" }, "Teclado e mouse"),
         interruptor({
           rotulo: "Pode controlar meu teclado e mouse",
           descricao: motivoInput ?? "Confiança total: ele pode digitar e clicar qualquer coisa aqui enquanto estiver autorizado.",
           marcado: grants.input_in,
-          desabilitado: motivoInput !== null,
+          desabilitado: !ativo || motivoInput !== null,
           aoMudar: async (valor) => {
             if (!valor) {
               grants.input_in = false;
@@ -304,31 +359,24 @@ export default function montar({ ir, assinar }) {
             confiancaTotal = true;
           },
         }),
+        interruptor({ rotulo: "É controlada por esta máquina", descricao: INDISPONIVEL, marcado: false, desabilitado: true }),
       ),
       h(
         "div",
-        { class: "linha" },
+        { class: "pareamento__concluir" },
         botao({
           rotulo: "Concluir",
           variante: "primario",
           icone: "verificar",
+          desabilitado: !ativo,
           aoClicar: () =>
             chamar(async () => {
               const r = await api.pairFinish({ attempt_id: estado.attempt_id, grants: { ...grants }, acknowledge_full_trust: confiancaTotal });
               estado = { ...estado, step: r.step };
             }),
         }),
-        botaoCancelar(),
       ),
-    ];
-  }
-
-  function painelAguardandoPar() {
-    return [
-      h("p", { class: "pareamento__passo" }, h("span", { class: "girador", "aria-hidden": "true" }), "Aguardando a outra máquina confirmar as permissões dela."),
-      h("p", { class: "muted" }, "Sem decisão em 2 minutos, o pareamento é recusado nos dois lados."),
-      h("div", { class: "linha" }, botaoCancelar()),
-    ];
+    );
   }
 
   function painelResultado() {
@@ -388,15 +436,23 @@ export default function montar({ ir, assinar }) {
 
   function pintar() {
     pararRelogio();
-    let filhos;
-    if (resultado) filhos = painelResultado();
-    else if (estado.step === "listening") filhos = painelEsperando();
-    else if (estado.step === "connecting") filhos = painelConectando();
-    else if (estado.step === "code") filhos = painelCodigo();
-    else if (estado.step === "permissions") filhos = painelPermissoes();
-    else if (estado.step === "waiting_peer") filhos = painelAguardandoPar();
-    else filhos = painelOcioso();
-    trocar(corpo, cartao({ filhos: [erroGeral && aviso("erro", h("p", null, erroGeral)), ...filhos] }));
+    const aviso_ = erroGeral && aviso("erro", h("p", null, erroGeral));
+    if (resultado) {
+      botaoCabecalho.hidden = true;
+      corpo.classList.add("colunas--unica");
+      trocar(corpo, h("div", { class: "pilha" }, aviso_, cartao({ filhos: painelResultado() })));
+      return;
+    }
+    botaoCabecalho.hidden = estado.step === "idle";
+    corpo.classList.remove("colunas--unica");
+    const passos = {
+      listening: cartaoEscutando,
+      connecting: cartaoConectando,
+      code: cartaoCodigo,
+      permissions: cartaoConfirmado,
+      waiting_peer: cartaoAguardandoPar,
+    };
+    trocar(corpo, h("div", { class: "pilha" }, aviso_, abas(), (passos[estado.step] ?? cartaoOcioso)()), painelPermissoes());
   }
 
   const cancelarEventos = [

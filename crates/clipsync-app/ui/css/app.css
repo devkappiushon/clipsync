@@ -260,6 +260,7 @@ h1:focus {
 /* Conteúdo */
 
 .conteudo {
+  container: conteudo / inline-size;
   min-width: 0;
   overflow-y: auto;
   padding: var(--pad-y) var(--gutter);
@@ -363,6 +364,22 @@ h1:focus {
 }
 
 /* Utilitários de composição */
+
+/* Duas colunas: a principal e um painel lateral. Abaixo de ~1100 px de janela (780 px úteis no conteúdo) vira uma coluna.
+   A largura do painel vem de --col-lado; .colunas--unica força uma coluna só (ex.: sem painel). */
+
+.colunas {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: var(--s-4);
+}
+
+@container conteudo (min-width: 780px) {
+  .colunas:not(.colunas--unica) {
+    grid-template-columns: minmax(0, 1fr) var(--col-lado, 288px);
+  }
+}
 
 .pilha {
   display: flex;
