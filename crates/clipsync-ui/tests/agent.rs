@@ -55,6 +55,8 @@ async fn without_a_profile_nothing_starts_and_commands_say_not_initialized() {
     assert_eq!(s["agent_error"], json!(null), "null, never omitted");
     assert_eq!(s["features"]["input"], json!(false));
     assert_eq!(s["features"]["peer_pause"], json!(false));
+    // S6-13: system notifications exist, so the preference switches are live.
+    assert_eq!(s["features"]["os_notifications"], json!(true));
     for req in [
         json!({ "cmd": "agent_start" }),
         json!({ "cmd": "pause_set", "args": { "paused": true } }),

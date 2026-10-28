@@ -29,7 +29,7 @@
     "screen_lock": true,
     "switch_device": true,
     "layout_copy": true,
-    "os_notifications": false,
+    "os_notifications": true,
     "global_shortcuts": false,
     "peer_pause": false,
     "peer_controls_column": false,

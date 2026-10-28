@@ -80,7 +80,8 @@ pub struct MeshCount {
 }
 
 /// What the screens may offer. The first seven follow the agent's input (Linux, module on,
-/// `InputState` answering); the rest has no backend in this version (§12.2 rule 6).
+/// `InputState` answering); `os_notifications` is on (the casca shows them, filtered by the
+/// preferences: decision 10, S6-13); the rest has no backend in this version (§12.2 rule 6).
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Features {
@@ -114,6 +115,7 @@ impl Features {
             screen_lock: input_live,
             switch_device: input_live,
             layout_copy: input_live,
+            os_notifications: true,
             ..Self::default()
         }
     }
