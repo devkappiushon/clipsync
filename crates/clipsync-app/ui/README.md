@@ -17,7 +17,6 @@ Critério de pronto da interface: §12.9 item 5 do contrato. Ele busca estilo em
 
 ```
 index.html            casca: barra lateral, <main>, módulo js/app.js
-componentes.html      catálogo de componentes em todos os estados (js/galeria.js)
 css/                  fonts, tokens, app (casca), components e telas/<tela>.css
 fonts/                Inter, Geist e Geist Mono em woff2 variável (OFL.txt e FONTS.md)
 js/api.js             único ponto de acesso a dados: invoke("clipsync", { req }) e eventos
@@ -27,13 +26,20 @@ js/areas.js           cabeçalho, região assíncrona, avisos e estados vazio e 
 js/telas/<tela>.js    uma tela por arquivo
 ```
 
-O simulador do agente não mora aqui: fica em `crates/clipsync-app/ui-dev/` (`mock.js` e `mock/<dominio>.js`, um domínio por arquivo). A pasta `ui/` é a que vai no pacote do app, então nada de simulação entra nele.
+O que só serve ao desenvolvimento não mora aqui: fica em `crates/clipsync-app/ui-dev/`, nos mesmos caminhos relativos. São o simulador do agente (`mock.js` e `mock/<dominio>.js`, um domínio por arquivo) e o catálogo de componentes (`componentes.html` e `js/galeria.js`). A pasta `ui/` é a que vai no pacote do app, então nada disso entra nele.
 
 Telas: onboarding (3 passos), dispositivos, pareamento, layout de telas, clipboard, diagnóstico e preferências.
 
 ## Rodar no navegador (com o simulador)
 
-Precisa de um servidor de dev que sirva `ui/` por cima de `ui-dev/` nas mesmas URLs: um caminho que não existe em `ui/` é procurado em `ui-dev/`. Assim `/mock.js` e `/mock/...` existem no navegador e não existem no pacote. O Maestro mantém um desses, com `Cache-Control: no-store`, em `http://127.0.0.1:5173` e `http://127.0.0.1:5174`. Um `python3 -m http.server` apontado só para `ui/` não serve: a interface falha com erro na tela, porque falta o simulador.
+Da raiz do repositório:
+
+```sh
+python3 -I scripts/servir-ui-dev.py          # porta 5174 por padrão
+python3 -I scripts/servir-ui-dev.py 5173     # outra porta
+```
+
+O script serve `ui/` por cima de `ui-dev/` nas mesmas URLs: um caminho que não existe em `ui/` é procurado em `ui-dev/`. Assim `/mock.js`, `/mock/...` e `/componentes.html` existem no navegador e não existem no pacote. Responde com `Cache-Control: no-store` e escuta só em `127.0.0.1`. Um `python3 -m http.server` apontado só para `ui/` não serve: a interface falha com erro na tela, porque falta o simulador.
 
 Servidor de dev é exceção à regra de não subir servidor, só enquanto você confere: derrube no fim.
 
@@ -65,6 +71,10 @@ Escolha pela URL: `/?cenario=<nome>#/<tela>`.
 3. Crie `css/telas/<nome>.css`, ligue em `index.html`, e use só tokens e classes prefixadas pelo nome da tela.
 4. Peça dados só por `api.<comando>()`. Para um comando novo, mude antes o contrato e o `ui-dev/mock/<dominio>.js`.
 5. Escreva os estados de carregando, vazio e erro (`area()` de `js/areas.js` já cobre os três).
+
+## Catálogo de componentes
+
+`/componentes.html`, no servidor de dev, mostra cada componente em todos os estados, para conferir os dois temas e a acessibilidade. A página e o `js/galeria.js` ficam em `ui-dev/` e importam os módulos de `ui/js/` pelos mesmos caminhos relativos.
 
 ## Fontes
 

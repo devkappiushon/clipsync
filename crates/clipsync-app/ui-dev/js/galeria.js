@@ -1,4 +1,4 @@
-// Catálogo de componentes: ui/componentes.html. Serve para conferir cada estado nos dois temas.
+// Catálogo de componentes: ui-dev/componentes.html. Serve para conferir cada estado nos dois temas.
 
 import { h } from "./dom.js";
 import { botao, campo, cartao, confirmar, esqueleto, interruptor, segmentado, selo, tabela, tecla } from "./componentes.js";
