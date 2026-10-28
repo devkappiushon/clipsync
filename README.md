@@ -8,11 +8,11 @@ Estado em 2026-10-28: a v0.1.0 publicou a linha de comando; a v0.2.0 traz o app 
 
 Cada release traz o app de desktop e a linha de comando, mais o `SHA256SUMS`:
 
-- `clipsync-app-v0.2.0-linux-x86_64.AppImage` e `clipsync-app-v0.2.0-linux-amd64.deb`: app de desktop no Linux.
-- `clipsync-app-v0.2.0-windows-x86_64-setup.exe` e `clipsync-app-v0.2.0-windows-x86_64.msi`: app de desktop no Windows.
-- `clipsync-v0.2.0-linux-x86_64.tar.gz` e `clipsync-v0.2.0-windows-x86_64.zip`: só a linha de comando (`clipsync`), com este README.
+- `clipsync-app-v0.2.1-linux-x86_64.AppImage` e `clipsync-app-v0.2.1-linux-amd64.deb`: app de desktop no Linux.
+- `clipsync-app-v0.2.1-windows-x86_64-setup.exe` e `clipsync-app-v0.2.1-windows-x86_64.msi`: app de desktop no Windows.
+- `clipsync-v0.2.1-linux-x86_64.tar.gz` e `clipsync-v0.2.1-windows-x86_64.zip`: só a linha de comando (`clipsync`), com este README.
 
-Confira antes de executar (troque `v0.2.0` pela tag que você baixou):
+Confira antes de executar (troque `v0.2.1` pela tag que você baixou):
 
 ```sh
 # Linux e macOS
@@ -21,7 +21,7 @@ sha256sum -c SHA256SUMS --ignore-missing
 
 ```powershell
 # Windows (PowerShell): compare com a linha do pacote em SHA256SUMS
-Get-FileHash .\clipsync-app-v0.2.0-windows-x86_64-setup.exe -Algorithm SHA256
+Get-FileHash .\clipsync-app-v0.2.1-windows-x86_64-setup.exe -Algorithm SHA256
 ```
 
 ### App de desktop
@@ -31,10 +31,10 @@ O app traz as telas e o agente no mesmo processo, com ícone na bandeja. Fechar 
 No Linux, sem sudo, com o AppImage:
 
 ```sh
-scripts/instalar-app-linux.sh ~/Downloads/clipsync-app-v0.2.0-linux-x86_64.AppImage
+scripts/instalar-app-linux.sh ~/Downloads/clipsync-app-v0.2.1-linux-x86_64.AppImage
 ```
 
-O script copia o AppImage para `~/.local/bin/clipsync-app.AppImage` e cria o atalho "ClipSync" no menu de aplicativos. Rodar de novo com um AppImage mais novo atualiza. O app precisa do WebKitGTK 4.1; se o AppImage não abrir por falta de FUSE, instale o `libfuse2`. No GNOME, o ícone da bandeja depende da extensão AppIndicator. Com o `.deb`: `sudo apt install ./clipsync-app-v0.2.0-linux-amd64.deb`.
+O script copia o AppImage para `~/.local/bin/clipsync-app.AppImage` e cria o atalho "ClipSync" no menu de aplicativos. Rodar de novo com um AppImage mais novo atualiza. O app precisa do WebKitGTK 4.1; se o AppImage não abrir por falta de FUSE, instale o `libfuse2`. No GNOME, o ícone da bandeja depende da extensão AppIndicator. Com o `.deb`: `sudo apt install ./clipsync-app-v0.2.1-linux-amd64.deb`.
 
 No Windows, rode o `setup.exe` (ou o `.msi`). O instalador não é assinado, então o SmartScreen avisa: clique em "Mais informações" e depois em "Executar assim mesmo". O app usa o WebView2, que já vem no Windows 10 e 11 atualizados; se faltar, o instalador baixa.
 
