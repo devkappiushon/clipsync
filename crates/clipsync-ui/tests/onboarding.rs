@@ -7,6 +7,7 @@
 
 mod common;
 
+use clipsync_proto::{ControlRequest, ControlResponse};
 use common::*;
 use serde_json::json;
 
@@ -191,4 +192,54 @@ async fn self_test_calls_the_input_module_when_it_is_on() {
     assert_eq!(input["status"], json!("unavailable"), "{input}");
     assert!(!input["detail"].as_str().unwrap().is_empty());
     ui.shutdown().await;
+}
+
+/// S6-16: what goes wrong with the resume after the test shows up in the result, not only in
+/// the log. An agent "outside the app" answers as the test wants.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_resume_after_the_test_is_in_the_result() {
+    let not_saved = clipsync_core::msg::STATE_NOT_SAVED;
+    let cases = [
+        // Pause reached state.toml, resume did not: a restart comes back paused.
+        (
+            None,
+            Some(not_saved),
+            Some("depois de reiniciar ele volta pausado"),
+        ),
+        // Neither reached state.toml: memory and file agree again, nothing to say.
+        (Some(not_saved), Some(not_saved), None),
+        // The resume itself was refused: still paused.
+        (
+            None,
+            Some("recusado"),
+            Some("o agente ficou pausado depois do teste"),
+        ),
+    ];
+    for (pause, resume, note) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let (pa, _) = init_profile(dir.path(), "a", CLIPBOARD_ONLY);
+        let agent = fake_agent(&pa, move |req| {
+            let answer = |e: Option<&str>| match e {
+                None => ControlResponse::Ok,
+                Some(m) => ControlResponse::Error { message: m.into() },
+            };
+            match req {
+                ControlRequest::Pause => answer(pause),
+                ControlRequest::Resume => answer(resume),
+                _ => ControlResponse::Error {
+                    message: "não suportado".into(),
+                },
+            }
+        })
+        .await;
+        let ui = start(dir.path(), "a").await;
+        let r = ok(&ui, json!({ "cmd": "onboarding_self_test" })).await;
+        let detail = r["results"][0]["detail"].as_str().unwrap();
+        match note {
+            Some(n) => assert!(detail.contains(n), "{detail}"),
+            None => assert!(!detail.contains("agente"), "{detail}"),
+        }
+        ui.shutdown().await;
+        agent.stop().await;
+    }
 }

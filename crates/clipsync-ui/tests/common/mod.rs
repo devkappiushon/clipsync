@@ -9,8 +9,8 @@ use std::net::{SocketAddr, UdpSocket};
 use std::path::Path;
 use std::time::Duration;
 
-use clipsync_core::{InitOptions, PeerEntry, Profile};
-use clipsync_proto::{ModuleSet, PeerId, PeerPerms};
+use clipsync_core::{CoreError, InitOptions, PeerEntry, Profile, control};
+use clipsync_proto::{AgentStatus, ControlRequest, ControlResponse, ModuleSet, PeerId, PeerPerms};
 use clipsync_ui::{Ui, UiError, UiEvent, UiOptions};
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
@@ -156,4 +156,80 @@ where
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     panic!("timed out waiting for: {what}");
+}
+
+/// An agent "outside the app" (like `clipsync run` in a terminal) whose answers the test writes.
+/// `Status` is answered here (not paused, no peers); every other request goes to `answer`.
+pub struct FakeAgent {
+    stop: tokio::sync::oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<Result<(), CoreError>>,
+}
+
+impl FakeAgent {
+    pub async fn stop(self) {
+        let _ = self.stop.send(());
+        self.task.await.unwrap().unwrap();
+    }
+}
+
+struct Answers<F> {
+    status: AgentStatus,
+    answer: F,
+}
+
+// What `#[async_trait]` writes; the crate has no async-trait dependency of its own.
+impl<F> control::ControlHandler for Answers<F>
+where
+    F: Fn(ControlRequest) -> ControlResponse + Send + Sync + 'static,
+{
+    fn handle<'life0, 'async_trait>(
+        &'life0 self,
+        req: ControlRequest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ControlResponse> + Send + 'async_trait>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            match req {
+                ControlRequest::Status => ControlResponse::Status(self.status.clone()),
+                other => (self.answer)(other),
+            }
+        })
+    }
+}
+
+/// Serves the control socket of `profile` until `FakeAgent::stop`; returns once it answers.
+pub async fn fake_agent(
+    profile: &Profile,
+    answer: impl Fn(ControlRequest) -> ControlResponse + Send + Sync + 'static,
+) -> FakeAgent {
+    let cfg = profile.load_config().unwrap();
+    let handler = Answers {
+        status: AgentStatus {
+            device_name: cfg.device_name,
+            id: profile.load_identity().unwrap().id(),
+            listen: cfg.listen,
+            paused: false,
+            peers: vec![],
+            modules: vec![],
+            recent_blocks: vec![],
+            recent_removals: vec![],
+        },
+        answer,
+    };
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let socket = profile.socket_path();
+    let task = tokio::spawn(async move {
+        control::serve(&socket, std::sync::Arc::new(handler), async {
+            let _ = stopped.await;
+        })
+        .await
+    });
+    let p = profile.clone();
+    wait_until("the fake agent answers", || async {
+        control::request(&p, ControlRequest::Status).await.is_ok()
+    })
+    .await;
+    FakeAgent { stop, task }
 }

@@ -227,25 +227,51 @@ fn input_result(outcome: clipsync_input::SelfTestOutcome) -> TestResult {
     tested(ModuleName::Input, status, detail)
 }
 
+/// How the agent was paused for the test.
+enum PausedForTest {
+    /// Already paused (by the user) or no agent: nothing to undo.
+    No,
+    /// Paused by us; `saved` = state.toml says paused too.
+    Yes { saved: bool },
+}
+
 /// The test opens its own adapter, so a running agent would see the synthetic text and offer
-/// it to the peers: the agent is paused first (fails closed) and resumed after. `true` = we
-/// paused it.
-async fn pause_for_test(ctx: &Ctx) -> Result<bool, UiError> {
+/// it to the peers: the agent is paused first (fails closed) and resumed after.
+async fn pause_for_test(ctx: &Ctx) -> Result<PausedForTest, UiError> {
     let Some(s) = status::agent_status(ctx).await else {
-        return Ok(false);
+        return Ok(PausedForTest::No);
     };
     if s.paused {
-        return Ok(false);
+        return Ok(PausedForTest::No);
     }
     match ctx.request(ControlRequest::Pause).await? {
-        ControlResponse::Ok => Ok(true),
+        ControlResponse::Ok => Ok(PausedForTest::Yes { saved: true }),
         // Paused in memory, only state.toml failed: still safe to test.
         ControlResponse::Error { message } if message == clipsync_core::msg::STATE_NOT_SAVED => {
-            Ok(true)
+            Ok(PausedForTest::Yes { saved: false })
         }
         ControlResponse::Error { message } => Err(UiError::internal(&clean(&message))),
         _ => Err(UiError::internal(msg::UNEXPECTED_REPLY)),
     }
+}
+
+/// `None` when the agent is back as before the test; otherwise what the user must know (S6-16).
+async fn resume_after_test(ctx: &Ctx, pause_saved: bool) -> Option<&'static str> {
+    let note = match ctx.request(ControlRequest::Resume).await {
+        Ok(ControlResponse::Ok) => return None,
+        // Running again in memory. Only a pause that reached state.toml outlives a restart.
+        Ok(ControlResponse::Error { message })
+            if message == clipsync_core::msg::STATE_NOT_SAVED =>
+        {
+            if !pause_saved {
+                return None;
+            }
+            msg::SELF_TEST_RESUME_NOT_SAVED
+        }
+        Ok(_) | Err(_) => msg::SELF_TEST_STILL_PAUSED,
+    };
+    tracing::warn!("{note}");
+    Some(note)
 }
 
 /// Clipboard: `clipsync_clipboard::self_test` (a fake one when the profile uses fake adapters),
@@ -271,10 +297,17 @@ pub(crate) async fn self_test(ctx: &Ctx) -> Result<SelfTest, UiError> {
         } else {
             clipsync_clipboard::self_test().await
         };
-        if paused && let Err(e) = ctx.request(ControlRequest::Resume).await {
-            tracing::warn!(code = %e.code, "agent not resumed after the self test");
+        let mut result = clipboard_result(outcome);
+        if let PausedForTest::Yes { saved } = paused
+            && let Some(note) = resume_after_test(ctx, saved).await
+        {
+            // S6-16: on screen, not only in the log.
+            result.detail = Some(match result.detail.take() {
+                Some(d) => format!("{d}; {note}"),
+                None => note.to_string(),
+            });
         }
-        Ok::<_, UiError>(clipboard_result(outcome))
+        Ok::<_, UiError>(result)
     };
     let input = async {
         if cfg.modules.input && INPUT_SUPPORTED {

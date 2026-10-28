@@ -20,6 +20,9 @@ pub const RECREATE_CONFIRM: &str = "este dispositivo já está configurado: recr
 pub const SELF_TEST_UNSUPPORTED: &str = "sem adaptador nesta plataforma";
 pub const SELF_TEST_MODULE_OFF: &str = "módulo desligado";
 pub const SELF_TEST_MISSING: &str = "teste automático indisponível nesta versão";
+pub const SELF_TEST_STILL_PAUSED: &str =
+    "o agente ficou pausado depois do teste: retome pelo botão de pausa";
+pub const SELF_TEST_RESUME_NOT_SAVED: &str = "o agente foi retomado, mas não foi possível gravar state.toml: depois de reiniciar ele volta pausado";
 
 // 2 · dispositivos
 pub const UNKNOWN_PEER: &str = "dispositivo não encontrado entre os pareados";
