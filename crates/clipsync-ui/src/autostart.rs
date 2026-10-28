@@ -17,6 +17,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::{env, fs, io};
 
+pub(crate) mod fsio;
+
 pub const DESKTOP_FILE: &str = "clipsync.desktop";
 pub const HIDDEN_FLAG: &str = "--hidden";
 
@@ -141,19 +143,15 @@ pub fn default_dir() -> Option<PathBuf> {
         .map(|home| PathBuf::from(home).join(".config").join("autostart"))
 }
 
-/// Writes `clipsync.desktop` in `dir` (tmp + rename) and returns its path.
+/// Writes `clipsync.desktop` in `dir` (new temp file + rename, mode 0644) and returns its path.
 pub fn enable_in(dir: &Path, launcher: &Launcher) -> io::Result<PathBuf> {
     launcher
         .check()
         .map_err(|why| io::Error::new(io::ErrorKind::InvalidInput, why))?;
     fs::create_dir_all(dir)?;
     let path = dir.join(DESKTOP_FILE);
-    let tmp = dir.join(format!("{DESKTOP_FILE}.tmp-{}", std::process::id()));
-    let written = fs::write(&tmp, launcher.desktop_entry()).and_then(|()| fs::rename(&tmp, &path));
-    if written.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    written.map(|()| path)
+    fsio::write_atomic(&path, launcher.desktop_entry().as_bytes(), 0o644)?;
+    Ok(path)
 }
 
 /// Removes `clipsync.desktop` from `dir`; already absent is fine.

@@ -10,6 +10,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::api::{PrefsSetArgs, code};
+use crate::autostart::fsio;
 use crate::events::{PrefsChanged, UiEvent};
 use crate::{Ctx, UiError, autostart, lock, msg};
 
@@ -149,18 +150,13 @@ pub(crate) fn load(dir: &Path) -> Stored {
     }
 }
 
-/// tmp + rename (§12.2 rule 5). The profile directory may not exist before the onboarding.
+/// New temp file (0600) + rename (§12.2 rule 5). The profile directory may not exist before the
+/// onboarding.
 fn save(dir: &Path, s: &Stored) -> Result<(), UiError> {
     let text = toml::to_string(s).map_err(|e| UiError::internal(&e.to_string()))?;
-    let path = dir.join(FILE);
-    let tmp = dir.join(format!("{FILE}.tmp-{}", std::process::id()));
-    let written = create_dir(dir)
-        .and_then(|()| fs::write(&tmp, text))
-        .and_then(|()| fs::rename(&tmp, &path));
-    if written.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    written.map_err(|e| UiError::new(code::IO, msg::io(&e.to_string())))
+    create_dir(dir)
+        .and_then(|()| fsio::write_atomic(&dir.join(FILE), text.as_bytes(), 0o600))
+        .map_err(|e| UiError::new(code::IO, msg::io(&e.to_string())))
 }
 
 /// 0700 like `Profile::init`, which would tighten it anyway.
