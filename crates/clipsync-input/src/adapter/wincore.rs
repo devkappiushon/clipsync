@@ -5,7 +5,7 @@
 //!
 //! Key and button codes never reach a log (§13.2 rule 2e): `Debug` of [`Out`] and [`Held`] is redacted.
 use super::winmath::{HotkeyTracker, barrier_crossing, capture_delta};
-use super::{Hotkey, Zone};
+use super::{BarrierSpec, Hotkey, Zone, ZoneRef};
 use crate::keymap;
 use clipsync_proto::{Edge, InputEvent};
 use clipsync_win::{RawEvent, Verdict, WinButton};
@@ -20,6 +20,26 @@ pub struct ArmedBarrier {
     pub edge: Edge,
     pub from: f32,
     pub to: f32,
+}
+
+/// The barriers the module asked for, on the zones that exist now. A barrier whose zone is gone
+/// stays as `None`, so the indexes the module knows do not shift (§13.8 item 3).
+pub fn resolve_barriers(specs: &[BarrierSpec], zones: &[Zone]) -> Arc<[Option<ArmedBarrier>]> {
+    specs
+        .iter()
+        .map(|spec| {
+            let zone = zones.iter().find(|z| match &spec.zone {
+                ZoneRef::Index(i) => z.index == *i,
+                ZoneRef::Name(n) => z.name.as_deref() == Some(n.as_str()),
+            })?;
+            Some(ArmedBarrier {
+                zone: zone.clone(),
+                edge: spec.edge,
+                from: spec.from,
+                to: spec.to,
+            })
+        })
+        .collect()
 }
 
 /// What is physically held right now: keys by evdev code (the codes `keymap` makes, all below 256)

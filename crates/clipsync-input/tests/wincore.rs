@@ -1,7 +1,7 @@
 //! §13.6 "Adaptador Windows" item 1 (Flux): the decisions inside the hook callback, on every system.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-use clipsync_input::adapter::wincore::{ArmedBarrier, CaptureCore, Held, Out};
-use clipsync_input::adapter::{Hotkey, Zone};
+use clipsync_input::adapter::wincore::{ArmedBarrier, CaptureCore, Held, Out, resolve_barriers};
+use clipsync_input::adapter::{BarrierSpec, Hotkey, Zone, ZoneRef};
 use clipsync_proto::{Edge, InputEvent};
 use clipsync_win::{RawEvent, Verdict, WinButton};
 use std::sync::Arc;
@@ -405,4 +405,41 @@ fn debug_never_shows_a_key_a_button_or_what_is_held() {
         held: c.held(),
     };
     assert!(!format!("{activate:?}").contains("30"));
+}
+
+#[test]
+fn barriers_are_resolved_by_name_or_index_and_a_missing_zone_keeps_its_place() {
+    let zones = [
+        Zone {
+            index: 0,
+            name: Some("DELL".into()),
+            ..zone(0, 0, 1920, 1080)
+        },
+        Zone {
+            index: 1,
+            name: Some("LG".into()),
+            ..zone(1920, 0, 1920, 1080)
+        },
+    ];
+    let spec = |zone, edge| BarrierSpec {
+        zone,
+        edge,
+        from: 0.0,
+        to: 1.0,
+    };
+    let resolved = resolve_barriers(
+        &[
+            spec(ZoneRef::Name("LG".into()), Edge::Right),
+            spec(ZoneRef::Name("gone".into()), Edge::Left),
+            spec(ZoneRef::Index(0), Edge::Bottom),
+        ],
+        &zones,
+    );
+    assert_eq!(resolved.len(), 3);
+    assert_eq!(resolved[0].as_ref().map(|b| b.zone.index), Some(1));
+    assert!(resolved[1].is_none());
+    assert_eq!(
+        resolved[2].as_ref().map(|b| (b.zone.index, b.edge)),
+        Some((0, Edge::Bottom))
+    );
 }

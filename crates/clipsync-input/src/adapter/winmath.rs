@@ -180,6 +180,26 @@ pub fn barrier_crossing(
     (crossed || pushing).then(|| edge_position(zone, edge, new.0 as f32, new.1 as f32))
 }
 
+/// Where the cursor lands when it enters `zone` through `edge` at `pos` (0 to 1 along the edge), or
+/// comes back from a capture: on the edge, two pixels inside the border pixel, so the next small move
+/// does not cross the barrier again. Physical px; the zone's own rectangle holds the result.
+pub fn inside_point(zone: &Zone, edge: Edge, pos: f32) -> (i32, i32) {
+    let pos = f64::from(pos.clamp(0.0, 1.0));
+    let (w, h) = (i64::from(zone.width), i64::from(zone.height));
+    let along = |len: i64| (pos * (len - 1).max(0) as f64).round() as i64;
+    let inward = |len: i64| 1.min(len - 1).max(0);
+    let (x, y) = match edge {
+        Edge::Left => (inward(w), along(h)),
+        Edge::Right => ((w - 1 - inward(w)).max(0), along(h)),
+        Edge::Top => (along(w), inward(h)),
+        Edge::Bottom => (along(w), (h - 1 - inward(h)).max(0)),
+    };
+    (
+        (i64::from(zone.x) + x) as i32,
+        (i64::from(zone.y) + y) as i32,
+    )
+}
+
 // ---------------------------------------------------------------------------------------------
 // Coordinates
 

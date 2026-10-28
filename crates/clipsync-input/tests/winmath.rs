@@ -2,8 +2,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use clipsync_input::adapter::winmath::{
     HotkeyTracker, KeyDecision, NEUTRAL_KEY, Rect, barrier_crossing, capture_delta, clamp_to_union,
-    denormalize_abs, emulate_motion, logical_to_physical, normalize_abs, physical_to_logical,
-    scale_of, zone_names, zones,
+    denormalize_abs, emulate_motion, inside_point, logical_to_physical, normalize_abs,
+    physical_to_logical, scale_of, zone_names, zones,
 };
 use clipsync_input::adapter::{Hotkey, Zone};
 use clipsync_proto::{Edge, validate_monitor_name};
@@ -487,4 +487,24 @@ fn the_tracker_is_copy_and_holds_no_allocation() {
     }
     assert_eq!(format!("{a:?}"), format!("{before:?}"));
     assert_eq!(press(&mut a, KEY_LEFTMETA), KeyDecision::default());
+}
+
+#[test]
+fn the_cursor_comes_back_two_pixels_inside_the_border_pixel() {
+    let z = zone(-1920, -200, 1920, 1080);
+    // right edge: the border pixel is x = -1; back in at x = -2
+    assert_eq!(inside_point(&z, Edge::Right, 0.5), (-2, 340));
+    assert_eq!(inside_point(&z, Edge::Left, 0.0), (-1919, -200));
+    assert_eq!(inside_point(&z, Edge::Top, 1.0), (-1, -199));
+    assert_eq!(inside_point(&z, Edge::Bottom, 0.25), (-1440, 878));
+    // the point is inside the zone and one more small move does not cross the barrier again
+    for edge in [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom] {
+        let (x, y) = inside_point(&z, edge, 0.5);
+        assert!(x >= z.x && x < z.x + 1920 && y >= z.y && y < z.y + 1080);
+        assert_eq!(barrier_crossing(&z, edge, 0.0, 1.0, (x, y), (x, y)), None);
+    }
+    // a position out of range is held, and a tiny zone does not leave itself
+    assert_eq!(inside_point(&z, Edge::Right, 9.0), (-2, 879));
+    let tiny = zone(10, 10, 1, 1);
+    assert_eq!(inside_point(&tiny, Edge::Left, 0.5), (10, 10));
 }
