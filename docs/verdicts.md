@@ -3748,6 +3748,83 @@ O release de **8.754.744 bytes** pertence a **b66df03**, não a um rebuild de 70
 
 Evidência integral: `/home/kappxs/.cache/clipsync-verdict/argus-s5-adendo-p2qa07qp` (`meta.json`, `gates.json`, `reads.json`, hashes before/after). SHA-256 do archive: `8cd4518ad46272f92250ac4b070cbe0880e378ac75c8b073e058c19fee644119`.
 
+### S6 · parcial · 5a55688
+
+**Passa no escopo solicitado:** §12.9 item 1 (a–g), item 4 (clipboard, autostart e clippy do app no CI informado) e somente os greps do item 5. Verificado por Argus em **2026-10-28**, com contrato v1.15. **Não encerra S6:** telas, temas, fontes, rede no portal, cenários visuais e app real (item 5 completo e item 6) não foram avaliados nesta rodada; itens 2, 3 e 7 também estão fora deste veredito.
+
+Base local: `5a55688d19c9c55f93a87daf1c00caee819327f4`. O checkout compartilhado tinha alterações de outros agentes; os testes e greps abaixo rodaram no conteúdo de `git archive 5a55688`, exportado para `/home/kappxs/.cache/argus-s6-5a55688-tufou2ei/src`. Os **205 arquivos** do export, inclusive `Cargo.lock`, mantiveram os mesmos SHA-256 antes e depois. Archive SHA-256: `af2e1fcad93afa409c5534fba54bcd56f782807ca5df3057bc03880283dd6206`. Ambiente: Linux x86_64, rustc/cargo **1.99.1**; cache Cargo reaproveitado, sem alegação de build frio.
+
+Preparação aplicada antes dos quatro comandos, na raiz do export:
+
+```sh
+export PATH=$HOME/.cargo/bin:$PATH
+export CARGO_TARGET_DIR=/home/kappxs/.cache/clipsync-verdict/target
+```
+
+Nenhum servidor foi iniciado, nenhum código-fonte foi editado e nenhum comando Cargo com `--workspace` foi executado localmente.
+
+#### 1 · Rivet, proto e core — Passa
+
+| Comando executado | Saída resumida (soma das suítes) | Exit |
+| --- | --- | --- |
+| `cargo test -p clipsync-proto` | 48 passed; 0 failed; 0 ignored; `tests/s6.rs`: 6/6 | 0 |
+| `cargo test -p clipsync-core` | 44 passed; 0 failed; 0 ignored; `tests/mesh.rs`: 11/11; `tests/profile.rs`: 14/14 | 0 |
+
+As asserções foram lidas no export, além da execução. Cada teste citado abaixo saiu `... ok`:
+
+| Item | Veredito | Teste e evidência |
+| --- | --- | --- |
+| (a) Round-trip postcard | **Passa** | `crates/clipsync-proto/tests/s6.rs:106`, `zones_layout_offer_and_enter_at_roundtrip_through_postcard`: codifica/decodifica o frame e compara zonas, oferta e os campos de `EnterAt`. |
+| (b) Validação | **Passa** | `crates/clipsync-proto/tests/s6.rs:157`, `validate_refuses_17_zones_nan_scale_pos_out_of_range_and_empty_segment`: recusa 17 zonas, escala NaN, posição 1.5 e segmentos com `from == to` ou `from > to`; 16 zonas e posição 1.0 são aceitas. |
+| (c) `authorize_*` | **Passa** | `crates/clipsync-proto/tests/s6.rs:230`, `authorize_table_for_zones_enter_at_and_layout_offer`: `Zones` exige `input_in` na saída e passa em pausa; `EnterAt`/`LayoutOffer` exigem `input_in` na entrada; pausa bloqueia `EnterAt`. Também cobre módulos desligados e a entrada de `Zones` em pausa. |
+| (d) Versão 1 | **Passa** | `crates/clipsync-proto/tests/s6.rs:287`, `memhub_refuses_zones_to_a_version_1_peer_and_nothing_leaves`: `RemoteTooOld`, `sent_count == 0` e receptor vazio. `crates/clipsync-core/tests/mesh.rs:649`, `mesh_never_sends_a_protocol_2_message_to_a_version_1_peer`: repete em QUIC real com Hello v1, sem abrir stream uni durante a janela de 1 s; mensagem antiga ainda chega. Ambos cobrem também `LayoutOffer`/`EnterAt`. |
+| (e) Hello v2 compatível | **Passa** | `crates/clipsync-core/tests/mesh.rs:621`, `hello_v2_passes_the_0_1_0_compatibility_rule`: Hello 2/min 1 satisfaz a regra do 0.1.0 (`version >= 1 && 1 >= min_version`); o core aceita Hello 1/min 1 e recusa 3/min 3. Prova da regra, sem execução de binário antigo. |
+| (f) Identidade de `init_with` | **Passa** | `crates/clipsync-core/tests/profile.rs:45`, `profile_init_with_writes_the_identity_it_was_given_and_nothing_on_a_bad_name`: id retornado e id recarregado do disco iguais ao id fornecido; nome inválido não inicializa o perfil. |
+| (g) `recent_blocks` | **Passa** | `crates/clipsync-core/tests/mesh.rs:388`, `mesh_inbound_refusals_are_recorded_newest_first_and_capped`: envia 23 ofertas recusadas, aguarda 20 registros e verifica timestamps em ordem decrescente, origem/motivo e ausência de conteúdo. Conferido `MAX_RECENT_BLOCKS = 20` em `crates/clipsync-proto/src/limits.rs:22` e `push_front` + `truncate(MAX_RECENT_BLOCKS)` em `crates/clipsync-core/src/transport.rs:391`. |
+
+#### 4 · Flux — Passa nos três itens pedidos
+
+**Clipboard — Passa.** `cargo test -p clipsync-clipboard` saiu **0**, com **25 passed; 0 failed; 0 ignored** (7 unitários, 17 em `module_mem`, 1 smoke). Em `crates/clipsync-clipboard/tests/module_mem.rs`, todos estes testes saíram `... ok`:
+
+| Requisito | Veredito | Teste e observação |
+| --- | --- | --- |
+| `ClipApply` | **Passa** | `m_clipapply_writes_an_inbox_item_without_a_new_offer` (`:473`): fake recebe uma escrita, estado vira Applied, `sent_count` ao terceiro par permanece 0 e segunda aplicação dá `WRONG_STATE`. `o_clipapply_refuses_an_expired_item_because_the_ttl_dropped_the_text` (`:543`): item expirado dá `WRONG_STATE`, sem escrita. `n_clipapply_works_while_paused_and_a_stale_item_qualifies` (`:509`) também passou. |
+| `ClipDiscard` | **Passa** | `p_clipdiscard_removes_the_item_and_its_text` (`:559`): caixa fica vazia; reaplicar ou descartar novamente dá `NO_ITEM`; fake continua vazio. Leitura complementar de `src/module.rs:742`: `self.inbox.remove(index)` remove a entrada que possui texto e preview. |
+| `ClipSendCurrent` | **Passa** | `q_clipsendcurrent_sends_the_clipboard_to_clipboard_out_peers` (`:582`): conteúdo atual chega ao fake autorizado; broadcast lista só o par com `clipboard_out`; envio explícito ao par sem permissão retorna NotAuthorized; clipboard vazio retorna `EMPTY_CLIPBOARD`. |
+| TTL da caixa | **Passa** | `k_ttl_counts_from_local_receipt_and_drops_the_text` (`:397`): TTL zero expira na chegada; após 1 s, item com TTL de 800 ms está Expired e sem preview. O teste `o_clipapply_...` comprova que já não pode ser aplicado. Leitura complementar de `src/module.rs:590`: expiração substitui preview por string vazia e texto por `None`. |
+| Debug sem conteúdo | **Passa** | `i_debug_never_shows_content` (`:320`): Debug de `ClipSnapshot` e `InboxItem` não contém o segredo sintético. Em proto, `clip_offer_debug_hides_text`, `inbox_item_debug_hides_preview` e `control_request_debug_hides_clip_send_text` também passaram. |
+
+**Autostart — Passa.** `cargo test -p clipsync-ui --test autostart` saiu **0**, com **4 passed; 0 failed; 0 ignored**. Em `crates/clipsync-ui/tests/autostart.rs`:
+
+- `appimage_wins_over_the_executable_when_set_and_non_empty`: escolhe `$APPIMAGE` não vazio; ausente/vazio usa o executável.
+- `exec_line_quotes_the_program_and_adds_hidden`: `Exec="/opt/ClipSync.AppImage" --hidden`, inclusive escape de espaços, `$` e `%`.
+- `enable_writes_the_desktop_file_and_disable_removes_it`: cria `.desktop` em diretório temporário com esse Exec, sem arquivo temporário restante; desativar remove a entrada.
+- `set_and_is_enabled_round_trip_through_the_options_dir`: consulta/ativação/desativação coerentes via diretório das opções e linha Exec igual à detectada.
+
+**Clippy do app nos dois runners — Passa na run solicitada.** `gh run view 40625572835 --log` saiu **0** (4.368 linhas). `gh run view 40625572835 --json headSha,conclusion,jobs,url,name` saiu **0**: commit `68cd28a95434fd2491e635e9828c58b8d26cb5fd`, conclusão geral e os dois jobs/steps de clippy `success`. Evidência da [run 40625572835](https://github.com/devkappiushon/clipsync/actions/runs/40625572835), nas etapas `cargo clippy`:
+
+| Runner/job | Comando no log | Evidência de inclusão do app e término |
+| --- | --- | --- |
+| Windows Server 2025 / `windows build + test` | `cargo clippy --workspace --all-targets --locked -- -D warnings` | `03:20:45Z Compiling clipsync-app v0.1.0 (D:\a\clipsync\clipsync\crates\clipsync-app)`; `03:21:43Z Finished dev profile ... in 6m 07s`; step `success`. |
+| Ubuntu / `fmt + clippy + test` | `cargo clippy --workspace --all-targets --locked -- -D warnings` | `03:18:50Z Compiling clipsync-app v0.1.0 (/home/runner/work/clipsync/clipsync/crates/clipsync-app)`; `03:19:00Z Finished dev profile ... in 2m 38s`; step `success`. |
+
+O `--workspace` do CI inclui o app, com os mesmos `--all-targets --locked -- -D warnings` exigidos pelo critério. Essa evidência remota pertence a **68cd28a**, não a uma nova run de 5a55688. `git diff 68cd28a 5a55688 -- .github/workflows/ci.yml crates/clipsync-app/Cargo.toml crates/clipsync-app/src Cargo.toml` saiu **0**, sem diferenças nesses caminhos.
+
+#### 5 · Pixel, somente greps — Passa
+
+Comandos executados na raiz do export de 5a55688; exit **1** de grep/rg abaixo significa nenhuma correspondência, sem stderr:
+
+| Verificação | Comando | Saída / exit | Veredito |
+| --- | --- | --- | --- |
+| `innerHTML` e `style=` | `grep -rnE 'innerHTML\|style=' crates/clipsync-app/ui` | sem saída; 1 | **Passa** |
+| Travessão em texto de interface | `grep -rn '—' crates/clipsync-app/ui` | sem saída em toda a árvore; 1 | **Passa** |
+| Inventário de scripts | `rg -n -i '<script\b' crates/clipsync-app/ui` | 4 tags, todas com `src`; 0 | **Passa** |
+| Script sem `src` | `rg -n -U -P -i '<script\b(?![^>]*\bsrc\s*=)[^>]*>' crates/clipsync-app/ui` | sem saída; 1 | **Passa** |
+
+As quatro tags são `componentes.html:10` (`js/tema-inicial.js`), `componentes.html:19` (`js/galeria.js`), `index.html:11` (`js/tema-inicial.js`) e `index.html:72` (`js/app.js`). Não há aprovação visual implícita nesses greps.
+
+Evidência integral local: `/home/kappxs/.cache/argus-s6-5a55688-tufou2ei/`, com `logs/{proto,core,clipboard,autostart,ci}.log`, `logs/ci.json`, `results.json`, `greps.json`, `meta.json` e inventários SHA-256 `before.json`/`after.json`. **121 testes aprovados, zero falhos, zero ignorados; nenhum achado bloqueante no recorte solicitado.**
+
 ## Findings
 
 ### Pendências pós-MVP aceitas pelo Maestro
