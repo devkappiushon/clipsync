@@ -84,6 +84,16 @@ pub fn apply_failed(why: &str) -> String {
 // 6 · diagnóstico
 pub const DIAG_CHECK: &str = "verificação";
 pub const DIAG_TIMEOUT: &str = "não respondeu em 5 s";
+/// S7 (§13.7 item 3 and §13.9): the keyboard layout the input module announced.
+pub const DIAG_KEYBOARD: &str = "layout do teclado";
+pub const DIAG_AGENT_STOPPED: &str = "agente parado";
+pub const DIAG_NOT_ANNOUNCED: &str = "ainda não anunciado";
+/// S7 (§13.9), Windows only: the hooks exist only with input on and a local link (§13.2 rule 2a).
+pub const DIAG_SHORTCUTS: &str = "atalhos";
+pub const DIAG_SHORTCUTS_ON: &str = "ativos: Win+Alt+1 a 9, Win+Alt+L e Win+Alt+P";
+pub const DIAG_SHORTCUTS_NO_AGENT: &str = "inativos: agente parado";
+pub const DIAG_SHORTCUTS_INPUT_OFF: &str = "inativos: módulo de input desligado";
+pub const DIAG_SHORTCUTS_NO_LINK: &str = "inativos: nenhuma ligação desta máquina no layout";
 pub const NO_DOWNLOADS: &str = "não foi possível achar a pasta de downloads";
 pub const REDACTED_IP: &str = "<ip>";
 pub const REDACTED_DEVICE: &str = "<este-dispositivo>";

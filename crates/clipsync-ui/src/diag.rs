@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use clipsync_proto::{AgentStatus, DiagStatus};
+use clipsync_proto::{AgentStatus, DiagStatus, InputState, ModuleKind, PeerId};
 use serde::{Deserialize, Serialize};
 
 use crate::api::code;
@@ -146,6 +146,66 @@ async fn checks() -> Vec<DiagItem> {
         .collect()
 }
 
+fn input_item(name: &str, status: ItemStatus, detail: String) -> DiagItem {
+    DiagItem {
+        area: "input".into(),
+        name: name.into(),
+        status,
+        detail,
+    }
+}
+
+/// The KLIDs the contract names (§13.7 item 3); any other shows as it came.
+fn keyboard_name(layout: &str) -> String {
+    let known = match layout {
+        "00010416" => Some("Português (Brasil ABNT2)"),
+        "00000409" => Some("EUA"),
+        _ => None,
+    };
+    let layout = clean(layout);
+    match known {
+        Some(k) => format!("{layout} · {k}"),
+        None => layout,
+    }
+}
+
+/// "layout do teclado": what the input module of the running agent announced in `InputState`
+/// (the `xkb_symbols` name the EIS gives on Linux, the KLID on Windows).
+fn keyboard_item(agent_running: bool, input: Option<&InputState>) -> DiagItem {
+    let layout = input.and_then(|i| i.keyboard_layout.as_deref());
+    let (status, detail) = match (agent_running, layout) {
+        (false, _) => (ItemStatus::Warn, msg::DIAG_AGENT_STOPPED.to_string()),
+        (true, None) => (ItemStatus::Warn, msg::DIAG_NOT_ANNOUNCED.to_string()),
+        (true, Some(l)) => (ItemStatus::Ok, keyboard_name(l)),
+    };
+    input_item(msg::DIAG_KEYBOARD, status, detail)
+}
+
+/// "atalhos" (Windows): active while the hooks exist, that is with the agent running, the input
+/// module on and at least one link of this machine in `layout.toml` (§13.2 rule 2a).
+fn shortcuts_item(agent_running: bool, input_on: bool, local_link: bool) -> DiagItem {
+    let (status, detail) = if !agent_running {
+        (ItemStatus::Warn, msg::DIAG_SHORTCUTS_NO_AGENT)
+    } else if !input_on {
+        (ItemStatus::Warn, msg::DIAG_SHORTCUTS_INPUT_OFF)
+    } else if !local_link {
+        (ItemStatus::Warn, msg::DIAG_SHORTCUTS_NO_LINK)
+    } else {
+        (ItemStatus::Ok, msg::DIAG_SHORTCUTS_ON)
+    };
+    input_item(msg::DIAG_SHORTCUTS, status, detail.to_string())
+}
+
+/// Whether `layout.toml` links a monitor of this machine. An unreadable file links nothing.
+fn has_local_link(ctx: &Ctx) -> bool {
+    let me: Option<PeerId> = ctx.profile.load_identity().ok().map(|i| i.id());
+    let layout = clipsync_input::Layout::read(&ctx.profile.dir.join(clipsync_input::LAYOUT_FILE));
+    match (me, layout) {
+        (Some(me), Ok(Some(l))) => l.links.iter().any(|k| k.a.peer == me || k.b.peer == me),
+        _ => false,
+    }
+}
+
 /// What the screen and the bundle share.
 struct Gathered {
     diag: Diagnostics,
@@ -155,8 +215,22 @@ struct Gathered {
 }
 
 async fn gather(ctx: &Ctx) -> Gathered {
-    let items = checks().await;
-    let status = status::agent_status(ctx).await;
+    let mut items = checks().await;
+    let observed = status::observe(ctx).await;
+    let status = observed.status;
+    items.push(keyboard_item(status.is_some(), observed.input.as_ref()));
+    if cfg!(windows) {
+        let input_on = status.as_ref().is_some_and(|s| {
+            s.modules
+                .iter()
+                .any(|m| m.kind == ModuleKind::Input && m.enabled)
+        });
+        items.push(shortcuts_item(
+            status.is_some(),
+            input_on,
+            has_local_link(ctx),
+        ));
+    }
     let cfg = ctx.profile.load_config().ok();
     let peers = ctx.profile.load_peers().unwrap_or_default();
     let devices: Vec<Device> = peers
@@ -621,6 +695,69 @@ pub(crate) async fn bundle_export(ctx: &Ctx) -> Result<Exported, UiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn state(layout: Option<&str>) -> InputState {
+        InputState {
+            local: vec![],
+            peers: vec![],
+            screen_locked: false,
+            active_peer: None,
+            pending_offer: None,
+            keyboard_layout: layout.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn keyboard_layout_says_why_it_is_missing_and_names_the_known_klids() {
+        let pick = |i: DiagItem| (i.area, i.name, i.status, i.detail);
+        assert_eq!(
+            pick(keyboard_item(false, None)),
+            (
+                "input".into(),
+                "layout do teclado".into(),
+                ItemStatus::Warn,
+                "agente parado".into()
+            )
+        );
+        for input in [None, Some(state(None))] {
+            let i = keyboard_item(true, input.as_ref());
+            assert_eq!(
+                (i.status, i.detail.as_str()),
+                (ItemStatus::Warn, "ainda não anunciado")
+            );
+        }
+        let ok = |l: &str| keyboard_item(true, Some(&state(Some(l))));
+        assert_eq!(ok("00010416").detail, "00010416 · Português (Brasil ABNT2)");
+        assert_eq!(ok("00000409").detail, "00000409 · EUA");
+        assert_eq!(ok("br(abnt2)").detail, "br(abnt2)");
+        assert_eq!(ok("br(abnt2)").status, ItemStatus::Ok);
+    }
+
+    #[test]
+    fn shortcuts_are_active_only_with_agent_input_and_a_local_link() {
+        let detail = |a, i, l| shortcuts_item(a, i, l).detail;
+        assert_eq!(shortcuts_item(true, true, true).status, ItemStatus::Ok);
+        assert_eq!(
+            detail(true, true, true),
+            "ativos: Win+Alt+1 a 9, Win+Alt+L e Win+Alt+P"
+        );
+        assert_eq!(detail(false, true, true), "inativos: agente parado");
+        assert_eq!(
+            detail(true, false, true),
+            "inativos: módulo de input desligado"
+        );
+        assert_eq!(
+            detail(true, true, false),
+            "inativos: nenhuma ligação desta máquina no layout"
+        );
+        for (a, i, l) in [
+            (false, true, true),
+            (true, false, true),
+            (true, true, false),
+        ] {
+            assert_eq!(shortcuts_item(a, i, l).status, ItemStatus::Warn);
+        }
+    }
 
     #[test]
     fn short_names_are_replaced_only_as_whole_words() {

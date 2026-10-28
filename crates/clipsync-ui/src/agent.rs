@@ -18,7 +18,8 @@ use crate::api::code;
 use crate::status::AgentMode;
 use crate::{Ctx, UiError, clean, lock, msg};
 
-/// Input capture/emulation only has an adapter on Linux in this version.
+/// Only `layout.rs` (Vector) still reads this: its Windows screen 4 comes with §13.9. Everything
+/// else asks `clipsync_input::SUPPORTED`; this goes away with its last use (§13.11 item 3).
 pub(crate) const INPUT_SUPPORTED: bool = cfg!(target_os = "linux");
 
 /// Bind, modules and the control socket; the input portal may take a while on first use.
@@ -78,7 +79,7 @@ fn module_err(e: clipsync_proto::ModuleError) -> UiError {
 /// A disabled module is not built: no adapter loaded, no permission asked, not announced. A
 /// fake clipboard keeps its handle in `ctx` for the tests.
 fn build(ctx: &Ctx, profile: &Profile, cfg: &Config) -> Result<Vec<Box<dyn Module>>, UiError> {
-    let plan = plan(cfg.modules, INPUT_SUPPORTED)?;
+    let plan = plan(cfg.modules, clipsync_input::SUPPORTED)?;
     let mut modules: Vec<Box<dyn Module>> = Vec::new();
     if plan.clipboard {
         let c = clipsync_clipboard::ClipboardConfig::from_table(cfg.clipboard.as_ref())
@@ -297,8 +298,8 @@ mod tests {
     #[test]
     fn plan_for_this_platform_matches_its_support() {
         assert_eq!(
-            plan(set(false, true), INPUT_SUPPORTED).is_ok(),
-            INPUT_SUPPORTED
+            plan(set(false, true), clipsync_input::SUPPORTED).is_ok(),
+            clipsync_input::SUPPORTED
         );
     }
 }

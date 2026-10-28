@@ -11,7 +11,7 @@ use clipsync_core::{Identity, InitOptions};
 use clipsync_proto::{ControlRequest, ControlResponse, ModuleSet};
 use serde::{Deserialize, Serialize};
 
-use crate::agent::{self, INPUT_SUPPORTED};
+use crate::agent;
 use crate::api::{OnboardingCreateArgs, code};
 use crate::status::{DeviceSelf, ModuleName, Modules};
 use crate::{Ctx, UiError, clean, lock, msg, status};
@@ -101,10 +101,10 @@ pub(crate) fn start(ctx: &Ctx) -> Result<OnboardingStart, UiError> {
     Ok(OnboardingStart {
         default_name: default_name(),
         fingerprint_short: id.short(),
-        input_supported: INPUT_SUPPORTED,
+        input_supported: clipsync_input::SUPPORTED,
         already_initialized: ctx.profile.is_initialized(),
         defaults: Modules {
-            input: INPUT_SUPPORTED,
+            input: clipsync_input::SUPPORTED,
             clipboard: false,
         },
     })
@@ -125,7 +125,7 @@ pub(crate) async fn create(ctx: &Ctx, args: OnboardingCreateArgs) -> Result<Crea
     if set.is_empty() {
         return Err(UiError::new(code::NO_MODULE, msg::NO_MODULE).with_field("modules"));
     }
-    agent::plan(set, INPUT_SUPPORTED)?;
+    agent::plan(set, clipsync_input::SUPPORTED)?;
     if args.port == 0 && ctx.opts.listen.is_none() {
         return Err(UiError::bad_request("port: 1..65535").with_field("port"));
     }
@@ -310,10 +310,14 @@ pub(crate) async fn self_test(ctx: &Ctx) -> Result<SelfTest, UiError> {
         Ok::<_, UiError>(result)
     };
     let input = async {
-        if cfg.modules.input && INPUT_SUPPORTED {
+        if cfg.modules.input && clipsync_input::SUPPORTED {
             input_result(clipsync_input::self_test().await)
         } else {
-            untested(ModuleName::Input, cfg.modules.input, INPUT_SUPPORTED)
+            untested(
+                ModuleName::Input,
+                cfg.modules.input,
+                clipsync_input::SUPPORTED,
+            )
         }
     };
     let (clipboard, input) = tokio::join!(clipboard, input);

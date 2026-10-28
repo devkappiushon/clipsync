@@ -8,7 +8,7 @@ use clipsync_proto::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::agent::{self, INPUT_SUPPORTED};
+use crate::agent;
 use crate::api::code;
 use crate::{Ctx, UiError, clean, msg};
 
@@ -116,6 +116,8 @@ impl Features {
             switch_device: input_live,
             layout_copy: input_live,
             os_notifications: true,
+            // Win+Alt+1 to 9, L and P (§13.6): the Windows capture adapter, none on Linux yet.
+            global_shortcuts: cfg!(windows) && input_live,
             ..Self::default()
         }
     }
@@ -237,7 +239,7 @@ pub(crate) async fn app_state(ctx: &Ctx) -> Result<AppState, UiError> {
         ),
     };
     let modules: Modules = cfg.as_ref().map(|c| c.modules.into()).unwrap_or_default();
-    let input_live = INPUT_SUPPORTED && modules.input && o.input.is_some();
+    let input_live = clipsync_input::SUPPORTED && modules.input && o.input.is_some();
     Ok(AppState {
         initialized,
         profile_dir: p.dir.display().to_string(),
@@ -248,7 +250,7 @@ pub(crate) async fn app_state(ctx: &Ctx) -> Result<AppState, UiError> {
         screen_locked: o.input.as_ref().is_some_and(|i| i.screen_locked),
         mesh,
         modules,
-        input_supported: INPUT_SUPPORTED,
+        input_supported: clipsync_input::SUPPORTED,
         version: env!("CARGO_PKG_VERSION").to_string(),
         platform: platform().to_string(),
         features: Features::new(input_live),

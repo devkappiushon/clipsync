@@ -252,3 +252,29 @@ async fn a_failed_start_is_reported_in_app_state() {
     assert_eq!(app_state(&ui).await["agent_error"], json!(null));
     ui.shutdown().await;
 }
+
+/// §13.11 item 4: the shortcuts work on Windows with the input module on (feature
+/// `global_shortcuts`), never on Linux in this version, and never without input.
+#[tokio::test(flavor = "multi_thread")]
+async fn global_shortcuts_need_windows_and_the_input_module() {
+    let dir = tempfile::tempdir().unwrap();
+    init_profile(dir.path(), "a", BOTH);
+    init_profile(dir.path(), "b", CLIPBOARD_ONLY);
+    let ui_a = start(dir.path(), "a").await;
+    let ui_b = start(dir.path(), "b").await;
+    wait_until("input answers on a", || async {
+        app_state(&ui_a).await["features"]["input"] == json!(true)
+    })
+    .await;
+    assert_eq!(app_state(&ui_a).await["input_supported"], json!(true));
+    assert_eq!(
+        app_state(&ui_a).await["features"]["global_shortcuts"],
+        json!(cfg!(windows))
+    );
+    assert_eq!(
+        app_state(&ui_b).await["features"]["global_shortcuts"],
+        json!(false)
+    );
+    ui_a.shutdown().await;
+    ui_b.shutdown().await;
+}

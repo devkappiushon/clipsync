@@ -95,7 +95,7 @@ async fn perms_need_full_trust_for_input_and_revoke_needs_the_typed_name() {
         d["remote_modules"],
         json!({ "clipboard": true, "input": false })
     );
-    assert_eq!(d["remote_version"], json!(2));
+    assert_eq!(d["remote_version"], json!(clipsync_proto::PROTOCOL_VERSION));
     assert_eq!(d["blocked_reason"], json!(null));
     assert!(d["addr"].as_str().unwrap().starts_with("127.0.0.1:"));
 

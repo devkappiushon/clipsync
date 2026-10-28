@@ -106,3 +106,55 @@ async fn the_support_bundle_carries_no_identifier() {
     ui_a.shutdown().await;
     ui_b.shutdown().await;
 }
+
+/// S7 (§13.9): "layout do teclado" comes from the input module's `InputState`, and says
+/// "agente parado" with the agent stopped; on Windows "atalhos" too, inactive without a link of
+/// this machine in layout.toml (the hooks only exist then, §13.2 rule 2a). Exact texts and the
+/// active case: the unit tests of `diag.rs`.
+#[tokio::test(flavor = "multi_thread")]
+async fn diagnostics_show_the_keyboard_layout_and_on_windows_the_shortcuts() {
+    let dir = tempfile::tempdir().unwrap();
+    init_profile(dir.path(), "a", BOTH);
+    let ui = start(dir.path(), "a").await;
+    let item = |d: &serde_json::Value, name: &str| {
+        d["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["area"] == json!("input") && i["name"] == json!(name))
+            .cloned()
+    };
+    wait_until("input answers", || async {
+        app_state(&ui).await["features"]["input"] == json!(true)
+    })
+    .await;
+    let d = ok(&ui, json!({ "cmd": "diagnostics_get" })).await;
+    let keyboard = item(&d, "layout do teclado").expect("keyboard layout item");
+    assert_ne!(keyboard["detail"], json!("agente parado"), "{keyboard}");
+    let shortcuts = item(&d, "atalhos");
+    if cfg!(windows) {
+        assert_eq!(
+            shortcuts,
+            Some(json!({
+                "area": "input", "name": "atalhos", "status": "warn",
+                "detail": "inativos: nenhuma ligação desta máquina no layout"
+            }))
+        );
+    } else {
+        assert_eq!(shortcuts, None, "no shortcuts on Linux in this version");
+    }
+
+    ok(&ui, json!({ "cmd": "agent_stop" })).await;
+    let d = ok(&ui, json!({ "cmd": "diagnostics_get" })).await;
+    assert_eq!(
+        item(&d, "layout do teclado").unwrap()["detail"],
+        json!("agente parado")
+    );
+    if cfg!(windows) {
+        assert_eq!(
+            item(&d, "atalhos").unwrap()["detail"],
+            json!("inativos: agente parado")
+        );
+    }
+    ui.shutdown().await;
+}

@@ -17,7 +17,8 @@ use crate::{Ctx, UiError, autostart, lock, msg};
 const FILE: &str = "ui.toml";
 const VERSION: u32 = 1;
 
-/// Shortcuts are text only in this version (feature `global_shortcuts` false).
+/// Fixed text in this version. On Windows with input on they work (feature `global_shortcuts`,
+/// §13.9); on Linux they are only shown.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Shortcuts {

@@ -151,13 +151,8 @@ async fn self_test_runs_the_clipboard_and_leaves_the_agent_as_it_was() {
         "the fake clipboard passes: {clip}"
     );
     assert!(!clip["detail"].as_str().unwrap().is_empty());
-    // Input is off in this profile; on Windows it has no adapter at all, which wins.
-    #[cfg(not(windows))]
+    // Input is off in this profile (S7: Windows has input too, so the same answer there).
     let input = json!({ "module": "input", "status": "not_tested", "detail": "módulo desligado" });
-    #[cfg(windows)]
-    let input = json!({
-        "module": "input", "status": "unavailable", "detail": "sem adaptador nesta plataforma"
-    });
     assert_eq!(results[1], input);
     // Paused during the test (too short for the poll to see), resumed after.
     assert_eq!(app_state(&ui).await["paused"], json!(false));
@@ -173,8 +168,9 @@ async fn self_test_runs_the_clipboard_and_leaves_the_agent_as_it_was() {
     ui.shutdown().await;
 }
 
-/// Item 3 of the S6 fixes: with input on, `clipsync_input::self_test` is called (it only asks
-/// the portals), so the input result is never `not_tested`.
+/// Item 3 of the S6 fixes, and §13.11 item 4 on Windows: with input on, `clipsync_input::self_test`
+/// is called (the portals on Linux, the hooks and monitors on Windows), so the input result is
+/// never `not_tested`.
 #[tokio::test(flavor = "multi_thread")]
 async fn self_test_calls_the_input_module_when_it_is_on() {
     let dir = tempfile::tempdir().unwrap();
@@ -183,13 +179,10 @@ async fn self_test_calls_the_input_module_when_it_is_on() {
     let r = ok(&ui, json!({ "cmd": "onboarding_self_test" })).await;
     let input = &r["results"][1];
     assert_eq!(input["module"], json!("input"));
-    #[cfg(target_os = "linux")]
     assert!(
         ["validated", "experimental", "unavailable"].contains(&input["status"].as_str().unwrap()),
         "{input}"
     );
-    #[cfg(not(target_os = "linux"))]
-    assert_eq!(input["status"], json!("unavailable"), "{input}");
     assert!(!input["detail"].as_str().unwrap().is_empty());
     ui.shutdown().await;
 }
