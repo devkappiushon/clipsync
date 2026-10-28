@@ -1,73 +1,135 @@
 /* Tela: clipboard. Só tokens de tokens.css; classes prefixadas com .clipboard. */
 
 .clipboard {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
-  gap: var(--s-4);
+  gap: var(--s-3);
 }
+
+.clipboard > div:empty {
+  display: none;
+}
+
+.clipboard__corpo,
+.clipboard__estado {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+/* Faixa de estado: uma linha quando cabe, quebra em linhas quando não cabe */
+
+.clipboard__estado .cartao {
+  padding-block: var(--s-3);
+}
+
+.clipboard__faixa {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-4);
+  margin: 0;
+}
+
+.clipboard__celula {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.clipboard__celula dt {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.clipboard__celula dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.clipboard__celula--larga {
+  flex: 1 1 200px;
+}
+
+/* Linha do modo: segmentado à esquerda, interruptores à direita */
 
 .clipboard__modo {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
   gap: var(--s-2);
-  padding-top: var(--s-3);
-  border-top: 1px solid var(--line);
 }
 
-.clipboard__modo[aria-busy="true"] {
-  cursor: progress;
-}
-
-.clipboard__interruptores {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-  padding-top: var(--s-3);
-  border-top: 1px solid var(--line);
-}
-
-.clipboard__caixa {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.clipboard__item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  padding: var(--s-3) 0;
-  border-top: 1px solid var(--line);
-}
-
-.clipboard__item-topo {
+.clipboard__modo-linha {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--s-2) var(--s-3);
+  gap: var(--s-2) var(--s-4);
 }
 
-.clipboard__item-meta {
+.clipboard__modo-escolha {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--s-2) var(--s-3);
-  min-width: 0;
-  font-size: var(--fs-sm);
+  gap: var(--s-3);
 }
 
-.clipboard__item-meta strong {
-  font-weight: 600;
+.clipboard__interruptores {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--s-2) var(--s-4);
+}
+
+/* Caixa de recebidos: tabela larga, ações à direita */
+
+.clipboard .tabela td strong {
+  white-space: nowrap;
+}
+
+.clipboard .tabela th:last-child {
+  text-align: right;
+}
+
+.clipboard .tabela td {
+  padding: var(--s-2);
+  vertical-align: middle;
+}
+
+.clipboard .tabela :is(th, td):first-child {
+  padding-left: var(--s-4);
+}
+
+.clipboard .tabela :is(th, td):last-child {
+  padding-right: var(--s-3);
+}
+
+.clipboard__estado-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-1);
+  max-width: 32ch;
 }
 
 .clipboard__item-acoes {
   display: flex;
-  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--s-1);
+}
+
+.clipboard__item-acoes .btn {
+  padding-inline: var(--s-2);
+}
+
+.clipboard__extra > td {
+  padding: 0 var(--s-4) var(--s-3);
+}
+
+.clipboard .tabela .clipboard__extra:last-child > td {
+  border-bottom: 1px solid var(--line);
 }
 
 .clipboard__previa-area:empty {
@@ -88,8 +150,11 @@
 }
 
 .clipboard__retencao {
-  padding-top: var(--s-3);
-  border-top: 1px solid var(--line);
+  padding: var(--s-3) var(--s-4);
+}
+
+.cartao:not(.cartao--plano) > .clipboard__retencao {
+  padding: var(--s-3) 0 0;
 }
 
 .clipboard__resultados {
@@ -99,4 +164,16 @@
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+/* Abaixo de ~1100 px de janela (cerca de 800 px de largura útil) a tabela rola na horizontal e as ações podem quebrar */
+
+@container (max-width: 800px) {
+  .clipboard__interruptores {
+    flex: 1 1 100%;
+  }
+
+  .clipboard__item-acoes {
+    flex-wrap: wrap;
+  }
 }
