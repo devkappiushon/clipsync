@@ -3957,3 +3957,66 @@ Argus não aplicou correções. Flux corrigiu os dois achados na v1.4; a reemiss
 
 Achados são observações do estado/hash revisado; não constituem pedido para interromper builders ou corrigir código de outro dono.
 
+### S6 · critério 5 · e40849c
+
+**Passa.** Argus, **2026-10-28**, contrato **v1.22**, §12.9 item 5. Base examinada: `e40849c52fd7c07f3278aa5a67f15f2920dac0de`, na `main`. **As nove telas passam nos dois temas, e os cenários vazio e erro foram conferidos nas nove telas.** Este veredito cobre o frontend com o mock e não substitui a prova do app Tauri real do item 6, o build ou os demais critérios da S6.
+
+#### Base e método
+
+- Lidos `docs/contrato.md`, `docs/telas.md`, os vereditos anteriores e as atribuições do `docs/workboard.md`. Conferidos `git status`, `git diff`, histórico da rodada visual e os arquivos de UI correspondentes. Não havia alteração rastreada sobre a HEAD solicitada; `CONTEXTO.md` já estava não rastreado e não foi tocado.
+- Inspeção visual individual dos **18 pares** em `docs/telas/comparacao/<tela>-<tema>.webp`, usando os PNG equivalentes em `/home/kappxs/.cache/clipsync-telas-ref/pares-final/`: app à esquerda, Figma à direita. São montagens reduzidas de duas vistas de 1280×800; o arquivo composto mede 1693×572, não 2560×800.
+- Portal próprio **Telas 1280 · Argus**, criado com `maestri portal create "http://127.0.0.1:5174/?cenario=padrao" "Telas 1280 · Argus" --size 1280x800`. O portal inicialmente informou 1280×792; aplicado `maestri portal resize "Telas 1280 · Argus" 1280 800` após as navegações. **Todas as 41 coletas finais de DOM registram `innerWidth=1280` e `innerHeight=800`.** As coletas preliminares a 792 px foram substituídas.
+- Servidor já existente em `127.0.0.1:5174`, sem iniciar outro processo de servidor. Os **43 recursos/URLs HTTP verificados** (42 recursos carregados pelo navegador mais o documento HTML) coincidem byte a byte com os respectivos arquivos de `e40849c`, incluindo o mock servido sobre `ui-dev/`.
+- Evidência bruta local: `/home/kappxs/.cache/argus-s6-e40849c/`. Cada coleta tem `.json` com texto, controles, retângulos, grades, rolagem, fontes e recursos, `.snapshot.txt` e `.logs.txt`. `static.json` registra os greps e os scripts; `served-head.json`, a correspondência HTTP/HEAD. `sweep.py`, `interactions.py` e `supplement.py` registram os comandos de portal usados. Nenhum arquivo de código-fonte foi alterado.
+
+#### Comparação por tela em 1280×800
+
+O julgamento é da estrutura e hierarquia previstas na v1.22, não de igualdade de texto ou de dados do protótipo. Foram aceitos os avisos de recurso indisponível, permissões iniciais desligadas, identificadores/endereços diferentes e detalhes mais precisos do backend. As colunas abaixo são medidas reais de `getComputedStyle(...).gridTemplateColumns`, complementadas por `getBoundingClientRect()`.
+
+| Tela | Claro | Escuro | Evidência estrutural |
+| --- | --- | --- | --- |
+| Onboarding 1 · Esta máquina | [Passa](telas/comparacao/onboarding1-claro.webp) | [Passa](telas/comparacao/onboarding1-escuro.webp) | Cartão central sem barra lateral, marca e três passos no topo, título, nome, impressão digital e Continuar no rodapé à direita, na mesma ordem do quadro. |
+| Onboarding 2 · O que sincronizar | [Passa](telas/comparacao/onboarding2-claro.webp) | [Passa](telas/comparacao/onboarding2-escuro.webp) | Dois cartões de módulos lado a lado, **327 + 327 px**; aviso abaixo; Voltar à esquerda e ação de criação à direita. Não empilha os módulos. |
+| Onboarding 3 · Teste | [Passa](telas/comparacao/onboarding3-claro.webp) | [Passa](telas/comparacao/onboarding3-escuro.webp) | Mesmo cartão central: título, aviso, ação do teste, resultados com selo por módulo e rodapé Voltar/Concluir. Os resultados correspondem aos módulos realmente testados; não foi exigida a linha fictícia de teste de rede do protótipo. |
+| Dispositivos | [Passa](telas/comparacao/dispositivos-claro.webp) | [Passa](telas/comparacao/dispositivos-escuro.webp) | Tabela e painel de permissões lado a lado, **656 + 296 px**; primeira linha selecionada e identificação do mesmo par no painel; ação de parear no cabeçalho. |
+| Pareamento | [Passa](telas/comparacao/pareamento-claro.webp) | [Passa](telas/comparacao/pareamento-escuro.webp) | Etapa de conexão/código à esquerda e permissões iniciais à direita, **576 + 376 px**; código destacado e Concluir no pé do painel. O app mostra a etapa efetiva: a espera é substituída pelo código, em vez de afirmar simultaneamente que ainda aguarda o par. Permissões começam desligadas conforme §12.2.8. |
+| Layout de telas | [Passa](telas/comparacao/layout-claro.webp) | [Passa](telas/comparacao/layout-escuro.webp) | Canvas e faixa de ações à esquerda, Ligações à direita, **664 + 288 px**; os atalhos de dispositivo adicionais ficam numa faixa abaixo. Monitores, ligação e painel continuam lado a lado. O par de imagens mostra o app sem popover aberto e o Figma com o destino da borda aberto. |
+| Clipboard | [Passa](telas/comparacao/clipboard-claro.webp) | [Passa](telas/comparacao/clipboard-escuro.webp) | Faixa horizontal de estado; modo e interruptores na faixa seguinte; tabela larga abaixo, com origem/horário/tipo/tamanho/estado/ações; Enviar agora secundário. Campos adicionais de último evento/bloqueio e notas de indisponibilidade não alteram essa organização. |
+| Diagnóstico | [Passa](telas/comparacao/diagnostico-claro.webp) | [Passa](telas/comparacao/diagnostico-escuro.webp) | **465 + 465 px**: Sistema → Rede → Pacote de suporte à esquerda; Adaptadores → Conflitos → Últimos bloqueios à direita. Exportar é secundário. Os detalhes extras exigem rolagem vertical; os blocos inferiores existem e ficam acessíveis por rolagem, sem empilhar as duas colunas. Ver observação abaixo. |
+| Preferências | [Passa](telas/comparacao/preferencias-claro.webp) | [Passa](telas/comparacao/preferencias-escuro.webp) | **480 + 480 px**: Atalhos → Inicialização à esquerda; Notificações → Aparência → Idioma à direita; versão/licença/crédito no rodapé. O conteúdo cabe nos 800 px de altura no cenário padrão. |
+
+Nenhuma coleta das nove telas apresentou vazamento horizontal no documento ou no `main` (`scrollWidth` igual a `clientWidth`). Os pares claro/escuro preservam a mesma disposição.
+
+**Observação visual não bloqueante · Diagnóstico.** Há duas barras verticais, do documento e do `main`: `documentElement.scrollHeight=911`, `main.scrollHeight=1194`, ambos com `clientHeight=800`. O contêiner de conteúdo está em `crates/clipsync-app/ui/css/app.css:262`, e as colunas em `ui/css/telas/diagnostico.css:16`. No topo, Pacote de suporte começa em y=979,2 e Últimos bloqueios em y=804,3; após `maestri portal scroll "Telas 1280 · Argus" down 600 '#conteudo'`, seus títulos ficam em y=585,2 e y=410,3, respectivamente. As capturas `escuro-diagnostico-topo.png` e `escuro-diagnostico-inferior.png` comprovam o acesso. A rolagem dupla é um refinamento pendente; não foi usada para reprovar a disposição em duas colunas, dada a aceitação expressa de dados adicionais mais precisos nesta revisão.
+
+#### Cenários vazio e erro, observados no DOM
+
+URLs: `/?cenario=vazio&tema=claro#/<rota>` e `/?cenario=erro&tema=claro#/<rota>`. O passo 2 foi alcançado pelo botão Continuar do passo 1; não se atribuiu ao passo 2 uma captura redirecionada ao passo 1. O passo 3 também foi repetido em documento novo para não herdar a seleção provisória dos módulos. `snapshot` forneceu as refs para `fill`, `click`, `check` e `uncheck`; `evaluate` conferiu textos, estados e dimensões.
+
+| Tela | Vazio | Erro | Evidência observada |
+| --- | --- | --- | --- |
+| Onboarding 1 | **Passa** | **Passa** | `vazio-onboarding1` e `erro-onboarding1`: nome e identidade disponíveis mesmo sem pares; `erro` mostra o aviso da porta ocupada. Esvaziar o nome e Continuar exibe **“Dê um nome a esta máquina.”**, mantém o passo 1 e devolve o foco ao campo. Nome válido permite seguir. |
+| Onboarding 2 | **Passa** | **Passa** | `vazio-onboarding2` e `erro-onboarding2`: módulos lado a lado nos dois cenários. Desligar ambos mostra **“Ligue pelo menos um.”** e desabilita Criar perfil e continuar. O aviso do agente com falha permanece no cenário erro, mas o cadastro local continua disponível. Complemento `erro-onboarding2-gravacao-injetada`: uma falha `io` temporária, registrada somente no mock em memória por `maestri portal evaluate`, faz o botão de criar exibir **“Não foi possível gravar o perfil: permissão negada.”** sem sair do passo; não se atribui essa injeção ao comportamento nativo do cenário. |
+| Onboarding 3 | **Passa** | **Passa** | `vazio-onboarding3-isolado`: antes do teste, sem resultados inventados e com aviso do clipboard. Após Rodar teste, aparecem clipboard validado e input experimental do mock. `erro-onboarding3-isolado-teste`: o clique exibe **“O agente não está rodando. Inicie o agente e tente de novo.”**, mantém a tela e libera novamente o botão. |
+| Dispositivos | **Passa** | **Passa** | `vazio-dispositivos`: **“Nenhum dispositivo pareado”** e ação de parear, sem painel de par inexistente. `erro-dispositivos`: mensagem da porta ocupada, Iniciar agente e aviso de que a lista vem do arquivo de pares; os três pares aparecem **offline**. |
+| Pareamento | **Passa** | **Passa** | `vazio-pareamento`: estado ocioso, Aceitar/Conectar e Aceitar pareamento; permissões e Concluir desabilitados antes de confirmar código. `erro-pareamento`: **“Não foi possível carregar”**, mensagem de agente parado e **Tentar de novo**. |
+| Layout de telas | **Passa** | **Passa** | `vazio-layout`: apenas esta máquina no canvas, **“Nenhuma ligação”**, orientação para parear e **“nenhum outro dispositivo”** na faixa de atalhos. `erro-layout`: erro do agente e Tentar de novo, sem canvas com estado fictício. |
+| Clipboard | **Passa** | **Passa** | `vazio-clipboard`: **“Nenhum item recebido”**, orientação e política de retenção; último evento/bloqueio = nenhum. `erro-clipboard`: erro do agente e Tentar de novo. |
+| Diagnóstico | **Passa** | **Passa** | `vazio-diagnostico`: **“Nenhum par”** em Rede e **“Nenhum bloqueio recente”** em Últimos bloqueios; dados locais continuam disponíveis. `erro-diagnostico`: erro do agente e Tentar de novo. |
+| Preferências | **Passa** | **Passa** | `vazio-preferencias`: valores locais e os cinco grupos permanecem, pois não dependem de pares. `erro-preferencias-gravacao`: marcar Reduzir movimento exibe **“Não foi possível salvar: Não foi possível gravar o ui.toml: permissão negada.”**; o controle volta a `checked=false` e permanece habilitado. |
+
+O cenário `vazio` significa ausência de pares, itens e bloqueios; não significa ausência de perfil ou preferências. O cenário `erro` deixa o agente em falha, mas os comandos locais de onboarding, lista de pares e leitura de preferências continuam respondendo. Esses estados foram avaliados conforme o comportamento observado, sem exigir uma lista vazia ou falha de leitura fictícia nessas telas.
+
+#### Veredito por item da §12.9.5
+
+| Item | Veredito | Comando / evidência |
+| --- | --- | --- |
+| Nove telas × dois temas, app ao lado do Figma | **Passa** | 18 arquivos presentes e inspecionados, com resultado individual na tabela acima. |
+| Estrutura em 1280×800, sem empilhar colunas/faixas do quadro | **Passa** | 41 coletas com viewport exato; grades e ordem dos blocos registradas. Dispositivos, Pareamento, Layout, Diagnóstico, Preferências e módulos do onboarding mantêm suas duas colunas. |
+| Sem `innerHTML`/`style=` e sem script inline | **Passa** | `grep -rnE 'innerHTML\|style=' crates/clipsync-app/ui`: **exit 1, stdout/stderr vazios**, isto é, zero ocorrências. Parse de todos os HTML: dois scripts, ambos com `src`: `js/tema-inicial.js` (`index.html:11`) e módulo `js/app.js` (`index.html:70`). O DOM confirmou os dois com conteúdo inline vazio. |
+| Sem travessão em texto de interface | **Passa** | `grep -rn '—' crates/clipsync-app/ui`: **exit 1, stdout/stderr vazios**, zero ocorrências em toda a pasta. |
+| Rede na própria origem e fontes locais carregadas | **Passa** | `maestri portal logs-start`/`logs`: as 41 coletas finais não registraram mensagens. A evidência de rede vem de `performance.getEntriesByType('resource')` via `maestri portal evaluate`: **42 URLs distintas**, todas com `origin === 'http://127.0.0.1:5174'`, e lista de externas vazia em todas as coletas. `document.fonts` contém **Inter Variable**, **Geist** e **Geist Mono**, todas com `status: 'loaded'` nas 41 coletas. `logs` é saída de console; não foi descrito como captura de pacotes ou HAR. |
+| Cenários vazio e erro em cada tela | **Passa** | Nove de nove telas em ambos os cenários, conforme a tabela de DOM; inclui interações de validação, autoteste e falha de gravação. |
+
+**Resultado do critério 5: Passa em e40849c.** Não houve alteração de fonte, build, instalação, novo servidor, push ou execução de Playwright nesta revisão.
+
