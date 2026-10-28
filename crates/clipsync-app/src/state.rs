@@ -129,8 +129,8 @@ mod tests {
             field: None,
             details: None,
         });
-        let error = state.ui().await.unwrap_err();
-        assert_eq!(error.code, "config");
+        let code = state.ui().await.err().map(|error| error.code);
+        assert_eq!(code.as_deref(), Some("config"));
         assert!(state.ui_now().is_none());
         assert!(state.hidden());
     }
