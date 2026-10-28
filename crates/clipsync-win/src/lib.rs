@@ -35,10 +35,19 @@ impl fmt::Debug for WinKey {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RawEvent {
     /// `MSLLHOOKSTRUCT.pt`, physical px of the virtual desktop.
-    Move { x: i32, y: i32 },
-    Button { button: WinButton, down: bool },
+    Move {
+        x: i32,
+        y: i32,
+    },
+    Button {
+        button: WinButton,
+        down: bool,
+    },
     /// In `WHEEL_DELTA` units (120).
-    Wheel { delta: i32, horizontal: bool },
+    Wheel {
+        delta: i32,
+        horizontal: bool,
+    },
     /// `KBDLLHOOKSTRUCT`.
     Key {
         vk: u32,
@@ -151,6 +160,15 @@ mod tests {
     #[test]
     fn move_and_wheel_still_show_their_numbers() {
         assert!(format!("{:?}", RawEvent::Move { x: -7, y: 9 }).contains("-7"));
-        assert!(format!("{:?}", RawEvent::Wheel { delta: 120, horizontal: false }).contains("120"));
+        assert!(
+            format!(
+                "{:?}",
+                RawEvent::Wheel {
+                    delta: 120,
+                    horizontal: false
+                }
+            )
+            .contains("120")
+        );
     }
 }
