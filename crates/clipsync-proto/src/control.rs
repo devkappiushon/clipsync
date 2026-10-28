@@ -233,6 +233,14 @@ pub struct InputState {
     /// Back to false on resume or when the shortcut registers. False from an older agent.
     #[serde(default)]
     pub resume_hotkey_refused: bool,
+    /// S7 (§13.9): whether "go to device" (shortcut or button) can start the local capture here:
+    /// the capture adapter's `can_begin()`. True from an older agent, which never said no.
+    #[serde(default = "switch_supported_default")]
+    pub switch_supported: bool,
+}
+
+fn switch_supported_default() -> bool {
+    true
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

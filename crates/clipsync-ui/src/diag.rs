@@ -705,6 +705,7 @@ mod tests {
             pending_offer: None,
             keyboard_layout: layout.map(str::to_string),
             resume_hotkey_refused: false,
+            switch_supported: true,
         }
     }
 

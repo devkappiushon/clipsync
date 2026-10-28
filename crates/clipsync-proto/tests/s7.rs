@@ -346,22 +346,27 @@ async fn memhub_counts_request_pause_and_applies_it() {
     assert_eq!(hub.pause_requests(a.id), 2);
 }
 
-/// §13.7 item 3 and I-S7-2: `keyboard_layout` and `resume_hotkey_refused` close `InputState`
-/// with `serde(default)`, so the reply of an agent without them (the control socket speaks JSON)
-/// still decodes, as None and false.
+/// §13.7 item 3, I-S7-2 and §13.9: `keyboard_layout`, `resume_hotkey_refused` and
+/// `switch_supported` close `InputState` with serde defaults, so the reply of an agent without
+/// them (the control socket speaks JSON) still decodes, as None, false and true.
 #[test]
-fn input_state_without_the_s7_fields_decodes_as_none_and_false() {
+fn input_state_without_the_s7_fields_decodes_with_their_defaults() {
     let old = serde_json::json!({
         "local": [], "peers": [], "screen_locked": false, "active_peer": null, "pending_offer": null
     });
     let s: InputState = serde_json::from_value(old).unwrap();
     assert_eq!(
-        (s.keyboard_layout.as_deref(), s.resume_hotkey_refused),
-        (None, false)
+        (
+            s.keyboard_layout.as_deref(),
+            s.resume_hotkey_refused,
+            s.switch_supported
+        ),
+        (None, false, true)
     );
     let new = InputState {
         keyboard_layout: Some("00010416".into()),
         resume_hotkey_refused: true,
+        switch_supported: false,
         ..s
     };
     let back: InputState = serde_json::from_value(serde_json::to_value(&new).unwrap()).unwrap();

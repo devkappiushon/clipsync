@@ -116,7 +116,7 @@ impl Features {
             layout_links: input_live,
             dead_corners: input_live,
             screen_lock: input_live,
-            switch_device: input_live,
+            switch_device: input_live && input.is_some_and(|i| i.switch_supported),
             layout_copy: input_live,
             os_notifications: true,
             // Win+Alt+1 to 9, L and P (§13.6): the Windows capture adapter, none on Linux yet.
@@ -285,7 +285,7 @@ pub(crate) async fn pause_set(ctx: &Ctx, paused: bool) -> Result<PausedReply, Ui
 mod tests {
     use super::*;
 
-    fn input(refused: bool) -> InputState {
+    fn input(refused: bool, switch: bool) -> InputState {
         InputState {
             local: vec![],
             peers: vec![],
@@ -294,14 +294,24 @@ mod tests {
             pending_offer: None,
             keyboard_layout: None,
             resume_hotkey_refused: refused,
+            switch_supported: switch,
         }
     }
 
     /// I-S7-2: the feature only says what the input module reported; no agent, no refusal.
     #[test]
     fn resume_hotkey_refused_comes_from_the_input_state() {
-        assert!(Features::new(true, Some(&input(true))).resume_hotkey_refused);
-        assert!(!Features::new(true, Some(&input(false))).resume_hotkey_refused);
+        assert!(Features::new(true, Some(&input(true, true))).resume_hotkey_refused);
+        assert!(!Features::new(true, Some(&input(false, true))).resume_hotkey_refused);
         assert!(!Features::new(false, None).resume_hotkey_refused);
+    }
+
+    /// §13.9: "go to device" only where the capture adapter can start (the module says so in
+    /// `InputState`); no agent, no switch.
+    #[test]
+    fn switch_device_comes_from_the_input_state() {
+        assert!(Features::new(true, Some(&input(false, true))).switch_device);
+        assert!(!Features::new(true, Some(&input(false, false))).switch_device);
+        assert!(!Features::new(false, None).switch_device);
     }
 }
