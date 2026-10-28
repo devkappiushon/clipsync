@@ -296,6 +296,27 @@ pub async fn host(
     host_with(p, port, window, on_listen, confirm, HostHooks::default()).await
 }
 
+/// Aborts the task when dropped. The app cancels an attempt before the code by dropping the
+/// `host` future: the refuser must not outlive it holding the endpoint and its port.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Closes with PairFailed when dropped, unless the attempt closed first (the first close wins): a
+/// cancelled attempt tells the peer it failed, not the implicit close (code 0, Normal) of a
+/// dropped connection.
+struct CloseOnDrop(Connection);
+
+impl Drop for CloseOnDrop {
+    fn drop(&mut self) {
+        close(&self.0, CloseCode::PairFailed);
+    }
+}
+
 #[derive(Default)]
 struct HostHooks {
     /// Tests: reports the nonce sent to the joiner.
@@ -334,11 +355,11 @@ async fn host_with(
     // One attempt per window: every other connection is refused while this one runs.
     let refuser = {
         let endpoint = endpoint.clone();
-        tokio::spawn(async move {
+        AbortOnDrop(tokio::spawn(async move {
             while let Some(extra) = endpoint.accept().await {
                 extra.refuse();
             }
-        })
+        }))
     };
     let peer_addr = incoming.remote_address();
     let result = async {
@@ -346,6 +367,7 @@ async fn host_with(
             .await
             .map_err(|_| CoreError::Pairing("handshake timeout".into()))?
             .map_err(|e| CoreError::Pairing(e.to_string()))?;
+        let _closing = CloseOnDrop(conn.clone());
         let peer_id = tls::peer_id_of(&conn)
             .ok_or_else(|| CoreError::Pairing("no peer certificate".into()))?;
         let steps = async {
@@ -401,7 +423,7 @@ async fn host_with(
         finish(p, &cfg, agreed, peer_addr, confirm).await
     }
     .await;
-    refuser.abort();
+    drop(refuser);
     endpoint.close(
         crate::transport::varint(CloseCode::Normal),
         CloseCode::Normal.reason(),
@@ -464,6 +486,7 @@ async fn join_with(
             }
             other => CoreError::Transport(other.to_string()),
         })?;
+    let _closing = CloseOnDrop(conn.clone());
     let peer_id =
         tls::peer_id_of(&conn).ok_or_else(|| CoreError::Pairing("no peer certificate".into()))?;
     let steps = async {
@@ -743,6 +766,93 @@ mod tests {
         );
         assert!(a.load_peers().unwrap().peer.is_empty());
         assert!(b.load_peers().unwrap().peer.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pairing_host_dropped_before_the_code_tells_the_joiner_and_frees_the_port() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (profile(&dir, "a"), profile(&dir, "b"));
+        let (addr, host) = spawn_host(
+            a,
+            Duration::from_secs(10),
+            accept(ALL, Arc::default()),
+            HostHooks::default(),
+        )
+        .await;
+        // b says Hello and stops before its Commit: the attempt is before the code.
+        let endpoint = Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let client = tls::client_config(
+            &b.load_identity().unwrap(),
+            PinVerifier::new(VerifyMode::Pairing),
+            ALPN_PAIR,
+        )
+        .unwrap();
+        let conn = endpoint
+            .connect_with(client, addr, crate::SERVER_NAME)
+            .unwrap()
+            .await
+            .unwrap();
+        let (mut send, mut recv) = conn.open_bi().await.unwrap();
+        let hb = Frame::Hello(hello(&b.load_config().unwrap()));
+        write_frame(&mut send, &hb, MAX_CONTROL_FRAME_BYTES)
+            .await
+            .unwrap();
+        assert!(matches!(
+            read_frame(&mut recv, MAX_CONTROL_FRAME_BYTES).await,
+            Ok(Frame::Hello(_))
+        ));
+
+        // What the app's pair_cancel does before the code.
+        host.abort();
+        let closed = timeout(Duration::from_secs(2), conn.closed())
+            .await
+            .expect("the joiner hears the end");
+        assert!(
+            matches!(&closed, ConnectionError::ApplicationClosed(c)
+                if CloseCode::from_code(c.error_code.into_inner()) == Some(CloseCode::PairFailed)),
+            "{closed:?}"
+        );
+        let start = Instant::now();
+        while std::net::UdpSocket::bind(addr).is_err() {
+            assert!(
+                start.elapsed() < Duration::from_secs(2),
+                "the pairing port is still held"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pairing_joiner_dropped_before_the_code_tells_the_host() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (profile(&dir, "a"), profile(&dir, "b"));
+        // a reads b's Hello and never answers: b waits before the code.
+        let server = tls::server_config(
+            &a.load_identity().unwrap(),
+            PinVerifier::new(VerifyMode::Pairing),
+            ALPN_PAIR,
+        )
+        .unwrap();
+        let endpoint = Endpoint::server(server, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let addr = endpoint.local_addr().unwrap();
+        let joiner = tokio::spawn(async move { join(&b, addr, accept(ALL, Arc::default())).await });
+        let conn = endpoint.accept().await.unwrap().await.unwrap();
+        let (_send, mut recv) = conn.accept_bi().await.unwrap();
+        assert!(matches!(
+            read_frame(&mut recv, MAX_CONTROL_FRAME_BYTES).await,
+            Ok(Frame::Hello(_))
+        ));
+
+        // What the app's pair_cancel does before the code.
+        joiner.abort();
+        let closed = timeout(Duration::from_secs(2), conn.closed())
+            .await
+            .expect("the host hears the end");
+        assert!(
+            matches!(&closed, ConnectionError::ApplicationClosed(c)
+                if CloseCode::from_code(c.error_code.into_inner()) == Some(CloseCode::PairFailed)),
+            "{closed:?}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -13,13 +13,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use clipsync_core::pairing::{self, PairDecision, PairPrompt};
 use clipsync_core::tls::KEEP_ALIVE;
 use clipsync_ui::UiEvent;
 use clipsync_ui::events::{PairCodeReady, PairOutcomeName, PairResult};
 use common::*;
 use serde_json::{Value, json};
 use tokio::net::UdpSocket;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, oneshot};
 use tokio::task::JoinHandle;
 
 async fn code_ready(rx: &mut broadcast::Receiver<UiEvent>, who: &str) -> PairCodeReady {
@@ -93,6 +94,28 @@ impl LossyRelay {
             losing.store(false, Ordering::SeqCst);
         });
     }
+}
+
+/// Lets the joiner's first datagram reach the host and, once the host answers it, drops
+/// everything: the host holds an attempt whose handshake never ends, before any code.
+async fn stall_handshake(host: SocketAddr) -> (SocketAddr, oneshot::Receiver<()>, JoinHandle<()>) {
+    let front = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let back = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    back.connect(host).await.unwrap();
+    let addr = front.local_addr().unwrap();
+    let (answered, stalled) = oneshot::channel();
+    let task = tokio::spawn(async move {
+        let mut buf = vec![0u8; 65_536];
+        if let Ok((n, _)) = front.recv_from(&mut buf).await {
+            let _ = back.send(&buf[..n]).await;
+        }
+        if back.recv(&mut buf).await.is_ok() {
+            let _ = answered.send(());
+        }
+        // Holds both sockets: the joiner's resends go nowhere.
+        std::future::pending::<()>().await;
+    });
+    (addr, stalled, task)
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -374,4 +397,49 @@ async fn cancel_reaches_the_other_side_even_when_packets_are_lost() {
     relay.task.abort();
     ui_a.shutdown().await;
     ui_c.shutdown().await;
+}
+
+/// A cancel before the code (here a joiner whose handshake never ends) used to leave the
+/// refuser task holding the pairing endpoint and its port until the app quit.
+#[tokio::test(flavor = "multi_thread")]
+async fn cancel_before_the_code_frees_the_pairing_port() {
+    let dir = tempfile::tempdir().unwrap();
+    init_profile(dir.path(), "a", CLIPBOARD_ONLY);
+    let (pc, _) = init_profile(dir.path(), "c", CLIPBOARD_ONLY);
+    let ui_a = start(dir.path(), "a").await;
+    let mut ev_a = ui_a.subscribe();
+
+    let host = ok(
+        &ui_a,
+        json!({ "cmd": "pair_host_start", "args": { "port": 0 } }),
+    )
+    .await;
+    let id = host["attempt_id"].as_u64().unwrap();
+    let port = u16::try_from(host["port"].as_u64().unwrap()).unwrap();
+    let pairing_addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let (relay, stalled, relay_task) = stall_handshake(pairing_addr).await;
+    let joiner = tokio::spawn(async move {
+        pairing::join(&pc, relay, |_: &PairPrompt| PairDecision {
+            accept: false,
+            grants: NONE,
+        })
+        .await
+    });
+    // The host answered: it took the connection and refuses every other one now.
+    stalled.await.unwrap();
+    assert_eq!(
+        ok(&ui_a, json!({ "cmd": "pair_state" })).await["step"],
+        json!("listening")
+    );
+
+    ok(&ui_a, attempt("pair_cancel", id)).await;
+    let r = result(&mut ev_a, "cancelled before the code").await;
+    assert_eq!((r.attempt_id, r.outcome), (id, PairOutcomeName::Cancelled));
+    wait_until("the pairing port is free again", || async {
+        std::net::UdpSocket::bind(pairing_addr).is_ok()
+    })
+    .await;
+    joiner.abort();
+    relay_task.abort();
+    ui_a.shutdown().await;
 }
