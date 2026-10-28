@@ -131,10 +131,14 @@ async fn self_test_runs_the_clipboard_and_leaves_the_agent_as_it_was() {
         "the fake clipboard passes: {clip}"
     );
     assert!(!clip["detail"].as_str().unwrap().is_empty());
-    assert_eq!(
-        results[1],
-        json!({ "module": "input", "status": "not_tested", "detail": "módulo desligado" })
-    );
+    // Input is off in this profile; on Windows it has no adapter at all, which wins.
+    #[cfg(not(windows))]
+    let input = json!({ "module": "input", "status": "not_tested", "detail": "módulo desligado" });
+    #[cfg(windows)]
+    let input = json!({
+        "module": "input", "status": "unavailable", "detail": "sem adaptador nesta plataforma"
+    });
+    assert_eq!(results[1], input);
     // Paused during the test (too short for the poll to see), resumed after.
     assert_eq!(app_state(&ui).await["paused"], json!(false));
 
