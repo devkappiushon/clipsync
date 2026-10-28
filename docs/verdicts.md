@@ -3825,6 +3825,105 @@ As quatro tags são `componentes.html:10` (`js/tema-inicial.js`), `componentes.h
 
 Evidência integral local: `/home/kappxs/.cache/argus-s6-5a55688-tufou2ei/`, com `logs/{proto,core,clipboard,autostart,ci}.log`, `logs/ci.json`, `results.json`, `greps.json`, `meta.json` e inventários SHA-256 `before.json`/`after.json`. **121 testes aprovados, zero falhos, zero ignorados; nenhum achado bloqueante no recorte solicitado.**
 
+### S6 · critérios 2 a 4 · 415caf2
+
+**Critério 2: Passa. Critério 3: Passa nos testes automáticos, mas não passa integralmente enquanto faltar a prova M com `layout.toml`. Critério 4: Passa nos testes locais e no último CI verde disponível, identificado abaixo; o CI de 415caf2 ainda estava em execução na consulta.** Critérios 5 (telas) e 6 (app real) ficam fora desta revisão. O critério 1 permanece na revisão anterior, commit c74f1c0.
+
+Argus, **2026-10-28**, contrato **v1.17**, §12.9. Base exata: `415caf2d8fa235fffc669ce7b9552f24a7ab413a`, via `git archive 415caf2`, em `/home/kappxs/.cache/argus-s6-415caf2-wzp4if22/src`. Os **269 arquivos** do export, inclusive `Cargo.lock`, mantiveram os SHA-256 antes/depois; alterações concorrentes da main não entraram na revisão. SHA-256 do archive: `16b1b15b5896e99be5090cdcf65a69e666fa9080303c37ff742fdd922da4eca1`. Ambiente: Linux x86_64, rustc/cargo **1.99.1**, cache Cargo reaproveitado. Preparação aplicada na raiz do export:
+
+```sh
+export PATH=$HOME/.cargo/bin:$PATH
+export CARGO_TARGET_DIR=/home/kappxs/.cache/clipsync-verdict/target
+```
+
+Não houve comando Cargo local com `--workspace`, servidor iniciado ou edição de código-fonte. As suítes usam perfis temporários, agentes reais em `127.0.0.1` e adaptadores fake; testes específicos de recusa de controle usam `FakeAgent`. Leitura de `crates/clipsync-ui/tests/common/mod.rs` confirmou essas condições.
+
+#### Comandos e repetição das suítes
+
+Todos os comandos locais abaixo saíram **0**. `--no-fail-fast` apenas mantém as outras suítes em execução se alguma falhar; não altera as asserções. Cada rodada completa de UI executou todos os testes habilitados nesta plataforma. Além disso, os comandos específicos de layout e autostart foram executados três vezes cada.
+
+| Comando | Rodadas | Saída resumida por rodada |
+| --- | --- | --- |
+| `cargo test -p clipsync-ui --no-fail-fast` | 1, 2, 3 | **89 passed; 0 failed; 0 ignored**, nas três; durações totais 96,233 s / 46,615 s / 62,504 s, incluindo compilação/espera |
+| `cargo test -p clipsync-input` | 1 | **64 passed; 0 failed; 1 ignored** (`portal_loopback`) |
+| `cargo test -p clipsync-ui --test layout` | 1, 2, 3 | **13 passed; 0 failed; 0 ignored**, nas três |
+| `cargo test -p clipsync-clipboard` | 1 | **33 passed; 0 failed; 1 ignored** (`platform_adapter_round_trip`, requer sessão gráfica) |
+| `cargo test -p clipsync-ui --test autostart` | 1, 2, 3 | **7 passed; 0 failed; 0 ignored**, nas três |
+| `cargo test -p clipsync-core --test mesh a_revoked_peer_removes_the_revoker_itself -- --exact` | 1 | **1 passed; 0 failed; 0 ignored; 14 filtered out**; complemento da revogação offline do fluxo 2 |
+
+Distribuição do `clipsync-ui`, igual nas três rodadas: unitários **42**; `agent` **5**; `autostart` **7**; `clipboard` **2**; `devices` **4**; `diag` **1**; `events` **1**; `fixtures` **1**; `layout` **13**; `onboarding` **6**; `pairing` **2**; `prefs` **2**; `seguranca_s6` **3**. `layout_windows` e doc-tests executaram **0** testes; o primeiro é excluído por `cfg` no Linux e não foi tratado como prova Windows.
+
+**Nenhuma falha isolada se reproduziu:** não houve teste com resultado FAILED nem panic nas três rodadas completas ou nas repetições específicas. Isso registra a amostra observada, sem afirmar ausência definitiva de flake. Total local, contando repetições e o complemento do core: **425 execuções aprovadas, zero falhas e dois testes gráficos ignorados**.
+
+#### 2 · Rivet, clipsync-ui — Passa
+
+Cada teste de UI citado saiu `... ok` nas três rodadas completas. Os caminhos desta tabela são relativos a `crates/clipsync-ui/`, salvo indicação do core.
+
+| Fluxo | Veredito | Teste que prova o requisito e asserções conferidas |
+| --- | --- | --- |
+| (1) Onboarding | **Passa** | `tests/onboarding.rs:24`, `create_writes_the_identity_shown_by_start_and_starts_the_agent`: impressão digital do start igual à do create e do agente. `:70`, `an_existing_profile_needs_confirmation_and_recreate_changes_the_identity`: perfil existente sem confirmação dá `needs_confirmation` e mantém a identidade; recriação troca a identidade e apaga os pareamentos antigos. |
+| (2) Dispositivos | **Passa**, com complemento do core para offline | `tests/devices.rs:52`, `perms_need_full_trust_for_input_and_revoke_needs_the_typed_name`: sem confirmação de `input_in` dá `needs_confirmation` sem gravar; com confirmação grava grants, agente os relê e o clipboard antes recusado passa. Nome errado no revoke dá `name_mismatch`; nome certo remove o par de arquivo/status/lista dos dois lados. B emite `peer_disconnected` e exatamente uma notificação `device_removed`, corpo `a removeu este dispositivo`, sem `peer_blocked`. A espera pela remoção no arquivo de B é limitada por asserção de 3 s. O caso B desligado não está nessa suíte: foi executado separadamente `crates/clipsync-core/tests/mesh.rs:956`, `a_revoked_peer_removes_the_revoker_itself`, que cobre remoção online em até 3 s e, depois, B subindo após o revoke e mantendo A no arquivo, sem conexão ou aviso de remoção. |
+| (3) Pareamento | **Passa** | `tests/pairing.rs:42`, `both_sides_see_the_same_code_and_save_exactly_their_grants`: códigos iguais nas duas Ui; finish antes de code_matches dá `wrong_step`; defaults todos false; arquivos e `pair_result` paired refletem exatamente os grants. `:215`, `cancel_ends_the_attempt_and_saves_nothing`: cancelamento durante escuta e na tela do código, resultado cancelled, sem gravação. Também recusa cancelar depois de enviar a decisão. |
+| (4) Layout | **Passa** | `tests/layout.rs:99`, `get_lists_this_device_and_the_paired_ones_with_their_monitors`: `self_id` e dispositivo `is_self=true`, nome e monitor fake próprios; também lista o par e preserva seus monitores como cached após desconectar. |
+| (5) Clipboard | **Passa** | `tests/clipboard.rs:20`, `a_manual_box_receives_previews_applies_and_discards`: B manual recebe `clip_received` sem texto/preview; `clipboard_get` também não expõe preview; chamada explícita retorna o texto; copy_item escreve no fake e vira applied; discard remove; repetir aplicação/remoção dá os erros esperados. |
+| (6) Diagnóstico | **Passa** | `tests/diag.rs:16`, `the_support_bundle_carries_no_identifier`: cria um bloqueio real e verifica que a prévia não contém nome do par, id completo/curto, IP, nome local, id local completo nem conteúdo sintético; verifica substitutos e contagens de redação. |
+| (7) Preferências | **Passa** | `tests/prefs.rs:14`, `prefs_set_writes_ui_toml_and_a_new_ui_reads_it_back`: grava arquivo, emite prefs_changed e nova Ui relê valores iguais. `:72`, `prefs_set_with_an_unknown_field_is_bad_request_and_changes_nothing`: campo desconhecido na raiz ou em appearance dá `bad_request` e não grava. |
+
+| Itens do “Também” | Veredito | Teste e evidência |
+| --- | --- | --- |
+| Toda fixture JSON desserializa no tipo | **Passa** | `tests/fixtures.rs:68`, `every_fixture_fits_its_type_and_round_trips`: percorre os **43 JSON** do diretório, desserializa no tipo correspondente e serializa de volta sem diferenças; também verifica cobertura de comandos/eventos previstos pelo teste. |
+| JSON ruim / comando desconhecido | **Passa** | `tests/agent.rs:22`, `bad_json_is_bad_request_and_unknown_cmd_is_unknown_command`: respostas com `bad_request` e `unknown_command`, respectivamente. |
+| `peer_connected` em até 3 s | **Passa** | `tests/devices.rs:52`, `perms_need_full_trust_for_input_and_revoke_needs_the_typed_name`: cronômetro começa antes de iniciar B, recebe o evento de B e exige `elapsed <= 3 s`. |
+| Outro agente no mesmo perfil | **Passa** | `tests/agent.rs:178`, `an_agent_already_on_the_profile_makes_the_app_a_client`: sobe outro `agent::run` real, observa `app_state.agent = external`, `agent_start = external` e `agent_stop` recusado com `agent_external`; a Ui continua como cliente. |
+
+#### 3 · Vector — automáticos passam; M impede o fechamento integral
+
+`cargo test -p clipsync-input`: **35** unitários, **10** `layout_capture`, **9** `module_mem`, **1** `self_test`, **1** smoke e **8** `units`, todos aprovados. `portal_loopback` saiu `ignored, requer sessão gráfica`. `cargo test -p clipsync-ui --test layout`: **13/13** nas três execuções específicas e nas três rodadas completas da UI.
+
+| Item | Veredito | Teste e evidência |
+| --- | --- | --- |
+| Barreiras nos dois lados e mapeamento | **Passa** | `crates/clipsync-input/src/layout.rs:871`, `layout::tests::barriers_are_derived_on_both_sides_of_a_link`: compara monitor, borda, trechos local/remoto e `peer_from`/`peer_to` nos dois sentidos. `:901`, `layout::tests::position_maps_linearly_between_the_two_segments`: pontos inicial, médio, final e clamp. `tests/layout_capture.rs:275`, `enter_carries_the_mapped_position_and_the_monitor_only_for_a_v2_peer`: posição 0.75 no segmento local chega como 0.5 no remoto; v2 usa EnterAt com monitor, v1 usa Enter. |
+| Barreira manual com ligação | **Passa** | `crates/clipsync-input/tests/layout_capture.rs:192`, `manual_barrier_and_link_together_refuse_to_build`: `ModuleError::Config`, motivo menciona `[[input.barrier]]` e `layout.toml`. `crates/clipsync-ui/tests/layout.rs:756`, `a_manual_barrier_and_a_link_together_are_refused_and_nothing_is_written`: recusa pela Ui e não grava. |
+| Zones sem permissão / versão 1 | **Passa** | `crates/clipsync-input/tests/layout_capture.rs:369`, `zones_go_only_to_v2_peers_that_may_control_me`: sem `input_in` ou com versão 1, receptor vazio e `sent_count == 0`; par v2 autorizado recebe exatamente uma Zones. |
+| LayoutOffer sem `input_in` | **Passa** | `crates/clipsync-input/tests/layout_capture.rs:441`, `layout_offer_needs_input_in_and_waits_as_pending_until_cleared`: NotAuthorized e nenhuma oferta pendente; autorizado, mantém a oferta até a resposta explícita. |
+| InputLock / InputSwitch | **Passa** | `crates/clipsync-input/tests/layout_capture.rs:314`, `lock_ignores_an_activation_and_switch_opens_a_session_on_the_linked_peer`: ativação travada não envia Enter; switch envia EnterAt com monitor e posição corretos. `crates/clipsync-ui/tests/layout.rs:785`, `the_lock_and_the_switch_go_through_the_agent`, cobre os comandos pela Ui. |
+| Ordem de validação / stale_rev | **Passa**, com limite de cobertura descrito aqui | `crates/clipsync-ui/tests/layout.rs:202`, `set_link_validates_in_the_documented_order`: erros combinados preservam prioridade de same_device, empty_segment, segment_out_of_range e segment_overlap sobre stale_rev; revisões e nenhuma gravação indevida conferidas. `:455`, `links_can_be_edited_and_removed_and_a_stale_screen_is_refused`, e `:554`, `two_saves_from_the_same_revision_do_not_both_win`, cobrem revisão obsoleta, id ausente e disputa de gravação. A borda interna usa testes unitários `layout::tests::{side_by_side_monitors_lock_the_shared_edge_on_both,stacked_monitors_lock_bottom_and_top_and_a_gap_locks_nothing,a_link_on_a_locked_edge_is_detected_only_where_it_overlaps}`; a posição de `internal_edge_locked` na ordem foi conferida em `src/layout.rs:851–909`, não por cenário integrado com dois monitores (o fake integrado tem um). |
+| `layout.toml` relido igual | **Passa** | `crates/clipsync-ui/tests/layout.rs:389`, `a_saved_link_reads_back_the_same_and_survives_a_restart`: lê arquivo salvo, compara round-trip de todos os campos, reabre Ui e compara rev/links/opções/posições. Também passa `clipsync-input` `layout::tests::roundtrip_keeps_every_field`. |
+| M: portal_loopback com ligação do layout | **Não comprovado; impede aprovação integral** | O comando padrão ignorou o teste gráfico. `cargo test -p clipsync-input -- --ignored portal_loopback` não foi executado nesta rodada. Além da evidência gráfica ausente, o roteiro desse commit ainda usa a configuração padrão e não lê `layout.toml` (achado abaixo). O teste `loopback_uses_the_link_barrier_and_maps_the_position` passou com fake, mas não substitui M. |
+
+**Achado:**
+
+1. **P2 · S6-ARGUS-1 · `crates/clipsync-input/tests/portal_loopback.rs:53`** — o teste gráfico instancia `build_with_adapters(InputConfig::default(), PortalCapture, ...)`; o arquivo inteiro não cria/lê `layout.toml` nem usa `build_with_layout`. Assim, mesmo uma execução verde desse roteiro em 415caf2 não provaria o requisito M de §12.9.3, que exige ligação do layout no lugar da barreira padrão. Falta adaptar o roteiro e registrar a execução gráfica. Observação do archive pedido, sem atribuir o mesmo estado a correções posteriores e sem modificar código. Durante a revisão, a main recebeu `4b174d7`, que acrescenta `portal_loopback_from_layout`; esse commit posterior não integra a base 415caf2 nem foi executado neste veredito.
+
+#### 4 · Flux — testes locais passam; CI identificado pela run
+
+**Clipboard — Passa.** `cargo test -p clipsync-clipboard`: 33 aprovados, zero falhos, um teste gráfico ignorado. Em `crates/clipsync-clipboard/tests/module_mem.rs`, as asserções dos testes abaixo foram relidas e todos saíram `... ok`:
+
+| Requisito | Teste e resultado |
+| --- | --- |
+| ClipApply in_inbox, sem oferta nova; applied/expired recusados | `m_clipapply_writes_an_inbox_item_without_a_new_offer` (`:473`): uma escrita no fake, Applied, zero envio ao terceiro par e segunda aplicação recusada. `o_clipapply_refuses_an_expired_item_because_the_ttl_dropped_the_text` (`:543`): expirado dá WRONG_STATE sem escrita. `n_clipapply_works_while_paused_and_a_stale_item_qualifies` também passou. |
+| ClipDiscard elimina item/texto | `p_clipdiscard_removes_the_item_and_its_text` (`:559`): caixa vazia, aplicar/descartar novamente dá NO_ITEM, sem escrita no fake. Implementação `src/module.rs:745` remove a entrada que possui texto e preview. |
+| ClipSendCurrent e permissão / vazio | `q_clipsendcurrent_sends_the_clipboard_to_clipboard_out_peers` (`:582`): conteúdo atual chega ao fake autorizado; broadcast exclui par sem clipboard_out; envio explícito sem permissão é NotAuthorized; vazio dá EMPTY_CLIPBOARD. |
+| TTL descarta texto da caixa | `k_ttl_counts_from_local_receipt_and_drops_the_text` (`:397`): TTL zero expira na chegada; 800 ms expira após a espera, com preview vazio; teste de aplicação expirada prova recusa de reutilização. Implementação limpa preview e define texto como None. |
+| Debug sem conteúdo | `i_debug_never_shows_content` (`:320`): Debug de ClipSnapshot e InboxItem não contém o segredo sintético. O teste `tests/self_test.rs:163`, `the_outcome_never_carries_clipboard_content`, também passou. |
+
+O ignorado `platform_adapter_round_trip` não foi usado como evidência de clipboard real. Os oito testes fake de `self_test` passaram, inclusive restauração do conteúdo anterior e falhas de leitura/escrita/restauração.
+
+**Autostart — Passa.** `cargo test -p clipsync-ui --test autostart`: **7/7 em cada uma das três rodadas** (também 7/7 nas três rodadas completas). Em `crates/clipsync-ui/tests/autostart.rs`: `appimage_wins_over_the_executable_when_set_and_non_empty`, `exec_line_quotes_the_program_and_adds_hidden`, `enable_writes_the_desktop_file_and_disable_removes_it` e `set_and_is_enabled_round_trip_through_the_options_dir` comprovam `$APPIMAGE` absoluto no Exec e `--hidden`, criação/remoção e leitura pelas opções. `a_relative_appimage_falls_back_to_the_executable`, `a_path_with_a_control_character_is_refused` e `enabling_with_a_bad_path_writes_nothing` também passaram.
+
+**CI — Passa no último verde disponível, não certifica ainda a HEAD nova.** Às **02:03:29 -03:00**, `gh run view 40634953651 --json headSha,status,conclusion,jobs,url,name` retornou `headSha=415caf2...`, `status=in_progress`: Linux success e Windows ainda executando testes. Os steps de clippy dos dois runners já constavam success na consulta das 02:00:12, mas a run não havia terminado. Como solicitado, a referência verde usada é a [run 40628041669, commit 5a55688](https://github.com/devkappiushon/clipsync/actions/runs/40628041669), a mais recente em `gh run list --workflow ci --branch main --status success --limit 3 --json databaseId,headSha,conclusion,createdAt,url,displayTitle`.
+
+`gh run view 40628041669 --json headSha,status,conclusion,jobs,url,name` saiu **0**, run e ambos os jobs com `success`. `gh run view 40628041669 --log` retornou **0 sem conteúdo**, inclusive com `rtk bypass`; por isso a evidência foi recuperada pela API oficial: `gh api repos/devkappiushon/clipsync/actions/runs/40628041669/logs`, exit **0**, ZIP de **57.854 bytes** com os logs completos dos dois jobs. Leitura dos trechos de clippy:
+
+| Runner | Comando no log | App e término do clippy |
+| --- | --- | --- |
+| Windows | `cargo clippy --workspace --all-targets --locked -- -D warnings` | `03:42:13Z Compiling clipsync-app v0.1.0 (D:\a\clipsync\clipsync\crates\clipsync-app)`; `03:42:34Z Finished dev profile ... in 38.90s`; step success. |
+| Linux | `cargo clippy --workspace --all-targets --locked -- -D warnings` | `03:42:40Z Compiling clipsync-app v0.1.0 (/home/runner/work/clipsync/clipsync/crates/clipsync-app)`; `03:42:51Z Finished dev profile ... in 12.00s`; step success. |
+
+O app foi incluído por `--workspace`, com os flags exigidos pelo critério. Esse resultado é histórico de **5a55688**; não foi extrapolado para as mudanças posteriores do app/UI em 415caf2.
+
+Evidência integral: `/home/kappxs/.cache/argus-s6-415caf2-wzp4if22/`, com `logs/ui-{1,2,3}.log`, `logs/layout-{1,2,3}.log`, `logs/autostart-{1,2,3}.log`, logs de input/clipboard/core-revoke/CI, `results.json`, `summary.json`, `core-revoke.json`, `meta.json` e inventários `before.json`/`after.json`.
+
 ## Findings
 
 ### Pendências pós-MVP aceitas pelo Maestro
