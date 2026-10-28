@@ -1,22 +1,32 @@
 /* Tela: onboarding. Só tokens de tokens.css; classes prefixadas com .onboarding. */
 
-.onboarding {
-  display: flex;
-  flex-direction: column;
+.onboarding__cartao {
   gap: var(--s-4);
-  padding-top: var(--s-4);
+  container-type: inline-size;
+}
+
+.onboarding__topo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2) var(--s-4);
+  padding-bottom: var(--s-3);
+  border-bottom: 1px solid var(--line);
 }
 
 .onboarding__marca {
-  color: var(--muted);
-  font-size: var(--fs-sm);
-  font-weight: 500;
+  font-family: var(--font-head);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .onboarding__passos {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--s-2) var(--s-4);
+  align-items: center;
+  gap: var(--s-2);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -28,6 +38,14 @@
   display: flex;
   align-items: center;
   gap: var(--s-2);
+}
+
+/* Linha entre um passo e o seguinte */
+.onboarding__passos li + li::before {
+  content: "";
+  width: var(--s-4);
+  height: 1px;
+  background: var(--line-strong);
 }
 
 .onboarding__passos li[aria-current="step"] {
@@ -42,10 +60,16 @@
   width: 24px;
   height: 24px;
   border: 1px solid var(--line-strong);
-  border-radius: var(--raio);
+  border-radius: 50%;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
+}
+
+.onboarding__numero .icone {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.5;
 }
 
 .onboarding__passos li[aria-current="step"] .onboarding__numero {
@@ -55,9 +79,13 @@
 }
 
 .onboarding__passo--feito .onboarding__numero {
-  background: var(--accent-soft);
-  border-color: var(--accent-soft);
-  color: var(--accent);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.onboarding__impressao-bloco {
+  gap: var(--s-1);
 }
 
 .onboarding__impressao {
@@ -65,31 +93,70 @@
   letter-spacing: 0.04em;
 }
 
+/* Os dois módulos lado a lado; o ligado ganha destaque */
+
 .onboarding__modulos {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: var(--s-3);
 }
 
+.onboarding__modulo {
+  box-shadow: none;
+}
+
+.onboarding__modulo--ligado {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+@container (max-width: 560px) {
+  .onboarding__modulos {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Resultados do teste: módulo e detalhe à esquerda, selo à direita */
+
 .onboarding__resultados {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
   margin: 0;
   padding: 0;
   list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--raio);
 }
 
 .onboarding__resultados li {
   display: flex;
-  flex-direction: column;
-  gap: var(--s-1);
-  padding-top: var(--s-3);
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-1) var(--s-3);
+  padding: var(--s-2) var(--s-3);
+}
+
+.onboarding__resultados li + li {
   border-top: 1px solid var(--line);
 }
 
-.onboarding__resultado-topo {
+.onboarding__resultado-texto {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.onboarding__rodape {
+  display: flex;
   align-items: center;
   gap: var(--s-2);
+}
+
+.onboarding__rodape > :last-child {
+  margin-left: auto;
+}
+
+.onboarding__cartao .pilha > :empty {
+  display: none;
 }

@@ -3,15 +3,21 @@
 
 import { api } from "../api.js";
 import { aviso, cabecalho, estadoErro } from "../areas.js";
-import { botao, campo, cartao, confirmar, esqueleto, interruptor } from "../componentes.js";
+import { botao, campo, confirmar, esqueleto, interruptor } from "../componentes.js";
 import { h, trocar } from "../dom.js";
 import { atualizarApp, obterApp } from "../estado.js";
 import { INDISPONIVEL, mensagemDe, seloTeste } from "../formatar.js";
+import { icone } from "../icones.js";
 
 const PASSOS = [
   { n: 1, titulo: "Esta máquina", descricao: "Como os outros dispositivos vão ver esta máquina." },
   { n: 2, titulo: "O que sincronizar", descricao: "Ligue só o que quiser. Dá para mudar depois." },
-  { n: 3, titulo: "Teste", descricao: "Confira os módulos antes de parear a primeira máquina." },
+  {
+    n: 3,
+    titulo: "Teste",
+    descricao:
+      "Confira os módulos antes de parear a primeira máquina. O teste confere cada módulo ligado e, com teclado e mouse ligados, move o cursor em loopback nesta máquina.",
+  },
 ];
 
 const PORTA_PADRAO = 47800;
@@ -29,7 +35,7 @@ function indicador(atual) {
       h(
         "li",
         { "aria-current": p.n === atual ? "step" : null, class: p.n < atual ? "onboarding__passo--feito" : "" },
-        h("span", { class: "onboarding__numero", "aria-hidden": "true" }, String(p.n)),
+        h("span", { class: "onboarding__numero", "aria-hidden": "true" }, p.n < atual ? icone("verificar") : String(p.n)),
         p.titulo,
       ),
     ),
@@ -55,14 +61,16 @@ export default async function montar({ rota, ir }) {
     return { no: h("div") };
   }
 
+  // Um cartão central: marca e passos no topo, conteúdo no meio e, no rodapé, Voltar à esquerda e a ação principal à direita.
   const corpo = h("div", { class: "pilha" });
+  const rodape = h("div", { class: "onboarding__rodape" });
   const no = h(
-    "div",
-    { class: "onboarding" },
-    h("p", { class: "onboarding__marca" }, "Primeiro uso"),
-    indicador(passo.n),
+    "section",
+    { class: "cartao onboarding__cartao" },
+    h("div", { class: "onboarding__topo" }, h("p", { class: "onboarding__marca" }, "ClipSync"), indicador(passo.n)),
     cabecalho({ titulo: passo.titulo, descricao: passo.descricao }),
     corpo,
+    rodape,
   );
 
   const pintores = { 1: passo1, 2: passo2, 3: passo3 };
@@ -128,20 +136,16 @@ export default async function montar({ rota, ir }) {
           h("p", null, "Esta máquina já tem um perfil. Continuar refaz a identidade, e os pares terão de parear de novo."),
           botao({ rotulo: "Ir para Dispositivos", variante: "discreto", aoClicar: () => ir("dispositivos") }),
         ),
-      cartao({
-        filhos: [
-          areaCampo,
-          h(
-            "dl",
-            { class: "kv" },
-            h("dt", null, "Impressão digital"),
-            h("dd", null, h("span", { class: "mono onboarding__impressao" }, inicio.fingerprint_short)),
-          ),
-          h("p", { class: "nota" }, "A impressão digital identifica a chave desta máquina. Ela aparece na outra máquina ao parear, para você conferir."),
-        ],
-      }),
-      h("div", { class: "linha" }, continuar),
+      areaCampo,
+      h(
+        "div",
+        { class: "pilha onboarding__impressao-bloco" },
+        h("p", { class: "campo__rotulo" }, "Impressão digital"),
+        h("p", { class: "mono onboarding__impressao" }, inicio.fingerprint_short),
+        h("p", { class: "nota" }, "A impressão digital identifica a chave desta máquina. Ela aparece na outra máquina ao parear, para você conferir."),
+      ),
     );
+    trocar(rodape, continuar);
   }
 
   async function passo2() {
@@ -151,7 +155,7 @@ export default async function montar({ rota, ir }) {
     const inputSuportado = inicio.input_supported === true;
     if (!inputSuportado) modulos.input = false;
 
-    const avisoVazio = h("div");
+    const avisoNenhum = h("div");
     const erroCriar = h("div");
     const criar = botao({
       rotulo: "Criar perfil e continuar",
@@ -187,25 +191,34 @@ export default async function montar({ rota, ir }) {
     const atualizar = () => {
       const nenhum = !modulos.input && !modulos.clipboard;
       criar.disabled = nenhum;
-      trocar(avisoVazio, nenhum ? aviso("aviso", h("p", null, "Com os dois desligados, esta máquina não envia nem recebe nada. Ligue pelo menos um.")) : "");
+      trocar(
+        avisoNenhum,
+        nenhum
+          ? aviso("aviso", h("p", null, "Com os dois desligados o ClipSync não faz nada: esta máquina não envia nem recebe. Ligue pelo menos um."))
+          : aviso("info", h("p", null, "Com os dois desligados o ClipSync não faz nada. Dá para mudar depois em Preferências.")),
+      );
     };
 
-    const cartaoModulo = ({ rotulo, descricao, permissao, chave, desabilitado = false, motivo }) =>
-      cartao({
-        filhos: [
-          interruptor({
-            rotulo,
-            descricao: motivo ?? descricao,
-            marcado: modulos[chave],
-            desabilitado,
-            aoMudar: (valor) => {
-              modulos[chave] = valor;
-              atualizar();
-            },
-          }),
-          !motivo && h("p", { class: "nota" }, permissao),
-        ],
-      });
+    const cartaoModulo = ({ rotulo, descricao, permissao, chave, desabilitado = false, motivo }) => {
+      const no = h(
+        "section",
+        { class: "cartao onboarding__modulo" },
+        interruptor({
+          rotulo,
+          descricao: motivo ?? descricao,
+          marcado: modulos[chave],
+          desabilitado,
+          aoMudar: (valor) => {
+            modulos[chave] = valor;
+            no.classList.toggle("onboarding__modulo--ligado", valor);
+            atualizar();
+          },
+        }),
+        !motivo && h("p", { class: "nota" }, permissao),
+      );
+      no.classList.toggle("onboarding__modulo--ligado", modulos[chave] === true);
+      return no;
+    };
 
     trocar(corpo, 
       h(
@@ -226,10 +239,10 @@ export default async function montar({ rota, ir }) {
           permissao: "Não pede permissão extra: usa o clipboard da sessão gráfica, por X11 ou pelo portal.",
         }),
       ),
-      avisoVazio,
+      avisoNenhum,
       erroCriar,
-      h("div", { class: "linha" }, botao({ rotulo: "Voltar", icone: "voltar", aoClicar: () => ir("onboarding/1") }), criar),
     );
+    trocar(rodape, botao({ rotulo: "Voltar", icone: "voltar", aoClicar: () => ir("onboarding/1") }), criar);
     atualizar();
   }
 
@@ -248,8 +261,8 @@ export default async function montar({ rota, ir }) {
             h(
               "li",
               null,
-              h("div", { class: "onboarding__resultado-topo" }, h("strong", null, MODULOS[r.module] ?? r.module), seloTeste(r.status)),
-              r.detail && h("p", { class: "muted" }, r.detail),
+              h("div", { class: "onboarding__resultado-texto" }, h("strong", null, MODULOS[r.module] ?? r.module), r.detail && h("p", { class: "nota" }, r.detail)),
+              seloTeste(r.status),
             ),
           ),
         ),
@@ -259,49 +272,43 @@ export default async function montar({ rota, ir }) {
 
     const erroTeste = h("div");
     trocar(corpo, 
-      cartao({
-        filhos: [
-          h("p", null, "O teste confere cada módulo ligado e, com teclado e mouse ligados, move o cursor em loopback nesta máquina."),
-          dados.modulos?.clipboard !== false &&
-            aviso("aviso", h("p", { id: "aviso-teste-clipboard" }, "O teste escreve um texto de teste na área de transferência e devolve o texto anterior. Conteúdo que não é texto (imagem, arquivo) não volta.")),
-          h(
-            "div",
-            { class: "linha" },
-            botao({
-              rotulo: "Rodar teste com conteúdo sintético",
-              variante: "primario",
-              "aria-describedby": dados.modulos?.clipboard !== false ? "aviso-teste-clipboard" : null,
-              icone: "verificar",
-              aoClicar: async () => {
-                trocar(erroTeste);
-                try {
-                  dados.resultados = (await api.onboardingSelfTest()).results;
-                } catch (erro) {
-                  trocar(erroTeste, aviso("erro", h("p", null, mensagemDe(erro))));
-                  return;
-                }
-                pintarResultados();
-              },
-            }),
-          ),
-          erroTeste,
-          areaResultados,
-        ],
-      }),
+      dados.modulos?.clipboard !== false &&
+        aviso("aviso", h("p", { id: "aviso-teste-clipboard" }, "O teste escreve um texto de teste na área de transferência e devolve o texto anterior. Conteúdo que não é texto (imagem, arquivo) não volta.")),
       h(
         "div",
         { class: "linha" },
-        botao({ rotulo: "Voltar", icone: "voltar", aoClicar: () => ir("onboarding/2") }),
         botao({
-          rotulo: "Concluir",
+          rotulo: "Rodar teste com conteúdo sintético",
           variante: "primario",
-          icone: "avancar",
+          "aria-describedby": dados.modulos?.clipboard !== false ? "aviso-teste-clipboard" : null,
+          icone: "verificar",
           aoClicar: async () => {
-            await atualizarApp();
-            ir("dispositivos");
+            trocar(erroTeste);
+            try {
+              dados.resultados = (await api.onboardingSelfTest()).results;
+            } catch (erro) {
+              trocar(erroTeste, aviso("erro", h("p", null, mensagemDe(erro))));
+              return;
+            }
+            pintarResultados();
           },
         }),
       ),
+      erroTeste,
+      areaResultados,
+    );
+    trocar(
+      rodape,
+      botao({ rotulo: "Voltar", icone: "voltar", aoClicar: () => ir("onboarding/2") }),
+      botao({
+        rotulo: "Concluir",
+        variante: "primario",
+        icone: "avancar",
+        aoClicar: async () => {
+          await atualizarApp();
+          ir("dispositivos");
+        },
+      }),
     );
   }
 }

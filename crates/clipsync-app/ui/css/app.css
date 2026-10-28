@@ -274,7 +274,22 @@ h1:focus {
 }
 
 .app[data-lateral="oculta"] .pagina {
-  max-width: 640px;
+  max-width: 720px;
+  width: 100%;
+  margin: auto;
+}
+
+/* Sem barra lateral (onboarding), o cartão fica centrado na janela; se passar da altura, a janela rola */
+
+.app[data-lateral="oculta"] .conteudo {
+  display: flex;
+  flex-direction: column;
+}
+
+.app[data-lateral="oculta"] #tela {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
 }
 
 .cabecalho {
@@ -463,5 +478,6 @@ h3 {
 }
 
 .app[data-lateral="oculta"] .aviso-agente {
-  max-width: 640px;
+  width: 100%;
+  max-width: 720px;
 }
