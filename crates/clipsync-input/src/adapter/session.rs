@@ -142,6 +142,5 @@ mod tests {
         } else {
             assert!(!watch.is_locked(), "no logind means unlocked");
         }
-        eprintln!("logind available: {}", watch.available());
     }
 }
