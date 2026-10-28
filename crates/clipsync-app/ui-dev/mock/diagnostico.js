@@ -61,7 +61,7 @@ function bloqueios() {
         ]
       : [];
   // I-S7-2 (§13.2 regra 2g): o Windows não liberou Win+Alt+P para retomar. O texto é o do contrato.
-  const retomada = estado.retomadaRecusada
+  const retomada = estado.bloqueioRecusa
     ? [{ at_unix_ms: AGORA - 2 * MIN, peer_id: null, peer_name: null, module: "input", reason: "o Windows não liberou Win+Alt+P para retomar: use a bandeja ou o botão Pausar tudo" }]
     : [];
   return [

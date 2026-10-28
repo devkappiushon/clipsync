@@ -56,6 +56,8 @@ function tratar({ event, data }) {
   switch (event) {
     case "pause_changed":
       if (app) definirApp({ ...app, paused: data.paused });
+      // Pausar ou retomar muda também o que o agente informa em features (resume_hotkey_refused).
+      reconsultarApp();
       break;
     case "agent_state":
       if (app) definirApp({ ...app, agent: data.agent, agent_error: data.error });

@@ -36,8 +36,10 @@ registrar({
 
   pause_set: ({ paused }) => {
     estado.pausado = paused === true;
-    // O adaptador só tenta registrar o Win+Alt+P ao pausar; se o Windows recusar, o bloqueio fica registrado.
-    if (estado.pausado && cenario === "windows-recusa") estado.retomadaRecusada = true;
+    // O adaptador só tenta registrar o Win+Alt+P ao pausar. Se o Windows recusar, o campo liga e o bloqueio
+    // fica registrado; ao retomar, o campo volta a false e o bloqueio continua no Diagnóstico.
+    estado.retomadaRecusada = estado.pausado && cenario === "windows-recusa";
+    if (estado.retomadaRecusada) estado.bloqueioRecusa = true;
     emitir("pause_changed", { paused: estado.pausado });
     return { paused: estado.pausado };
   },

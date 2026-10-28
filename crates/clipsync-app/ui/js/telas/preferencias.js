@@ -6,24 +6,10 @@ import { api } from "../api.js";
 import { area, aviso, cabecalho, indisponivel } from "../areas.js";
 import { botao, cartao, interruptor, segmentado, selo, tabela, tecla } from "../componentes.js";
 import { h, trocar } from "../dom.js";
-import { recurso } from "../estado.js";
+import { observarApp, recurso } from "../estado.js";
 import { INDISPONIVEL, mensagemDe } from "../formatar.js";
 
-// `pause_changed` entra porque é ao pausar que o Windows pode recusar o Win+Alt+P de retomar.
-const EVENTOS = ["prefs_changed", "pause_changed", "resync"];
-
-// O adaptador avisa como bloqueio de input, sem campo próprio no contrato (§13.2 regra 2g): reconhece pelo texto.
-const RECUSA_RETOMADA = /não liberou win\+alt\+p/i;
-
-/** O Windows recusou o Win+Alt+P de retomar? Sem agente ou sem diagnóstico, não há aviso a dar. */
-async function retomadaRecusada() {
-  try {
-    const { blocks } = await api.diagnosticsGet();
-    return blocks.some((b) => b.module === "input" && RECUSA_RETOMADA.test(b.reason));
-  } catch {
-    return false;
-  }
-}
+const EVENTOS = ["prefs_changed", "resync"];
 
 const NOTIFICACOES = [
   { chave: "item_received", rotulo: "Item recebido", descricao: "Mostra só a origem. O conteúdo copiado nunca aparece na notificação." },
@@ -65,13 +51,11 @@ function atalhos(prefs) {
 export default function montar({ ir, assinar }) {
   const avisoTopo = h("div");
   let atual = null;
-  let recusouRetomada = false;
 
   const regiao = area({
     linhas: 6,
     buscar: async () => {
       atual = await api.prefsGet();
-      recusouRetomada = recurso("global_shortcuts") && (await retomadaRecusada());
       return atual;
     },
     pintar: (prefs) =>
@@ -106,7 +90,7 @@ export default function montar({ ir, assinar }) {
     let obs = null;
     if (ligado && !a.vale) obs = indisponivel();
     // Win+Alt+P pausa, mas o Windows não liberou a combinação para retomar: a retomada fica nos botões.
-    else if (ligado && a.retomar && recusouRetomada) obs = h("span", { class: "nota" }, "O Windows não liberou Win+Alt+P para retomar: use a bandeja ou Pausar tudo.");
+    else if (ligado && a.retomar && recurso("resume_hotkey_refused")) obs = h("span", { class: "nota" }, "O Windows não liberou Win+Alt+P para retomar: use a bandeja ou Pausar tudo.");
     return obs ? h("span", { class: "preferencias__acao" }, a.acao, obs) : a.acao;
   }
 
@@ -135,7 +119,7 @@ export default function montar({ ir, assinar }) {
             "p",
             { class: "nota" },
             ligado
-              ? recusouRetomada
+              ? recurso("resume_hotkey_refused")
                 ? "Travar nesta tela e Ir para dispositivo também estão no Layout de telas."
                 : "Valem com o módulo de teclado e mouse ligado. As mesmas ações continuam em botões: Pausar tudo na barra lateral; Travar nesta tela e Ir para dispositivo no Layout de telas."
               : "Enquanto o atalho global não existe, as mesmas ações estão em botões: Pausar tudo na barra lateral e no menu da bandeja; Travar nesta tela e Ir para dispositivo no Layout de telas.",
@@ -225,7 +209,18 @@ export default function montar({ ir, assinar }) {
     return h("footer", { class: "nota preferencias__rodape" }, `ClipSync ${prefs.version} · ${prefs.license} · feito por montesouza.dev`);
   }
 
-  const cancelar = assinar(EVENTOS, () => regiao.recarregar({ silencioso: true }));
+  // O agente liga resume_hotkey_refused ao pausar e desliga ao retomar; o app_state traz o valor novo.
+  let recusada = recurso("resume_hotkey_refused");
+  const pararApp = observarApp(() => {
+    if (recurso("resume_hotkey_refused") === recusada) return;
+    recusada = recurso("resume_hotkey_refused");
+    regiao.recarregar({ silencioso: true });
+  });
+  const cancelarEventos = assinar(EVENTOS, () => regiao.recarregar({ silencioso: true }));
+  const cancelar = () => {
+    pararApp();
+    cancelarEventos();
+  };
 
   const no = h(
     "div",

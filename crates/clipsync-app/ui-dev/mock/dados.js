@@ -74,7 +74,10 @@ estado.inicializado = cenario !== "sem-perfil";
 estado.agente = cenario === "erro" ? "failed" : cenario === "sem-perfil" ? "stopped" : "in_app";
 estado.erroAgente = cenario === "erro" ? "Não foi possível abrir a porta 47800: já está em uso." : null;
 // Windows que recusou o Win+Alt+P de retomar (I-S7-2): o app abre pausado, que é quando o aviso importa.
+// `retomadaRecusada` é o features.resume_hotkey_refused (liga ao pausar, desliga ao retomar); `bloqueioRecusa`
+// é o bloqueio de input com o texto, que continua no Diagnóstico.
 estado.retomadaRecusada = cenario === "windows-recusa";
+estado.bloqueioRecusa = estado.retomadaRecusada;
 estado.pausado = estado.retomadaRecusada;
 estado.telaTravada = false;
 estado.modulos = { clipboard: true, input: true };
@@ -96,6 +99,7 @@ export function features() {
     // Windows com o módulo de input ligado: Win+Alt+N, L e P. No Linux não há tecla global sem o portal.
     global_shortcuts: plataforma === "windows" && estado.modulos.input === true,
     peer_pause: false,
+    resume_hotkey_refused: estado.retomadaRecusada === true,
     peer_controls_column: false,
     peer_rtt: false,
     peer_last_activity: false,
