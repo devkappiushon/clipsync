@@ -346,17 +346,22 @@ async fn memhub_counts_request_pause_and_applies_it() {
     assert_eq!(hub.pause_requests(a.id), 2);
 }
 
-/// §13.7 item 3: `keyboard_layout` closes `InputState` with `serde(default)`, so the reply of an
-/// agent without the field (the control socket speaks JSON) still decodes, as None.
+/// §13.7 item 3 and I-S7-2: `keyboard_layout` and `resume_hotkey_refused` close `InputState`
+/// with `serde(default)`, so the reply of an agent without them (the control socket speaks JSON)
+/// still decodes, as None and false.
 #[test]
-fn input_state_without_keyboard_layout_decodes_as_none() {
+fn input_state_without_the_s7_fields_decodes_as_none_and_false() {
     let old = serde_json::json!({
         "local": [], "peers": [], "screen_locked": false, "active_peer": null, "pending_offer": null
     });
     let s: InputState = serde_json::from_value(old).unwrap();
-    assert_eq!(s.keyboard_layout, None);
+    assert_eq!(
+        (s.keyboard_layout.as_deref(), s.resume_hotkey_refused),
+        (None, false)
+    );
     let new = InputState {
         keyboard_layout: Some("00010416".into()),
+        resume_hotkey_refused: true,
         ..s
     };
     let back: InputState = serde_json::from_value(serde_json::to_value(&new).unwrap()).unwrap();

@@ -103,10 +103,13 @@ pub struct Features {
     pub clipboard_pause_capture: bool,
     pub clipboard_private_mode: bool,
     pub pair_peer_declined_notice: bool,
+    /// I-S7-2: the system refused Win+Alt+P to the input module (from `InputState`; false
+    /// without an agent). Preferences read this, not the text of the block.
+    pub resume_hotkey_refused: bool,
 }
 
 impl Features {
-    pub(crate) fn new(input_live: bool) -> Self {
+    pub(crate) fn new(input_live: bool, input: Option<&InputState>) -> Self {
         Self {
             input: input_live,
             peer_monitors: input_live,
@@ -118,6 +121,7 @@ impl Features {
             os_notifications: true,
             // Win+Alt+1 to 9, L and P (§13.6): the Windows capture adapter, none on Linux yet.
             global_shortcuts: cfg!(windows) && input_live,
+            resume_hotkey_refused: input.is_some_and(|i| i.resume_hotkey_refused),
             ..Self::default()
         }
     }
@@ -253,7 +257,7 @@ pub(crate) async fn app_state(ctx: &Ctx) -> Result<AppState, UiError> {
         input_supported: clipsync_input::SUPPORTED,
         version: env!("CARGO_PKG_VERSION").to_string(),
         platform: platform().to_string(),
-        features: Features::new(input_live),
+        features: Features::new(input_live, o.input.as_ref()),
     })
 }
 
@@ -274,5 +278,30 @@ pub(crate) async fn pause_set(ctx: &Ctx, paused: bool) -> Result<PausedReply, Ui
         }
         ControlResponse::Error { message } => Err(UiError::internal(&clean(&message))),
         _ => Err(UiError::internal(msg::UNEXPECTED_REPLY)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input(refused: bool) -> InputState {
+        InputState {
+            local: vec![],
+            peers: vec![],
+            screen_locked: false,
+            active_peer: None,
+            pending_offer: None,
+            keyboard_layout: None,
+            resume_hotkey_refused: refused,
+        }
+    }
+
+    /// I-S7-2: the feature only says what the input module reported; no agent, no refusal.
+    #[test]
+    fn resume_hotkey_refused_comes_from_the_input_state() {
+        assert!(Features::new(true, Some(&input(true))).resume_hotkey_refused);
+        assert!(!Features::new(true, Some(&input(false))).resume_hotkey_refused);
+        assert!(!Features::new(false, None).resume_hotkey_refused);
     }
 }

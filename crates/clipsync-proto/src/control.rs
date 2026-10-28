@@ -229,6 +229,10 @@ pub struct InputState {
     /// from an agent older than the field.
     #[serde(default)]
     pub keyboard_layout: Option<String>,
+    /// S7 (I-S7-2): the system refused the resume shortcut (Win+Alt+P) to the input adapter.
+    /// Back to false on resume or when the shortcut registers. False from an older agent.
+    #[serde(default)]
+    pub resume_hotkey_refused: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

@@ -508,6 +508,7 @@ impl State {
             active_peer: self.active_peer,
             pending_offer: self.pending_offer.clone(),
             keyboard_layout: None,
+            resume_hotkey_refused: false,
         }
     }
 

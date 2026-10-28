@@ -704,6 +704,7 @@ mod tests {
             active_peer: None,
             pending_offer: None,
             keyboard_layout: layout.map(str::to_string),
+            resume_hotkey_refused: false,
         }
     }
 

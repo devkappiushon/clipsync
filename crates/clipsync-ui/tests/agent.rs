@@ -275,6 +275,11 @@ async fn global_shortcuts_need_windows_and_the_input_module() {
         app_state(&ui_b).await["features"]["global_shortcuts"],
         json!(false)
     );
+    // I-S7-2: nothing refused Win+Alt+P here (the fake adapters register nothing).
+    assert_eq!(
+        app_state(&ui_a).await["features"]["resume_hotkey_refused"],
+        json!(false)
+    );
     ui_a.shutdown().await;
     ui_b.shutdown().await;
 }

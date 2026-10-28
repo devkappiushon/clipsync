@@ -39,6 +39,7 @@
     "clipboard_confirm_mode": false,
     "clipboard_pause_capture": false,
     "clipboard_private_mode": false,
-    "pair_peer_declined_notice": false
+    "pair_peer_declined_notice": false,
+    "resume_hotkey_refused": false
   }
 }
