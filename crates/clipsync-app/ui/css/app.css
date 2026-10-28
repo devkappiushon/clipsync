@@ -150,6 +150,19 @@ h1:focus {
   color: var(--accent);
 }
 
+.marca__texto {
+  display: flex;
+  flex-direction: column;
+}
+
+.marca__texto small {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.3;
+}
+
 .menu {
   display: flex;
   flex-direction: column;
@@ -191,36 +204,52 @@ h1:focus {
   font-size: var(--fs-sm);
 }
 
-.estado-lateral dl {
-  display: grid;
-  gap: var(--s-1);
-  margin: 0;
-}
-
-.estado-lateral dt {
-  color: var(--muted);
-  font-size: var(--fs-xs);
-}
-
-.estado-lateral dd {
-  margin: 0;
+.estado-lateral__maquina {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
   overflow-wrap: anywhere;
+}
+
+.estado-lateral__maquina strong {
+  font-weight: 500;
 }
 
 .estado-lateral .esqueleto {
   width: 128px;
 }
 
-.estado-lateral dd strong {
-  font-weight: 600;
+/* Ponto de estado: o texto ao lado diz o mesmo, a cor só reforça */
+
+.ponto {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
 }
 
-/* "Pausar tudo" em uma linha; a tecla de atalho desce para a segunda linha, alinhada à esquerda, se não couber */
+.ponto[data-estado="ok"] {
+  background: var(--ok);
+}
+
+.ponto[data-estado="aviso"] {
+  background: var(--warn);
+}
+
+.ponto[data-estado="erro"] {
+  background: var(--err);
+}
+
+/* "Pausar tudo" e a tecla de atalho na mesma linha; a tecla desce se não couber */
 
 .estado-lateral .btn {
   flex-wrap: wrap;
   justify-content: flex-start;
-  row-gap: var(--s-1);
+  gap: var(--s-1);
+  min-height: 36px;
+  padding-inline: var(--s-2);
+  font-size: var(--fs-sm);
   text-align: left;
 }
 

@@ -31,7 +31,10 @@
   <aside class="lateral" id="lateral">
     <div class="marca">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="12" height="12" rx="3"/><rect x="9" y="9" width="12" height="12" rx="3" fill="currentColor"/></svg>
-      ClipSync
+      <div class="marca__texto">
+        <span>ClipSync</span>
+        <small class="mono" id="app-versao"></small>
+      </div>
     </div>
 
     <nav aria-label="Seções">
@@ -45,16 +48,11 @@
     </nav>
 
     <div class="estado-lateral" aria-label="Estado da malha">
-      <dl>
-        <div>
-          <dt>Esta máquina</dt>
-          <dd><strong id="maquina-nome">Carregando</strong> <span class="mono muted" id="maquina-impressao"></span></dd>
-        </div>
-        <div>
-          <dt>Malha</dt>
-          <dd><span id="malha" role="status"><span class="esqueleto"></span></span></dd>
-        </div>
-      </dl>
+      <p class="estado-lateral__maquina">
+        <span class="ponto" id="maquina-ponto" data-estado="neutro" aria-hidden="true"></span>
+        <strong class="mono" id="maquina-nome">Carregando</strong>
+      </p>
+      <p class="nota" id="malha" role="status"><span class="esqueleto"></span></p>
       <button class="btn btn--secundario btn--bloco" id="pausar" type="button" aria-pressed="false" disabled>
         <span class="btn__rotulo" id="pausar-rotulo">Pausar tudo</span>
         <kbd>Win+Alt+P</kbd>

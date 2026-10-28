@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { aviso, estadoErro } from "./areas.js";
-import { botao, comCarregamento, selo } from "./componentes.js";
+import { botao, comCarregamento } from "./componentes.js";
 import { h, trocar } from "./dom.js";
 import { aplicarAparencia, assinar, atualizarApp, iniciarEventos, obterApp, observarApp } from "./estado.js";
 import { mensagemDe } from "./formatar.js";
@@ -31,8 +31,9 @@ const el = {
   tela: document.getElementById("tela"),
   avisoAgente: document.getElementById("aviso-agente"),
   menu: document.querySelectorAll("#menu a"),
+  versao: document.getElementById("app-versao"),
+  maquinaPonto: document.getElementById("maquina-ponto"),
   maquinaNome: document.getElementById("maquina-nome"),
-  maquinaImpressao: document.getElementById("maquina-impressao"),
   malha: document.getElementById("malha"),
   pausar: document.getElementById("pausar"),
   pausarRotulo: document.getElementById("pausar-rotulo"),
@@ -102,15 +103,19 @@ async function navegar() {
 }
 
 function pintarRodape(app) {
+  el.versao.textContent = app.version ? `v${app.version}` : "";
   el.maquinaNome.textContent = app.device?.name ?? "Sem perfil";
-  el.maquinaImpressao.textContent = app.device?.short ?? "";
+  if (app.device?.short) el.maquinaNome.title = `Impressão digital ${app.device.short}`;
+  else el.maquinaNome.removeAttribute("title");
 
   let estado;
-  if (app.agent === "failed") estado = selo("erro", "Agente com falha");
-  else if (app.agent === "stopped") estado = selo("neutro", "Agente parado");
-  else if (app.paused) estado = selo("aviso", "Pausada");
-  else estado = selo("ok", `${app.mesh.connected} de ${app.mesh.total} conectados`);
-  trocar(el.malha, estado);
+  let texto;
+  if (app.agent === "failed") [estado, texto] = ["erro", "Malha: agente com falha"];
+  else if (app.agent === "stopped") [estado, texto] = ["neutro", "Malha: agente parado"];
+  else if (app.paused) [estado, texto] = ["aviso", "Malha: pausada"];
+  else [estado, texto] = ["ok", `Malha: ${app.mesh.connected} de ${app.mesh.total} conectados`];
+  el.maquinaPonto.dataset.estado = app.device ? estado : "neutro";
+  el.malha.textContent = texto;
 
   el.pausar.disabled = app.agent === "stopped" || app.agent === "failed";
   el.pausar.setAttribute("aria-pressed", String(app.paused));
@@ -171,19 +176,19 @@ async function iniciar() {
   window.addEventListener("hashchange", navegar);
 
   try {
-    const app = await atualizarApp();
-    if (app.initialized) {
-      // A aparência vem do ui.toml; se falhar, a janela abre no tema do sistema e segue.
-      try {
-        aplicarAparencia((await api.prefsGet()).appearance);
-      } catch (erro) {
-        console.warn("sem preferências de aparência", erro);
-      }
+    await atualizarApp();
+    // A aparência vem do ui.toml e vale em todas as rotas, onboarding incluso.
+    // Se falhar, a janela abre no tema do sistema e segue.
+    try {
+      aplicarAparencia((await api.prefsGet()).appearance);
+    } catch (erro) {
+      console.warn("sem preferências de aparência", erro);
     }
     await iniciarEventos();
   } catch (erro) {
     console.error("falha ao ler o estado inicial", erro);
-    trocar(el.malha, selo("erro", "Sem resposta do agente"));
+    el.maquinaPonto.dataset.estado = "erro";
+    el.malha.textContent = "Malha: sem resposta do agente";
   }
   navegar();
 }
