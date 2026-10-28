@@ -19,6 +19,8 @@ const CONFIG_FILE: &str = "config.toml";
 const KEY_FILE: &str = "identity.key.pem";
 const CERT_FILE: &str = "identity.cert.pem";
 const PEERS_FILE: &str = "peers.toml";
+/// Held (`File::lock`) while peers.toml is read, changed and written; never removed.
+const PEERS_LOCK_FILE: &str = "peers.toml.lock";
 const STATE_FILE: &str = "state.toml";
 /// Control rendezvous: the Unix socket itself; on Windows, the file that publishes the random pipe name.
 #[cfg(unix)]
@@ -289,7 +291,10 @@ fn valid_name(name: &str) -> Result<(), CoreError> {
 /// Writes `data` to `path` through a private temp file and an atomic rename; mode 0600 on Unix (on Windows
 /// the file inherits the ACL of the profile directory, see `Profile::init`).
 pub(crate) fn write_private(path: &Path, data: &[u8]) -> Result<(), CoreError> {
-    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    // Unique per write: two writes in one process must not share (and delete) one temp file.
+    static NEXT_TMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT_TMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_extension(format!("tmp-{}-{n}", std::process::id()));
     let _ = fs::remove_file(&tmp);
     let res = (|| {
         let mut opts = fs::OpenOptions::new();
@@ -553,7 +558,47 @@ impl Profile {
         Ok(peers)
     }
 
+    /// Replaces the whole peers.toml, under the same lock as `update_peers`. To change it, use
+    /// `update_peers`: a blind replace loses whatever another writer did since you read it.
     pub fn save_peers(&self, p: &Peers) -> Result<(), CoreError> {
+        let _lock = self.lock_peers()?;
+        self.write_peers(p)
+    }
+
+    /// The one way to change peers.toml: reads it, applies `f` and writes it back (only when
+    /// something changed), all under an exclusive lock on `peers.toml.lock`, so two writers (two
+    /// commands, the UI and the agent, a pairing) never lose each other's change (S6-01). `f`
+    /// failing writes nothing.
+    pub fn update_peers<T, E: From<CoreError>>(
+        &self,
+        f: impl FnOnce(&mut Peers) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let _lock = self.lock_peers()?;
+        let before = self.load_peers()?;
+        let mut peers = before.clone();
+        let out = f(&mut peers)?;
+        if peers != before {
+            self.write_peers(&peers)?;
+        }
+        Ok(out)
+    }
+
+    /// Blocks until no other writer (thread or process) holds the lock; released on drop.
+    fn lock_peers(&self) -> Result<fs::File, CoreError> {
+        let path = self.dir.join(PEERS_LOCK_FILE);
+        let mut opts = fs::OpenOptions::new();
+        opts.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        opts.mode(0o600);
+        let file = opts
+            .open(&path)
+            .map_err(|e| io_ctx(format!("abrindo {}", path.display()), e))?;
+        file.lock()
+            .map_err(|e| io_ctx(format!("travando {}", path.display()), e))?;
+        Ok(file)
+    }
+
+    fn write_peers(&self, p: &Peers) -> Result<(), CoreError> {
         let text = toml::to_string(p).map_err(|e| CoreError::Profile(e.to_string()))?;
         write_private(&self.peers_path(), text.as_bytes())
     }

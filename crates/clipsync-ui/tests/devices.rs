@@ -257,3 +257,43 @@ async fn without_an_agent_the_list_comes_from_peers_toml_as_offline() {
     assert!(pa.load_peers().unwrap().peer[0].perms.clipboard_out);
     ui.shutdown().await;
 }
+
+/// S6-01 (Sentinel's probe): `device_revoke` of B and `device_set_perms` of C at the same time.
+/// The revoked peer never comes back and C's permission is never lost (it came back in 136 of
+/// 150 rounds before).
+#[tokio::test(flavor = "multi_thread")]
+async fn revoke_and_set_perms_in_parallel_lose_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (pa, _) = init_profile(dir.path(), "a", CLIPBOARD_ONLY);
+    let (pb, idb) = init_profile(dir.path(), "b", CLIPBOARD_ONLY);
+    let (pc, idc) = init_profile(dir.path(), "c", CLIPBOARD_ONLY);
+    let ui = start(dir.path(), "a").await;
+    ok(&ui, json!({ "cmd": "agent_stop" })).await;
+    for round in 0..40 {
+        pa.save_peers(&clipsync_core::Peers::default()).unwrap();
+        pair_files(&pa, &pb, NONE, NONE);
+        pair_files(&pa, &pc, NONE, NONE);
+        // Two tasks on the multi-thread runtime, like two Tauri commands.
+        let (u1, u2) = (ui.clone(), ui.clone());
+        let revoke = tokio::spawn(async move {
+            u1.call(json!({ "cmd": "device_revoke", "args": {
+                "peer_id": idb.to_hex(), "typed_name": "b" } }))
+                .await
+        });
+        let perms = tokio::spawn(async move {
+            u2.call(json!({ "cmd": "device_set_perms", "args": {
+                "peer_id": idc.to_hex(),
+                "perms": { "clipboard_in": true, "clipboard_out": false, "input_in": false } } }))
+                .await
+        });
+        revoke.await.unwrap().unwrap();
+        perms.await.unwrap().unwrap();
+        let peers = pa.load_peers().unwrap();
+        assert!(peers.get(&idb).is_none(), "round {round}: b came back");
+        assert!(
+            peers.get(&idc).unwrap().perms.clipboard_in,
+            "round {round}: c lost its permission"
+        );
+    }
+    ui.shutdown().await;
+}

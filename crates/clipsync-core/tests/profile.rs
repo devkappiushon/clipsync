@@ -304,3 +304,52 @@ fn profile_set_clipboard_mode_keeps_the_rest_of_the_config() {
     let q = Profile::resolve(Some(tmp.path().join("vazio"))).unwrap();
     assert!(q.set_clipboard_mode("auto").is_err());
 }
+
+/// S6-01: writers that each change peers.toml at the same time (threads here; the UI, the agent
+/// and a pairing in real life) never lose one another's change, and never collide on a temp file.
+#[test]
+fn update_peers_loses_no_concurrent_change() {
+    let tmp = tempfile::tempdir().unwrap();
+    let p = Profile::resolve(Some(tmp.path().join("a"))).unwrap();
+    p.init(opts(true, true)).unwrap();
+    let threads: Vec<_> = (0..8u8)
+        .map(|t| {
+            let p = p.clone();
+            std::thread::spawn(move || {
+                for i in 0..10u8 {
+                    let n = t * 10 + i;
+                    p.update_peers(|peers| {
+                        peers.upsert(PeerEntry {
+                            id: PeerId([n; 32]),
+                            name: format!("par-{n}"),
+                            addr: None,
+                            paired_at: "2026-10-28T12:00:00Z".into(),
+                            perms: Default::default(),
+                        });
+                        Ok::<_, CoreError>(())
+                    })
+                    .unwrap();
+                }
+            })
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap();
+    }
+    let peers = p.load_peers().unwrap();
+    assert_eq!(peers.peer.len(), 80, "every change kept");
+    // A failing change writes nothing.
+    let before = std::fs::read(p.peers_path()).unwrap();
+    let r = p.update_peers(|peers| {
+        peers.peer.clear();
+        Err::<(), _>(CoreError::Profile("não".into()))
+    });
+    assert!(r.is_err());
+    assert_eq!(std::fs::read(p.peers_path()).unwrap(), before);
+    let leftovers: Vec<_> = std::fs::read_dir(p.dir.clone())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains("tmp-"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}

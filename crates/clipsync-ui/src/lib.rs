@@ -85,6 +85,9 @@ pub(crate) struct Ctx {
     pub(crate) pending_identity: Mutex<Option<Identity>>,
     /// `ui.toml`, read once at start; `prefs_set` keeps it in step with the file.
     pub(crate) prefs: Mutex<prefs::Stored>,
+    /// S6-01: one writer of peers.toml at a time in this process (`Profile::update_peers` locks
+    /// the file against the agent and other processes).
+    pub(crate) peers_lock: tokio::sync::Mutex<()>,
     /// The one pairing attempt, if any.
     pub(crate) pairing: Mutex<pairing::Pairing>,
     /// The fake clipboard of the in-app agent, when the profile asks for one (tests).
@@ -142,6 +145,7 @@ impl Ui {
             agent: tokio::sync::Mutex::new(agent::Slot::Stopped),
             pending_identity: Mutex::new(None),
             prefs: Mutex::new(stored_prefs),
+            peers_lock: tokio::sync::Mutex::new(()),
             pairing: Mutex::new(pairing::Pairing::default()),
             fake_clipboard: Mutex::new(None),
             poller: Mutex::new(None),

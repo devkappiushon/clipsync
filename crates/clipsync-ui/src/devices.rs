@@ -120,10 +120,12 @@ pub struct Removed {
     pub removed: bool,
 }
 
+fn unknown_peer() -> UiError {
+    UiError::new(code::UNKNOWN_PEER, msg::UNKNOWN_PEER).with_field("peer_id")
+}
+
 fn find<'a>(peers: &'a Peers, id: &PeerId) -> Result<&'a PeerEntry, UiError> {
-    peers
-        .get(id)
-        .ok_or_else(|| UiError::new(code::UNKNOWN_PEER, msg::UNKNOWN_PEER).with_field("peer_id"))
+    peers.get(id).ok_or_else(unknown_peer)
 }
 
 /// The agent applies a new `peers.toml` at once; no agent is fine (it reads the file when it
@@ -184,26 +186,33 @@ pub(crate) async fn set_perms(ctx: &Ctx, args: DeviceSetPermsArgs) -> Result<Dev
     let id = api::peer_id(&args.peer_id, "peer_id")?;
     ctx.require_profile()?;
     let local = ctx.profile.load_config()?.modules;
-    let mut peers = ctx.profile.load_peers()?;
-    let was = find(&peers, &id)?.perms;
-    check_full_trust(
-        was.input_in,
-        args.perms.input_in,
-        args.acknowledge_full_trust,
-    )?;
-    check_modules(args.perms, local)?;
-    if let Some(e) = peers.peer.iter_mut().find(|e| e.id == id) {
-        e.perms = args.perms.into();
-    }
-    ctx.profile.save_peers(&peers)?;
+    let entry = {
+        // S6-01: one writer at a time here; the file lock in `update_peers` covers the agent
+        // and other processes. The checks read the entry as it is inside the lock.
+        let _one = ctx.peers_lock.lock().await;
+        ctx.profile.update_peers(|peers| {
+            let e = peers
+                .peer
+                .iter_mut()
+                .find(|e| e.id == id)
+                .ok_or_else(unknown_peer)?;
+            check_full_trust(
+                e.perms.input_in,
+                args.perms.input_in,
+                args.acknowledge_full_trust,
+            )?;
+            check_modules(args.perms, local)?;
+            e.perms = args.perms.into();
+            Ok::<_, UiError>(e.clone())
+        })?
+    };
     reload_peers(ctx).await?;
-    let entry = find(&peers, &id)?;
     let live = status::agent_status(ctx).await;
     let l = live
         .as_ref()
         .and_then(|s| s.peers.iter().find(|p| p.id == id));
     Ok(DeviceReply {
-        device: Device::new(entry, l),
+        device: Device::new(&entry, l),
     })
 }
 
@@ -211,13 +220,19 @@ pub(crate) async fn set_perms(ctx: &Ctx, args: DeviceSetPermsArgs) -> Result<Dev
 pub(crate) async fn revoke(ctx: &Ctx, args: DeviceRevokeArgs) -> Result<Removed, UiError> {
     let id = api::peer_id(&args.peer_id, "peer_id")?;
     ctx.require_profile()?;
-    let mut peers = ctx.profile.load_peers()?;
-    let name = clean(&find(&peers, &id)?.name);
-    if args.typed_name.trim() != name {
-        return Err(UiError::new(code::NAME_MISMATCH, msg::NAME_MISMATCH).with_field("typed_name"));
+    {
+        let _one = ctx.peers_lock.lock().await;
+        ctx.profile.update_peers(|peers| {
+            let name = clean(&find(peers, &id)?.name);
+            if args.typed_name.trim() != name {
+                return Err(
+                    UiError::new(code::NAME_MISMATCH, msg::NAME_MISMATCH).with_field("typed_name")
+                );
+            }
+            peers.peer.retain(|e| e.id != id);
+            Ok(())
+        })?;
     }
-    peers.peer.retain(|e| e.id != id);
-    ctx.profile.save_peers(&peers)?;
     reload_peers(ctx).await?;
     Ok(Removed { removed: true })
 }

@@ -248,12 +248,13 @@ where
 fn save(p: &Profile, entry: PeerEntry) -> Result<PeerEntry, CoreError> {
     clipsync_proto::validate_device_name(&entry.name)
         .map_err(|_| CoreError::Pairing("invalid peer name".into()))?;
-    let mut peers = p.load_peers()?;
-    peers
-        .peer
-        .retain(|e| e.id == entry.id || entry.addr.is_none() || e.addr != entry.addr);
-    peers.upsert(entry.clone());
-    p.save_peers(&peers)?;
+    p.update_peers(|peers| {
+        peers
+            .peer
+            .retain(|e| e.id == entry.id || entry.addr.is_none() || e.addr != entry.addr);
+        peers.upsert(entry.clone());
+        Ok::<_, CoreError>(())
+    })?;
     Ok(entry)
 }
 

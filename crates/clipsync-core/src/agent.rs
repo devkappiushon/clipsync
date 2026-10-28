@@ -155,14 +155,23 @@ async fn wait_port_released(addr: SocketAddr) {
 /// Writes peers.toml without `peer` and reloads the mesh, like `ReloadPeers` after a local
 /// revoke. A file that cannot be written still leaves the peer out of the running mesh.
 async fn remove_revoked(profile: &Profile, mesh: &Mesh, peer: PeerId) {
-    let mut peers = match profile.load_peers() {
+    let saved = profile.update_peers(|peers| {
+        peers.peer.retain(|e| e.id != peer);
+        Ok::<_, CoreError>(peers.clone())
+    });
+    let peers = match saved {
         Ok(p) => p,
-        Err(e) => return tracing::warn!(error = %e, "peers.toml unreadable; revocation not saved"),
+        Err(e) => {
+            tracing::warn!(error = %e, "peers.toml not written; revocation lasts until restart");
+            match profile.load_peers() {
+                Ok(mut p) => {
+                    p.peer.retain(|e| e.id != peer);
+                    p
+                }
+                Err(_) => return,
+            }
+        }
     };
-    peers.peer.retain(|e| e.id != peer);
-    if let Err(e) = profile.save_peers(&peers) {
-        tracing::warn!(error = %e, "peers.toml not written; revocation lasts until restart");
-    }
     mesh.reload(peers).await;
 }
 
