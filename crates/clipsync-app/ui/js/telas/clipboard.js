@@ -261,7 +261,7 @@ export default function montar({ ir, assinar }) {
       titulo: "Clipboard",
       descricao: "Texto copiado aqui vai aos pares autorizados. O que chega fica na caixa até você decidir.",
       acoes: [
-        botao({ rotulo: "Enviar agora", variante: "primario", icone: "enviar", atalho: "Win+Alt+V", aoClicar: enviarAgora }),
+        botao({ rotulo: "Enviar agora", icone: "enviar", atalho: "Win+Alt+V", aoClicar: enviarAgora }),
         botao({ rotulo: "Permissões", variante: "discreto", icone: "dispositivos", aoClicar: () => ir("dispositivos") }),
       ],
     }),
