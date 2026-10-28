@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Janela principal: núcleo do Tauri (janela, eventos), o comando clipsync do app e a notificação do sistema. Nenhuma URL remota.",
+  "description": "Janela principal, o mínimo que o front usa: o comando clipsync do app e ouvir e parar de ouvir o evento clipsync://event. A notificação do sistema sai pelo Rust e não passa por esta lista. Nenhuma URL remota.",
   "windows": ["main"],
-  "permissions": ["core:default", "notification:default", "allow-clipsync"]
+  "permissions": ["allow-clipsync", "core:event:allow-listen", "core:event:allow-unlisten"]
 }
