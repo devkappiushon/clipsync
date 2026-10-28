@@ -6,6 +6,8 @@ pub(crate) mod outputs;
 #[cfg(target_os = "linux")]
 mod portal;
 mod tokens;
+#[cfg(windows)]
+pub(crate) mod win;
 pub mod wincore;
 pub mod winmath;
 mod zones;
@@ -20,6 +22,8 @@ pub use fake::{FakeCapture, FakeCaptureHandle, FakeEmulate, FakeEmulateHandle};
 #[cfg(target_os = "linux")]
 pub use portal::{PortalCapture, PortalEmulate};
 pub use tokens::TokenStore;
+#[cfg(windows)]
+pub use win::{WinCapture, WinEmulate};
 pub(crate) use zones::same_zones;
 
 #[derive(Debug, Clone)]

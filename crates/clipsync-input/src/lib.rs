@@ -88,11 +88,19 @@ fn portal_emulate(_: &Path) -> Result<Box<dyn EmulateAdapter>, ModuleError> {
     Err(ModuleError::Adapter(msg::UNAVAILABLE_ON_PLATFORM.into()))
 }
 
-// The Win32 adapters land with `adapter/win/` (Flux, §13.6); until then every target answers
-// "unavailable" and `WinCapture`/`WinEmulate` replace these two bodies.
+#[cfg(windows)]
+fn windows_capture() -> Result<Box<dyn CaptureAdapter>, ModuleError> {
+    Ok(Box::new(adapter::WinCapture::new()))
+}
+#[cfg(windows)]
+fn windows_emulate() -> Result<Box<dyn EmulateAdapter>, ModuleError> {
+    Ok(Box::new(adapter::WinEmulate::new()))
+}
+#[cfg(not(windows))]
 fn windows_capture() -> Result<Box<dyn CaptureAdapter>, ModuleError> {
     Err(ModuleError::Adapter(msg::UNAVAILABLE_ON_PLATFORM.into()))
 }
+#[cfg(not(windows))]
 fn windows_emulate() -> Result<Box<dyn EmulateAdapter>, ModuleError> {
     Err(ModuleError::Adapter(msg::UNAVAILABLE_ON_PLATFORM.into()))
 }

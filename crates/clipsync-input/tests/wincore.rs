@@ -1,6 +1,8 @@
 //! §13.6 "Adaptador Windows" item 1 (Flux): the decisions inside the hook callback, on every system.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-use clipsync_input::adapter::wincore::{ArmedBarrier, CaptureCore, Held, Out, resolve_barriers};
+use clipsync_input::adapter::wincore::{
+    ArmedBarrier, CaptureCore, Held, Out, Restart, RestartPolicy, resolve_barriers,
+};
 use clipsync_input::adapter::{BarrierSpec, Hotkey, Zone, ZoneRef};
 use clipsync_proto::{Edge, InputEvent};
 use clipsync_win::{RawEvent, Verdict, WinButton};
@@ -442,4 +444,67 @@ fn barriers_are_resolved_by_name_or_index_and_a_missing_zone_keeps_its_place() {
         resolved[2].as_ref().map(|b| (b.zone.index, b.edge)),
         Some((0, Edge::Bottom))
     );
+}
+
+#[test]
+fn a_switch_starts_the_capture_without_a_crossing() {
+    let mut c = core();
+    c.begin();
+    assert!(c.capturing());
+    // still arming: moves are eaten, a key already goes out
+    assert_eq!(feed(&mut c, mv(100, 100)), (Verdict::Block, vec![]));
+    let (v, out) = press(&mut c, LETTER_A);
+    assert_eq!(
+        (v, out),
+        (
+            Verdict::Block,
+            vec![Out::Input(InputEvent::Key {
+                code: 30,
+                pressed: true
+            })]
+        )
+    );
+    c.park_ready((960, 540), 96);
+    let (_, out) = feed(&mut c, mv(961, 540));
+    assert_eq!(out, [Out::Input(InputEvent::Motion { dx: 1.0, dy: 0.0 })]);
+    // a second begin while capturing changes nothing
+    c.begin();
+    assert_eq!(feed(&mut c, mv(962, 540)).0, Verdict::Block);
+}
+
+#[test]
+fn three_losses_in_ten_seconds_are_recreated_and_the_fourth_gives_up_for_good() {
+    let mut p = RestartPolicy::new();
+    assert_eq!(p.on_lost(0), Restart::Recreate);
+    assert_eq!(p.on_lost(2_000), Restart::Recreate);
+    assert_eq!(p.on_lost(9_999), Restart::Recreate);
+    assert_eq!(p.on_lost(9_999), Restart::GiveUp);
+    assert!(p.gave_up());
+    // it does not come back by itself, not even after the window
+    assert_eq!(p.on_lost(60_000), Restart::GiveUp);
+}
+
+#[test]
+fn losses_spread_over_time_never_give_up() {
+    let mut p = RestartPolicy::new();
+    for i in 0..50u64 {
+        assert_eq!(p.on_lost(i * 6_000), Restart::Recreate, "loss {i}");
+    }
+    assert!(!p.gave_up());
+    // the old ones leave the window: three, then a pause, then three again
+    let mut p = RestartPolicy::new();
+    for t in [0, 1, 2] {
+        assert_eq!(p.on_lost(t * 1_000), Restart::Recreate);
+    }
+    for t in [12_000, 13_000, 14_000] {
+        assert_eq!(p.on_lost(t), Restart::Recreate);
+    }
+    assert_eq!(p.on_lost(14_500), Restart::GiveUp);
+}
+
+#[test]
+fn the_policy_is_copy_and_fixed_size() {
+    fn is_copy<T: Copy>() {}
+    is_copy::<RestartPolicy>();
+    assert!(std::mem::size_of::<RestartPolicy>() <= 48);
 }

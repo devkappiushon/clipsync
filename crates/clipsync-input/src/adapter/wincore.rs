@@ -22,6 +22,58 @@ pub struct ArmedBarrier {
     pub to: f32,
 }
 
+/// What to do when the hooks die: make them again, or give up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Restart {
+    Recreate,
+    GiveUp,
+}
+
+/// A lost hook is made again, but not more than [`RestartPolicy::MAX`] times in
+/// [`RestartPolicy::WINDOW_MS`]: one more and the capture stops for good, until the module restarts
+/// (a hook that dies in a loop would only keep the user's input hostage). `Copy` and fixed size.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RestartPolicy {
+    at_ms: [u64; RestartPolicy::MAX],
+    len: usize,
+    gave_up: bool,
+}
+
+impl RestartPolicy {
+    pub const MAX: usize = 3;
+    pub const WINDOW_MS: u64 = 10_000;
+
+    pub fn new() -> RestartPolicy {
+        RestartPolicy::default()
+    }
+
+    /// The hooks were lost at `now_ms` (any monotonic clock, in milliseconds).
+    pub fn on_lost(&mut self, now_ms: u64) -> Restart {
+        if self.gave_up {
+            return Restart::GiveUp;
+        }
+        let mut kept = 0;
+        for i in 0..self.len {
+            if now_ms.saturating_sub(self.at_ms[i]) < Self::WINDOW_MS {
+                self.at_ms[kept] = self.at_ms[i];
+                kept += 1;
+            }
+        }
+        self.len = kept;
+        if self.len >= Self::MAX {
+            self.gave_up = true;
+            return Restart::GiveUp;
+        }
+        self.at_ms[self.len] = now_ms;
+        self.len += 1;
+        Restart::Recreate
+    }
+
+    pub fn gave_up(&self) -> bool {
+        self.gave_up
+    }
+}
+
 /// The barriers the module asked for, on the zones that exist now. A barrier whose zone is gone
 /// stays as `None`, so the indexes the module knows do not shift (§13.8 item 3).
 pub fn resolve_barriers(specs: &[BarrierSpec], zones: &[Zone]) -> Arc<[Option<ArmedBarrier>]> {
@@ -256,6 +308,15 @@ impl CaptureCore {
 
     pub fn capturing(&self) -> bool {
         self.mode != Mode::Idle
+    }
+
+    /// A session was opened by a switch (shortcut or button), not by crossing a barrier: capture from
+    /// now on. The worker parks the cursor and then calls [`CaptureCore::park_ready`].
+    pub fn begin(&mut self) {
+        if self.mode == Mode::Idle {
+            self.mode = Mode::Arming;
+            self.prev = None;
+        }
     }
 
     /// The worker parked the cursor at `park`, on a monitor of `dpi`.
