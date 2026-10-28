@@ -7,13 +7,45 @@ use clipsync_win::{
     cursor_pos, hotkey_registrable, input_desktop_is_default, modifier_down, monitors,
     process_handle_count, send, virtual_screen,
 };
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
+
+/// Every test in a file shares one process, and the handle count is a process-wide number: the tests
+/// run one at a time, or the threads and hooks of one show up as a "leak" in another.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Handle count after each of `cycles` runs of `cycle`, after `warmup` runs that are not counted: the
+/// first use of the window, hook and session APIs opens handles that stay for the whole process.
+fn handles_after_each(warmup: usize, cycles: usize, mut cycle: impl FnMut()) -> Vec<u32> {
+    for _ in 0..warmup {
+        cycle();
+    }
+    let mut series = vec![process_handle_count().unwrap()];
+    for _ in 0..cycles {
+        cycle();
+        series.push(process_handle_count().unwrap());
+    }
+    series
+}
+
+/// A real leak grows with every cycle; noise does not. Fails only past a small slack for the whole run.
+fn assert_no_growth(name: &str, series: &[u32]) {
+    let (first, last) = (series[0], series[series.len() - 1]);
+    assert!(
+        last <= first + 4,
+        "{name}: handles went from {first} to {last}, per cycle: {series:?}"
+    );
+}
 
 /// Sentinel C4: opening the input desktop on every batch must not leak a handle.
 #[test]
 fn ten_thousand_desktop_checks_do_not_leak_handles() {
+    let _one_at_a_time = serial();
     for _ in 0..200 {
         let _ = input_desktop_is_default();
     }
@@ -27,20 +59,25 @@ fn ten_thousand_desktop_checks_do_not_leak_handles() {
 
 #[test]
 fn hooks_and_watcher_start_and_stop_without_leaking() {
-    let before = process_handle_count().unwrap();
-    for _ in 0..20 {
-        let hooks = Hooks::start(Box::new(|_| Verdict::Pass), Box::new(|_| {})).unwrap();
-        drop(hooks);
-        let watcher = Watcher::start(Box::new(|_| {})).unwrap();
-        drop(watcher);
-    }
-    let after = process_handle_count().unwrap();
-    assert!(after <= before + 4, "handles went from {before} to {after}");
+    let _one_at_a_time = serial();
+    let watcher = handles_after_each(2, 20, || {
+        drop(Watcher::start(Box::new(|_| {})).unwrap());
+    });
+    assert_no_growth("watcher", &watcher);
+    let hooks = handles_after_each(2, 20, || {
+        drop(Hooks::start(Box::new(|_| Verdict::Pass), Box::new(|_| {})).unwrap());
+    });
+    assert_no_growth("hooks", &hooks);
+    let park = handles_after_each(2, 20, || {
+        drop(clipsync_win::CursorPark::new(10, 10).unwrap());
+    });
+    assert_no_growth("cursor park", &park);
 }
 
 /// I-S7-1: what the system marks as injected passes straight through and is never read.
 #[test]
 fn injected_input_never_reaches_the_callback() {
+    let _one_at_a_time = serial();
     let saw_any = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&saw_any);
     let hooks = Hooks::start(
@@ -73,6 +110,7 @@ fn injected_input_never_reaches_the_callback() {
 
 #[test]
 fn the_desktop_and_the_monitors_can_be_read() {
+    let _one_at_a_time = serial();
     let list = monitors().unwrap();
     for monitor in &list {
         assert!(monitor.width > 0 && monitor.height > 0);
@@ -94,21 +132,31 @@ fn the_desktop_and_the_monitors_can_be_read() {
 /// the pause design needs; the digits are informational.
 #[test]
 fn which_win_alt_hotkeys_the_system_accepts() {
+    let _one_at_a_time = serial();
     let mut refused = Vec::new();
     for vk in (0x31..=0x39).chain([0x4C, 0x50]) {
         if let Err(e) = hotkey_registrable(vk) {
             refused.push((vk, e.code));
         }
     }
-    eprintln!("RegisterHotKey refused (vk, code): {refused:?}");
+    let report = format!("RegisterHotKey refused (vk, code): {refused:?}");
+    eprintln!("{report}");
+    // The CI log hides the output of a passing test: the job summary does not.
+    if let Some(path) = std::env::var_os("GITHUB_STEP_SUMMARY")
+        && let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(path)
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "{report}");
+    }
     assert!(
         !refused.iter().any(|(vk, _)| *vk == 0x50),
-        "Win+Alt+P refused: {refused:?}"
+        "Win+Alt+P refused: {report}"
     );
 }
 
 #[test]
 fn a_notice_clock_runs_and_stops() {
+    let _one_at_a_time = serial();
     let ticks = Arc::new(AtomicU32::new(0));
     let counter = Arc::clone(&ticks);
     let watcher = Watcher::start(Box::new(move |notice| {
