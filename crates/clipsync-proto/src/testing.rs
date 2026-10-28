@@ -34,6 +34,8 @@ struct HubState {
     /// (granter, grantee) -> permissions the granter gave the grantee (stored on the granter).
     grants: HashMap<(PeerId, PeerId), PeerPerms>,
     delivered: HashMap<(PeerId, PeerId), usize>,
+    /// `ModuleHost::request_pause` calls per node.
+    pause_requests: HashMap<PeerId, usize>,
 }
 
 struct NodeState {
@@ -128,6 +130,15 @@ impl MemHub {
         if let Some(n) = lock(&self.state).nodes.get_mut(&node) {
             n.version = version;
         }
+    }
+
+    /// How many times `node` called `ModuleHost::request_pause`.
+    pub fn pause_requests(&self, node: PeerId) -> usize {
+        lock(&self.state)
+            .pause_requests
+            .get(&node)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Counts only reliable frames DELIVERED to the destination. A rejected inbound frame does
@@ -240,6 +251,16 @@ impl ModuleHost for MemHost {
             }
         }
         Ok(())
+    }
+
+    /// Counted (`MemHub::pause_requests`) and applied like `MemHub::set_paused`.
+    fn request_pause(&self, paused: bool) {
+        let mut s = lock(&self.state);
+        *s.pause_requests.entry(self.id).or_default() += 1;
+        if let Some(n) = s.nodes.get_mut(&self.id) {
+            n.paused = paused;
+            let _ = n.tx.try_send(ModuleInput::Paused(paused));
+        }
     }
 
     fn send_datagram(&self, to: PeerId, dg: InputDatagram) -> Result<(), SendError> {

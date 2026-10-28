@@ -98,6 +98,8 @@ pub struct Mesh {
     inner: Arc<Inner>,
     /// Taken once by the agent (`revocations`).
     revoked: Mutex<Option<mpsc::UnboundedReceiver<PeerId>>>,
+    /// Taken once by the agent (`pause_requests`).
+    pausing: Mutex<Option<mpsc::UnboundedReceiver<bool>>>,
 }
 
 struct Inner {
@@ -118,6 +120,8 @@ struct Inner {
     removals: Mutex<VecDeque<RemovalRecord>>,
     /// To the agent: this peer sent `Bye{Revoked}`, take it out of peers.toml.
     revoked: mpsc::UnboundedSender<PeerId>,
+    /// To the agent: a module asked to pause (true) or resume (`ModuleHost::request_pause`).
+    pausing: mpsc::UnboundedSender<bool>,
     next_gen: AtomicU64,
     stop: watch::Sender<bool>,
 }
@@ -228,6 +232,7 @@ impl Mesh {
             .collect();
         let ids: Vec<PeerId> = slots.keys().copied().collect();
         let (revoked, revoked_rx) = mpsc::unbounded_channel();
+        let (pausing, pausing_rx) = mpsc::unbounded_channel();
         let inner = Arc::new(Inner {
             id,
             identity: opts.identity,
@@ -242,6 +247,7 @@ impl Mesh {
             blocks: Mutex::new(VecDeque::new()),
             removals: Mutex::new(VecDeque::new()),
             revoked,
+            pausing,
             next_gen: AtomicU64::new(1),
             stop: watch::Sender::new(false),
         });
@@ -252,7 +258,17 @@ impl Mesh {
         Ok(Self {
             inner,
             revoked: Mutex::new(Some(revoked_rx)),
+            pausing: Mutex::new(Some(pausing_rx)),
         })
+    }
+
+    /// What modules asked through `ModuleHost::request_pause`, in order. The agent takes this
+    /// once and applies each like the control's `pause` and `resume` (memory, then state.toml).
+    pub fn pause_requests(&self) -> Option<mpsc::UnboundedReceiver<bool>> {
+        self.pausing
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 
     /// Peers that sent `Bye{Revoked}` over their authenticated mesh connection (v1.16). The agent
@@ -1038,6 +1054,10 @@ impl ModuleHost for MeshHost {
             return Err(SendError::RemoteTooOld);
         }
         send_uni(&r.conn, &Frame::Module(msg)).await
+    }
+
+    fn request_pause(&self, paused: bool) {
+        let _ = self.0.pausing.send(paused);
     }
 
     fn send_datagram(&self, to: PeerId, dg: InputDatagram) -> Result<(), SendError> {

@@ -222,7 +222,7 @@ fn min_version_is_2_only_for_the_new_variants() {
         state: DeliveryState::Applied,
     }));
     assert_eq!(min_version(&ack), 1);
-    assert_eq!((PROTOCOL_VERSION, MIN_PROTOCOL_VERSION), (2, 1));
+    assert_eq!(MIN_PROTOCOL_VERSION, 1);
 }
 
 // (c)

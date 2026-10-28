@@ -108,6 +108,15 @@ pub async fn run(
         adapters,
         seen_blocks: Mutex::new(HashMap::new()),
     });
+    // Win+Alt+P (`ModuleHost::request_pause`) takes the control's path: same state, same file.
+    let pausing = mesh.pause_requests().map(|mut rx| {
+        let handler = handler.clone();
+        tokio::spawn(async move {
+            while let Some(paused) = rx.recv().await {
+                let _ = handler.set_paused(paused).await;
+            }
+        })
+    });
     let served = control.serve(handler, shutdown).await;
 
     for tx in channels.values() {
@@ -121,6 +130,9 @@ pub async fn run(
     tasks.abort_all();
     if let Some(r) = revocations {
         r.abort();
+    }
+    if let Some(p) = pausing {
+        p.abort();
     }
     let bound = mesh.local_addr().ok();
     mesh.shutdown().await;

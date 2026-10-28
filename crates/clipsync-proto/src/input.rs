@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::ids::PeerId;
 use crate::limits::{MAX_EVENTS_PER_DATAGRAM, MAX_LAYOUT_LINKS, MAX_ZONES};
 use crate::redact::Redacted;
-use crate::wire::{Validate, WireError, validate_monitor_name};
+use crate::wire::{RejectReason, Validate, WireError, validate_monitor_name};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Edge {
@@ -103,6 +103,29 @@ pub enum InputMsg {
         edge: Edge,
         monitor: Option<String>,
         pos: f32,
+    },
+    // ---- protocol 3 (S7) ----
+    /// Entry with the way back. `pos`, `back_from` and `back_to` go from 0 to 1 along the whole
+    /// edge of the destination monitor; the source already took the dead corners off.
+    EnterSpan {
+        session: u32,
+        edge: Edge,
+        monitor: Option<String>,
+        pos: f32,
+        back_from: f32,
+        back_to: f32,
+    },
+    /// Destination to source: the cursor left through the way back, at `pos` (0 to 1 on the
+    /// whole edge).
+    Returned {
+        session: u32,
+        pos: f32,
+    },
+    /// Destination to source: I do not emulate in this session (`Locked`, `Paused` or
+    /// `ApplyFailed`).
+    Refused {
+        session: u32,
+        reason: RejectReason,
     },
 }
 
@@ -217,6 +240,29 @@ impl Validate for InputMsg {
                 }
                 monitor.as_deref().map_or(Ok(()), validate_monitor_name)
             }
+            InputMsg::EnterSpan {
+                monitor,
+                pos,
+                back_from,
+                back_to,
+                ..
+            } => {
+                if !(unit_fraction(*pos) && unit_fraction(*back_from) && unit_fraction(*back_to)) {
+                    return Err(WireError::Invalid("pos or way back outside 0..=1"));
+                }
+                if back_from >= back_to {
+                    return Err(WireError::Invalid("way back not back_from < back_to"));
+                }
+                monitor.as_deref().map_or(Ok(()), validate_monitor_name)
+            }
+            InputMsg::Returned { pos, .. } => {
+                if unit_fraction(*pos) {
+                    Ok(())
+                } else {
+                    Err(WireError::Invalid("pos outside 0..=1"))
+                }
+            }
+            InputMsg::Refused { .. } => Ok(()),
         }
     }
 }

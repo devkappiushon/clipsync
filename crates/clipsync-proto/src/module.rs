@@ -57,6 +57,9 @@ pub enum SendError {
 pub fn min_version(msg: &ModuleMsg) -> u16 {
     match msg {
         ModuleMsg::Input(
+            InputMsg::EnterSpan { .. } | InputMsg::Returned { .. } | InputMsg::Refused { .. },
+        ) => 3,
+        ModuleMsg::Input(
             InputMsg::Zones { .. } | InputMsg::LayoutOffer(_) | InputMsg::EnterAt { .. },
         ) => 2,
         ModuleMsg::Clip(_)
@@ -91,6 +94,10 @@ pub trait ModuleHost: Send + Sync + 'static {
     async fn send_reliable(&self, to: PeerId, msg: ModuleMsg) -> Result<(), SendError>;
     /// QUIC datagram. Checks authorize_outbound_datagram and size.
     fn send_datagram(&self, to: PeerId, dg: InputDatagram) -> Result<(), SendError>;
+    /// Pauses (true) or resumes this agent the way the control's `pause` and `resume` do:
+    /// state.toml, `ModuleInput::Paused` to every module, `pause_changed` in the app. Returns at
+    /// once; the change arrives as `ModuleInput::Paused`. Used by the Win+Alt+P shortcut.
+    fn request_pause(&self, paused: bool);
 }
 
 #[derive(Debug)]
@@ -138,7 +145,7 @@ pub trait Module: Send + 'static {
 enum Gate {
     /// Out: clipboard_out. In: clipboard_in. Pause blocks.
     ClipOffer,
-    /// `Enter` and `EnterAt`. Out: no local permission. In: input_in. Pause blocks.
+    /// `Enter`, `EnterAt` and `EnterSpan`. Out: no local permission. In: input_in. Pause blocks.
     InputEnter,
     /// Out: input_in (I only reveal my monitors to whoever may control me). In: open.
     /// Pause ignored.
@@ -151,7 +158,9 @@ enum Gate {
 fn gate(msg: &ModuleMsg) -> Gate {
     match msg {
         ModuleMsg::Clip(ClipMsg::Offer(_)) => Gate::ClipOffer,
-        ModuleMsg::Input(InputMsg::Enter { .. } | InputMsg::EnterAt { .. }) => Gate::InputEnter,
+        ModuleMsg::Input(
+            InputMsg::Enter { .. } | InputMsg::EnterAt { .. } | InputMsg::EnterSpan { .. },
+        ) => Gate::InputEnter,
         ModuleMsg::Input(InputMsg::Zones { .. }) => Gate::Zones,
         ModuleMsg::Input(InputMsg::LayoutOffer(_)) => Gate::LayoutOffer,
         ModuleMsg::Clip(ClipMsg::Ack(_))
@@ -159,7 +168,9 @@ fn gate(msg: &ModuleMsg) -> Gate {
             InputMsg::Leave { .. }
             | InputMsg::ReleaseAll { .. }
             | InputMsg::StatsRequest { .. }
-            | InputMsg::Stats(_),
+            | InputMsg::Stats(_)
+            | InputMsg::Returned { .. }
+            | InputMsg::Refused { .. },
         ) => Gate::Open,
     }
 }
@@ -167,9 +178,9 @@ fn gate(msg: &ModuleMsg) -> Gate {
 /// Outbound, checked in THIS ORDER, first failure wins:
 /// LocalModuleDisabled -> RemoteModuleDisabled -> NotAuthorized -> Paused.
 /// NotAuthorized on the way out exists for Clip::Offer (perms.clipboard_out) and Input::Zones
-/// (perms.input_in); Enter, EnterAt and LayoutOffer have no local outbound permission (control
-/// permission is checked at the DESTINATION). Zones and LayoutOffer ignore pause.
-/// Ack, Stats, StatsRequest, Leave and ReleaseAll ignore pause and permission.
+/// (perms.input_in); Enter, EnterAt, EnterSpan and LayoutOffer have no local outbound permission
+/// (control permission is checked at the DESTINATION). Zones and LayoutOffer ignore pause.
+/// Ack, Stats, StatsRequest, Leave, ReleaseAll, Returned and Refused ignore pause and permission.
 /// The protocol version (`min_version`, `RemoteTooOld`) is checked by the host, after this.
 pub fn authorize_outbound(
     local: ModuleSet,
@@ -219,10 +230,11 @@ pub fn authorize_outbound_datagram(
 }
 
 /// Inbound, checked in THIS ORDER: ModuleDisabled -> NotAuthorized -> Paused.
-/// Clip::Offer needs perms.clipboard_in; Enter, EnterAt and LayoutOffer need perms.input_in.
-/// Pause blocks Offer, Enter and EnterAt; LayoutOffer ignores it. Zones, Ack, Stats,
-/// StatsRequest, Leave and ReleaseAll ignore pause and permission, so the MODULE only acts on
-/// them if the session/id belongs to the sender.
+/// Clip::Offer needs perms.clipboard_in; Enter, EnterAt, EnterSpan and LayoutOffer need
+/// perms.input_in. Pause blocks Offer, Enter, EnterAt and EnterSpan; LayoutOffer ignores it.
+/// Zones, Ack, Stats, StatsRequest, Leave, ReleaseAll, Returned and Refused ignore pause and
+/// permission, so the MODULE only acts on them if the session/id belongs to the sender (for
+/// Returned and Refused, a session this node opened to that peer).
 pub fn authorize_inbound(
     local: ModuleSet,
     perms: &PeerPerms,

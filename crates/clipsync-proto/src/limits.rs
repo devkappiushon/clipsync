@@ -1,6 +1,7 @@
-/// 2 since S6: `Zones`, `LayoutOffer` and `EnterAt` exist. A 0.1.0 peer (1) still connects:
-/// the core never sends it a message newer than its version (`min_version`, `RemoteTooOld`).
-pub const PROTOCOL_VERSION: u16 = 2;
+/// 2 since S6: `Zones`, `LayoutOffer` and `EnterAt` exist; 3 since S7: `EnterSpan`, `Returned`
+/// and `Refused`. Older peers (1, 2) still connect: the core never sends them a message newer
+/// than their version (`min_version`, `RemoteTooOld`).
+pub const PROTOCOL_VERSION: u16 = 3;
 pub const MIN_PROTOCOL_VERSION: u16 = 1;
 pub const ALPN_MESH: &[u8] = b"clipsync/1";
 pub const ALPN_PAIR: &[u8] = b"clipsync-pair/1";
