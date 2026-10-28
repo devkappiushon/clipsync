@@ -103,3 +103,33 @@ async fn a_failed_save_does_not_change_the_autostart() {
     assert!(!desktop.exists());
     ui.shutdown().await;
 }
+
+/// S6-14: the exported file is the text the user previewed, byte for byte, private (0600), and a
+/// second export never replaces the first.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_exported_bundle_is_the_previewed_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let ui = start(dir.path(), "a").await;
+    let preview = ok(&ui, json!({ "cmd": "support_bundle_preview" })).await;
+    let text = preview["text"].as_str().unwrap().to_owned();
+    // time passes between the preview and the export: the "gerado em" line would change
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    let first = ok(&ui, json!({ "cmd": "support_bundle_export" })).await;
+    let path = std::path::PathBuf::from(first["path"].as_str().unwrap());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    assert_eq!(first["bytes"].as_u64().unwrap() as usize, text.len());
+    #[cfg(unix)]
+    assert_eq!(mode_of(&path), 0o600);
+
+    // No preview on record now: the export builds a new text and a new file.
+    let second = ok(&ui, json!({ "cmd": "support_bundle_export" })).await;
+    let other = std::path::PathBuf::from(second["path"].as_str().unwrap());
+    assert_ne!(other, path, "the first file was replaced");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    assert!(
+        std::fs::read_to_string(&other)
+            .unwrap()
+            .starts_with("ClipSync · pacote de suporte")
+    );
+    ui.shutdown().await;
+}

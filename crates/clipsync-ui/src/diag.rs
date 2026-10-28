@@ -6,13 +6,15 @@
 //! `portal-tokens.toml` or clipboard content (the box is not read at all).
 
 use std::net::{IpAddr, Ipv4Addr};
-use std::path::PathBuf;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use clipsync_proto::{AgentStatus, DiagStatus};
 use serde::{Deserialize, Serialize};
 
 use crate::api::code;
+use crate::autostart::fsio;
 use crate::devices::{Device, DeviceState};
 use crate::status::{self, ModuleName};
 use crate::{Ctx, UiError, clean, msg, pairing};
@@ -306,15 +308,23 @@ fn raw_text(g: &Gathered) -> String {
     t
 }
 
-/// A name or id counts only as a whole word: the characters around it are not letters, digits,
-/// `-`, `_` or `.`. Overmatching only hides more.
+/// Names and ids with at least this many characters are swapped wherever they appear, even inside
+/// a longer word (`ana-notebook`, `casa.local`): overmatching only hides more.
+const SUBSTRING_MIN_CHARS: usize = 4;
+
+/// Shorter ones would eat ordinary words (`ana` in `banana`), so they go only when the characters
+/// around them are not letters or digits: `-`, `_` and `.` count as separators, so `pc-da-ana` is
+/// still caught.
 fn is_word_char(c: char) -> bool {
-    c.is_alphanumeric() || matches!(c, '-' | '_' | '.')
+    c.is_alphanumeric()
 }
 
 fn replace_words(text: &str, needle: &str, with: &str) -> (String, usize) {
     if needle.is_empty() {
         return (text.to_string(), 0);
+    }
+    if needle.chars().count() >= SUBSTRING_MIN_CHARS {
+        return (text.replace(needle, with), text.matches(needle).count());
     }
     let mut out = String::with_capacity(text.len());
     let mut count = 0;
@@ -462,9 +472,36 @@ fn redact(raw: &str, g: &Gathered) -> BundlePreview {
     }
 }
 
+const BUNDLE_NAME_TAKEN: &str =
+    "já existem arquivos demais com o nome do pacote de suporte nesta pasta";
+
+/// How long the text the user saw stays the one that `support_bundle_export` writes.
+const APPROVED_TTL: Duration = Duration::from_secs(600);
+
+/// The last preview of each profile: the export writes exactly this text (§12.5 "o mesmo texto"),
+/// not a new one with another timestamp or another status. Redacted text only. Kept here because
+/// the shared context (`lib.rs`) is Rivet's.
+static APPROVED: Mutex<Vec<(PathBuf, Instant, String)>> = Mutex::new(Vec::new());
+
+fn remember_preview(dir: &Path, text: &str) {
+    let mut all = APPROVED.lock().unwrap_or_else(PoisonError::into_inner);
+    all.retain(|(d, at, _)| d != dir && at.elapsed() < APPROVED_TTL);
+    all.push((dir.to_path_buf(), Instant::now(), text.to_string()));
+}
+
+/// The previewed text of this profile, once: a second export builds a new one.
+fn take_preview(dir: &Path) -> Option<String> {
+    let mut all = APPROVED.lock().unwrap_or_else(PoisonError::into_inner);
+    all.retain(|(_, at, _)| at.elapsed() < APPROVED_TTL);
+    let at = all.iter().position(|(d, _, _)| d == dir)?;
+    Some(all.swap_remove(at).2)
+}
+
 pub(crate) async fn bundle_preview(ctx: &Ctx) -> Result<BundlePreview, UiError> {
     let g = gather(ctx).await;
-    Ok(redact(&raw_text(&g), &g))
+    let preview = redact(&raw_text(&g), &g);
+    remember_preview(&ctx.profile.dir, &preview.text);
+    Ok(preview)
 }
 
 /// `XDG_DOWNLOAD_DIR`, then the user-dirs file (pt-BR systems may say "Transferências"), then
@@ -531,16 +568,53 @@ fn file_name() -> String {
     format!("clipsync-suporte-{}.txt", stamp(crate::unix_ms()))
 }
 
+/// Creates the bundle file without replacing or following anything: `clipsync-suporte-...txt`,
+/// then `-2`, `-3`... when the name is taken. Mode 0600.
+fn create_bundle_file(dir: &Path, name: &str) -> std::io::Result<(PathBuf, std::fs::File)> {
+    let (stem, ext) = name.rsplit_once('.').unwrap_or((name, "txt"));
+    for n in 1..=9 {
+        let candidate = if n == 1 {
+            name.to_string()
+        } else {
+            format!("{stem}-{n}.{ext}")
+        };
+        let path = dir.join(candidate);
+        match fsio::create_new(&path, 0o600) {
+            Ok(file) => return Ok((path, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        BUNDLE_NAME_TAKEN,
+    ))
+}
+
+/// Writes the text the user previewed (a fresh one when no preview is on record).
 pub(crate) async fn bundle_export(ctx: &Ctx) -> Result<Exported, UiError> {
-    let preview = bundle_preview(ctx).await?;
+    let text = match take_preview(&ctx.profile.dir) {
+        Some(text) => text,
+        None => {
+            let preview = bundle_preview(ctx).await?;
+            let _ = take_preview(&ctx.profile.dir); // this one is being written now
+            preview.text
+        }
+    };
     let dir = downloads_dir(ctx).ok_or_else(|| UiError::new(code::IO, msg::NO_DOWNLOADS))?;
-    let path = dir.join(file_name());
-    std::fs::create_dir_all(&dir)
-        .and_then(|()| std::fs::write(&path, preview.text.as_bytes()))
-        .map_err(|e| UiError::new(code::IO, msg::io(&clean(&e.to_string()))))?;
+    let io_error = |e: std::io::Error| UiError::new(code::IO, msg::io(&clean(&e.to_string())));
+    std::fs::create_dir_all(&dir).map_err(io_error)?;
+    let (path, mut file) = create_bundle_file(&dir, &file_name()).map_err(io_error)?;
+    let written =
+        std::io::Write::write_all(&mut file, text.as_bytes()).and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&path);
+        return Err(io_error(e));
+    }
     Ok(Exported {
         path: path.display().to_string(),
-        bytes: preview.text.len(),
+        bytes: text.len(),
     })
 }
 
@@ -549,14 +623,137 @@ mod tests {
     use super::*;
 
     #[test]
-    fn names_are_replaced_only_as_whole_words() {
+    fn short_names_are_replaced_only_as_whole_words() {
         assert_eq!(
             replace_words("a: recusado · casa de a", "a", "<p>"),
             ("<p>: recusado · casa de <p>".to_string(), 2)
         );
+        // `-`, `_` and `.` separate words; letters and digits do not
         assert_eq!(
-            replace_words("pc-da-ana e ana", "ana", "<p>"),
-            ("pc-da-ana e <p>".to_string(), 1)
+            replace_words("pc-da-ana e ana e banana e ana_2 e ana.local", "ana", "<p>"),
+            (
+                "pc-da-<p> e <p> e banana e <p>_2 e <p>.local".to_string(),
+                4
+            )
+        );
+        assert_eq!(
+            replace_words("ana1 e 1ana", "ana", "<p>"),
+            ("ana1 e 1ana".to_string(), 0)
+        );
+    }
+
+    #[test]
+    fn long_names_are_replaced_inside_compound_words_too() {
+        let (t, n) = replace_words(
+            "notebook-do-bruno.local e xnotebook-do-brunoy e notebook-do-bruno",
+            "notebook-do-bruno",
+            "<p>",
+        );
+        assert_eq!(t, "<p>.local e x<p>y e <p>");
+        assert_eq!(n, 3);
+        assert_eq!(
+            replace_words("sem nada", "casa", "<p>"),
+            ("sem nada".to_string(), 0)
+        );
+        assert_eq!(replace_words("casa", "", "<p>"), ("casa".to_string(), 0));
+    }
+
+    fn device(name: &str, id_hex: &str) -> Device {
+        Device {
+            peer_id: id_hex.to_string(),
+            short: id_hex[..8].to_string(),
+            name: name.to_string(),
+            state: DeviceState::Offline,
+            blocked_reason: None,
+            addr: Some("192.168.0.77:47800".into()),
+            perms: crate::devices::Perms::default(),
+            remote_modules: crate::status::Modules::default(),
+            remote_version: None,
+            paired_at: None,
+        }
+    }
+
+    /// S6-15: no known name, id or address survives in the final text, even glued to other words.
+    #[test]
+    fn no_known_name_survives_in_the_final_text() {
+        let bruno = "b".repeat(64);
+        let ana = "a1".repeat(32);
+        let g = Gathered {
+            diag: Diagnostics {
+                items: Vec::new(),
+                network: Network {
+                    listen: Some("192.168.0.5:47800".into()),
+                    addresses: vec!["192.168.0.5:47800".into()],
+                    peers: Vec::new(),
+                },
+                blocks: Vec::new(),
+            },
+            status: None,
+            devices: vec![device("notebook-do-bruno", &bruno), device("ana", &ana)],
+            device_name: Some("casa.local".into()),
+        };
+        let mut raw = raw_text(&g);
+        raw.push_str(
+            "\nnotas: notebook-do-bruno.lan · xnotebook-do-brunoy · pc-da-ana · ana_2 · \
+             casa.local-2 · meu-casa.local · id=",
+        );
+        raw.push_str(&format!("{bruno}{} · curto={}", &ana[..8], &bruno[..8]));
+        let text = redact(&raw, &g).text;
+        for secret in [
+            "notebook-do-bruno",
+            "casa.local",
+            "192.168.0.5",
+            "192.168.0.77",
+            bruno.as_str(),
+            ana.as_str(),
+            &bruno[..8],
+            &ana[..8],
+        ] {
+            assert!(!text.contains(secret), "{secret} survived:\n{text}");
+        }
+        assert!(
+            !text.contains("pc-da-ana") && !text.contains("ana_2"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_last_preview_is_taken_once_and_expires_per_profile() {
+        let a = Path::new("/perfil-a");
+        let b = Path::new("/perfil-b");
+        remember_preview(a, "texto aprovado");
+        assert_eq!(take_preview(b), None, "another profile has its own");
+        assert_eq!(take_preview(a).as_deref(), Some("texto aprovado"));
+        assert_eq!(take_preview(a), None, "only once");
+        remember_preview(a, "um");
+        remember_preview(a, "dois");
+        assert_eq!(take_preview(a).as_deref(), Some("dois"), "the newest wins");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_bundle_file_is_new_private_and_never_replaces_another() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("vitima.txt");
+        std::fs::write(&victim, b"intacta").unwrap();
+        let name = "clipsync-suporte-20261028-034000.txt";
+        // a symlink where the bundle would go is not followed: the next name is used
+        std::os::unix::fs::symlink(&victim, dir.path().join(name)).unwrap();
+        let (path, _) = create_bundle_file(dir.path(), name).unwrap();
+        assert_eq!(
+            path,
+            dir.path().join("clipsync-suporte-20261028-034000-2.txt")
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(std::fs::read(&victim).unwrap(), b"intacta");
+        let (third, _) = create_bundle_file(dir.path(), name).unwrap();
+        assert_eq!(
+            third,
+            dir.path().join("clipsync-suporte-20261028-034000-3.txt")
         );
     }
 
