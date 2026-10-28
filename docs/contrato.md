@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.27, Keel, 2026-10-28)
+# Contrato · ClipSync MVP de hoje (v1.28, Keel, 2026-10-28)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -32,6 +32,7 @@ v1.24 (decisão do Maestro, 2026-10-28, a partir do d7a4d79 do Rivet): §5 regra
 v1.25 (pedido do Maestro, 2026-10-28): §13 nova, S7 · layout de telas de verdade. Input no Windows (hooks e SendInput) num crate próprio, `clipsync-win`, com `unsafe` só no `ffi.rs`, pendente da revisão do Sentinel; teclado pela posição física; proto v3 (`EnterSpan`, `Returned`, `Refused`, `ModuleHost::request_pause`); `Zones` em tempo real; release v0.3.0.
 v1.26 (Sentinel 7cd67a3 e decisão do Maestro, 2026-10-28): §13.3 item 7 com as condições C1 a C4 (C1 feito pelo Maestro em 2bd35a9); §13.2 regra 2 com R2 a R5 (o hook cai a cada mudança, estado de teclado de tamanho fixo, canal limitado a 8 000, redação provada por teste); R1: pausar tira os hooks e retomar com Win+Alt+P usa o `RegisterHotKey` (§13.2 regra 2g, `set_paused` no trait, `ResumeHotkey` no `clipsync-win`); §13.1: `diag.rs` e `prefs.rs` do `clipsync-ui` voltam ao Rivet, e o `autostart.rs` segue com o Flux.
 v1.27 (decisões do Flux em 40070d3, registradas a pedido do Maestro): §13.7 item 2 (`VK_SNAPSHOT` pelo VK, 0x54 e 0x55 descartados, bloco principal 0x01..=0x53 e 0x56..=0x58 mais 0x73 e 0x7E); §13.6 adaptador Windows (`normalize_abs` com teto, `barrier_crossing` no último pixel, `HotkeyTracker` com a tecla neutra `VK 0xE8`); §13.12 passos 2 e 3 com pontos de atenção; §13.13 decisão 10. Também (decisões do Maestro): §13.5 com `Notice::HooksLost`, `ResumeHotkey::register` e o laço de 500 ms do `DesktopSwitched`, e a dep `windows` com as features só na raiz (decisão 11); §13.9 com `keyboard_layout` no `InputState` e os atalhos "ativos" só com hook (decisão 12).
+v1.28 (Maestro, 2026-10-28): C1 fechado, com o script conferindo também os lints do `clipsync-win` (§13.3 item 7, 3027c09); decisões do Vector: `holds_hooks`, `watch_resume` e `unwatch_resume` no `CaptureAdapter`, no lugar do `set_paused` (§13.6), e `MemHub::unlink` para o teste do R2 (§13.4 item 6); §13.11 item 2 ganha os testes (i) e (j); §13.13 decisões 13 e 14.
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -1355,7 +1356,7 @@ Como fica:
 5. Prova (CI nos dois runners): `grep -rn 'allow(unsafe_code)' crates/` acha exatamente uma linha, em `crates/clipsync-win/src/ffi.rs`; `grep -rnE '\bunsafe\s*(\{|fn|impl|extern|trait)' crates --include='*.rs'` só acha linhas desse arquivo.
 6. O Sentinel revisa esta decisão antes da primeira linha do `clipsync-win` e revisa o `ffi.rs` bloco a bloco antes do v0.3.0. **Revisada em 7cd67a3 (`docs/seguranca.md`, "S7 · decisão unsafe"): aprovada com condições.** Condição aberta na revisão bloco a bloco é BLOQUEANTE.
 7. **Condições do Sentinel (v1.26):**
-   - **C1, conferência do isolamento (Maestro, feita em 2bd35a9).** O `scripts/conferir-unsafe.sh` roda no CI dos dois sistemas e falha com: `unsafe_code` em qualquer linha `.rs` fora do `ffi.rs` (allow, expect, várias linhas); a palavra `unsafe` no código fora do `ffi.rs` (comentário `//` não conta); crate de `crates/` sem `[lints]` com `workspace = true`, menos o `clipsync-win`; `ffi.rs` sem o `#![allow(unsafe_code)]` ou com mais de uma linha `unsafe_code`; `pub unsafe fn` no `ffi.rs`. Fica de fora uma parte do pedido do Sentinel: conferir que o `Cargo.toml` do `clipsync-win` mantém `unsafe_code = "deny"`, `undocumented_unsafe_blocks` e `multiple_unsafe_ops_per_block`. Hoje os três estão lá (conferido pelo Keel), mas nada no CI impede tirar.
+   - **C1, conferência do isolamento (Maestro, feita em 2bd35a9 e 3027c09).** O `scripts/conferir-unsafe.sh` roda no CI dos dois sistemas e falha com: `unsafe_code` em qualquer linha `.rs` fora do `ffi.rs` (allow, expect, várias linhas); a palavra `unsafe` no código fora do `ffi.rs` (comentário `//` não conta); crate de `crates/` sem `[lints]` com `workspace = true`, menos o `clipsync-win`; `ffi.rs` sem o `#![allow(unsafe_code)]` ou com mais de uma linha `unsafe_code`; `pub unsafe fn` no `ffi.rs`; e (v1.28, 3027c09) `Cargo.toml` do `clipsync-win` sem `deny` em `unsafe_code` e `unsafe_op_in_unsafe_fn` (`[lints.rust]`) ou em `undocumented_unsafe_blocks`, `multiple_unsafe_ops_per_block` e nas seis do workspace (`[lints.clippy]`). O Maestro testou afrouxar um e o script acusa; o Keel rodou e passa. C1 fechado.
    - **C2, o `ffi.rs` não exporta `unsafe`.** `mod ffi;` privado. Toda função de lá é segura e fecha a invariante dentro do bloco: nenhum `pub unsafe fn` nem `pub(crate) unsafe fn`. Cada `// SAFETY:` diz por que ponteiro, tamanho de buffer e handle valem, e não só repete a chamada.
    - **C3, estado dos callbacks sem ponteiro cru.** O `Box<dyn FnMut>` dos callbacks mora num `thread_local!` (`RefCell` ou `Cell`), na thread dos hooks, que é a do laço de mensagens. Proibidos `static mut`, `Box::into_raw` e `GWLP_USERDATA` com ponteiro cru. Reentrada: `try_borrow_mut`; se falhar, "passa". Cada `extern "system"` roda dentro de `catch_unwind`: pânico devolve "passa", marca o hook como morto e manda `Notice::HooksLost`, que encerra a sessão (§13.5, v1.27). Pânico que cruza o limite C aborta o processo.
    - **C4, handles com RAII.** `HHOOK`, `HWND`, `HDESK` e o registro do WTS fecham no `Drop`; o `input_desktop_is_default`, chamado antes de cada lote do `WinEmulate`, fecha o `HDESK` que abre. Teste no CI Windows: 10 000 chamadas sem o `process_handle_count()` subir.
@@ -1378,6 +1379,7 @@ Refused { session: u32, reason: RejectReason },
 2. `min_version` das três é 3. Mandar a par com versão menor dá `RemoteTooOld`, e nada sai (§12.10 decisão 7).
 3. Autorização: `EnterSpan` como `EnterAt` (só entra com `input_in` concedido ao remetente; a pausa bloqueia). `Returned` e `Refused` como `Stats`: passam sem `input_in`, e o módulo só age se a `session` for uma que este nó abriu para aquele par.
 4. `ModuleHost` ganha `fn request_pause(&self, paused: bool);`, pelo mesmo caminho do `pause` e do `resume` do controle (`state.toml`, `ModuleInput::Paused` aos módulos, evento `pause_changed`). O `MemHub` implementa e conta as chamadas. Quem usa é o atalho Win+Alt+P.
+6. v1.28 (decisão do Vector): `MemHub::unlink` (Rivet, só na feature `testing`) desfaz a ligação entre dois nós, para o teste do gatilho "par revogado" do R2 (§13.2 regra 2a).
 5. Hello v3 é aceito pela regra do 0.1.0 e do 0.2.x (3 >= 1).
 
 ### 13.5 `clipsync-win`: API segura (Flux)
@@ -1443,9 +1445,16 @@ pub trait CaptureAdapter {   /* o de hoje, mais: */
     async fn set_barriers(&mut self, barriers: &[BarrierSpec]) -> Result<(), InputError> { Err(InputError::Other("unsupported".into())) }
     /// Devolve o cursor na barreira `barrier`, em `pos` (0 a 1), um pixel para dentro da zona.
     async fn release_at(&mut self, barrier: usize, pos: f32) -> Result<(), InputError> { let _ = (barrier, pos); self.release().await }
-    /// v1.26: pausa tudo. No Windows, tira os hooks e liga o atalho de retomar (§13.2 regra 2g);
-    /// no portal, nada (a sessão fica, para não abrir diálogo novo). O módulo chama a cada `ModuleInput::Paused`.
-    async fn set_paused(&mut self, paused: bool) -> Result<(), InputError> { let _ = paused; Ok(()) }
+    /// v1.28 (Vector, no lugar do `set_paused` da v1.26): true quando o adaptador segura hooks do
+    /// sistema enquanto roda (Windows). Só então pausar para o adaptador (§13.2 regra 2g); o portal
+    /// do Linux não perde a sessão na pausa.
+    fn holds_hooks(&self) -> bool { false }
+    /// Pausado e parado: escuta só a combinação de retomar (Win+Alt+P) por um atalho do sistema que
+    /// não lê tecla. `Ok(None)`: não existe aqui (retomada pela bandeja ou pelo botão); `Err`: o
+    /// sistema recusou a combinação (mesma saída). O receptor entrega `Hotkey(TogglePause)`.
+    async fn watch_resume(&mut self) -> Result<Option<mpsc::Receiver<CaptureEvent>>, InputError> { Ok(None) }
+    /// Desfaz o que o `watch_resume` registrou.
+    async fn unwatch_resume(&mut self) {}
 }
 pub trait EmulateAdapter {   /* o de hoje, mais: */
     /// Põe o cursor na entrada. Padrão: a rajada relativa de hoje (§8 regra 8); o `entry_events_at`
@@ -1485,7 +1494,7 @@ No `build`, `auto` vira o portal no Linux e o Windows no Windows. `AdapterChoice
    - `release_at` desfaz o `CursorPark` e põe o cursor na barreira, um pixel para dentro;
    - teclas por `keymap::from_windows`; atalhos Win+Alt+1 a 9, Win+Alt+L e Win+Alt+P, com ou sem captura ativa: as teclas do atalho são engolidas, e um toque de tecla neutra evita que o Win solto abra o menu Iniciar. Win+Alt+C e Win+Alt+V ficam "indisponível nesta versão";
    - `Notice::DisplayChanged` vira `ZonesChanged`; `SessionLocked`, `SessionUnlocked` e `DesktopSwitched` viram `SessionLocked(bool)` (`input_desktop_is_default()` decide o valor depois de `DesktopSwitched`); `HooksLost` vira `SessionLocked(true)` mais `Error`, o que encerra a sessão (v1.27, C3 e I-S7-3);
-   - `set_paused(true)` derruba o `Hooks` e chama `ResumeHotkey::register` com um `on_press` que vira `Hotkey(TogglePause)`. `set_paused(false)` derruba o `ResumeHotkey` e reinstala o `Hooks` se a regra 2a da §13.2 ainda valer. Se o `register` falhar, a retomada fica só pela bandeja e pelo botão Pausar tudo, e o adaptador avisa como bloqueio com o texto da §13.2 regra 2g (v1.27).
+   - pausa (v1.28, no lugar do `set_paused`): `holds_hooks()` dá true. Ao pausar, o módulo chama `stop` (o `Hooks` sai) e depois `watch_resume`, que faz `ResumeHotkey::register` com um `on_press` que manda `Hotkey(TogglePause)` no receptor devolvido. Ao retomar, por qualquer caminho, o módulo chama `unwatch_resume` (o `ResumeHotkey` sai) e sobe a captura de novo se a regra 2a da §13.2 ainda valer. Se o `register` falhar, `watch_resume` devolve `Err`: a retomada fica só pela bandeja e pelo botão Pausar tudo, e o módulo avisa como bloqueio com o texto da §13.2 regra 2g.
 2. `WinEmulate` (nome `"win-sendinput"`):
    - `start` sobe o `Watcher`;
    - antes de cada lote, `input_desktop_is_default()` e a sessão desbloqueada; senão `Err(InputError::Locked)`, sem injetar nada;
@@ -1552,7 +1561,9 @@ Decisões do Maestro (v1.27), a pedido do Rivet:
    - (e) `set_zones` com a mesma quantidade e outra resolução faz o par v2 com `input_in` receber `Zones` novo em até 3 s, e `barriers()` mostra a geometria nova; sem mudança, nada sai;
    - (f) `session_locked(true)` na origem fecha a sessão com `Leave` e `ReleaseAll` e impede ativação até `false`;
    - (g) par v2: a origem manda `EnterAt` e usa o `VirtualCursor`, sem variante v3;
-   - (h) no CI Windows, `layout_windows.rs`: com input ligado e adaptadores falsos, os comandos da tela 4 funcionam; `input_off` só com o módulo desligado.
+   - (h) no CI Windows, `layout_windows.rs`: com input ligado e adaptadores falsos, os comandos da tela 4 funcionam; `input_off` só com o módulo desligado;
+   - (i) v1.28, pausa: com o fake segurando hooks, pausar chama `stop` e `watch_resume`, e retomar chama `unwatch_resume` e sobe a captura de novo; com o fake sem hooks (como o portal), pausar não para a captura; `watch_resume` com `Err` deixa o aviso da §13.2 regra 2g;
+   - (j) v1.28, R2: com o fake segurando hooks, a captura para quando a última ligação local sai do `layout.toml`, quando o par da ligação é revogado (`MemHub::unlink`) e quando o módulo desliga.
 3. **Flux:** `cargo test -p clipsync-input --test keymap --test winmath` verdes nos dois CIs, com os casos da §13.7 item 2 e do `winmath` (nomes estáveis e repetidos; `MoveAbs` nos quatro cantos de um desktop virtual com origem negativa; px lógicos a 96, 120, 144 e 192 dpi; cruzamento no último pixel e na borda entre monitores; Win+Alt+N, L e P reconhecidos e o toque neutro gerado); `cargo clippy` verde no CI Windows com o `clipsync-win` e o adaptador; o `scripts/conferir-unsafe.sh` verde nos dois CIs (§13.3 itens 5 e 7, C1 e C2); v1.26: o estado de teclado fora da captura é `Copy` e sem alocação, e só modificador e botão saem como seguros (R3); `format!("{:?}")` de `RawEvent` e da tecla sem vk, scan nem extended (R5); canal cheio encerra a captura e descarta a fila (R4); no CI Windows, 10 000 chamadas de `input_desktop_is_default()` sem o `process_handle_count()` subir (C4); `grep -rn 'INPUT_SUPPORTED' crates/` não acha nada (com o Rivet).
 4. **Rivet (ui):** `cargo test -p clipsync-ui` verde nos dois CIs; no Windows, `features.global_shortcuts` true com input ligado, e `onboarding_self_test` traz o input diferente de `not_tested`.
 5. **Pixel:** os greps do §12.9 item 5 seguem passando; no portal com o mock, `?cenario=windows` mostra na tela 4 os dois monitores com nome e escala, Preferências mostram os atalhos ativos (e "indisponível nesta versão" no cenário Linux), e o onboarding libera teclado e mouse; veredito do Argus.
@@ -1588,6 +1599,8 @@ O usuário responde por passo ("ok" ou o que viu), e o Argus registra.
 10. Flux (v1.27, 40070d3), aceitas pelo Maestro: `VK_SNAPSHOT` entra pelo VK; 0x54 e 0x55 sem VK são descartados; o bloco principal é 0x01..=0x53 e 0x56..=0x58, mais 0x73 e 0x7E (§13.7 item 2). `normalize_abs` com `ceil(pixel * 65536 / largura)`, que pode errar 1 px; `barrier_crossing` conta chegar ou ficar no último pixel como empurrão, o que pode ativar andando junto à borda; `HotkeyTracker` em evdev com `swallow`, `shortcut` e `neutral_tap`, pela tecla neutra `VK 0xE8` (§13.6 item 4 do adaptador Windows). Os dois pontos que podem errar entram como atenção no roteiro (§13.12 passos 2 e 3).
 11. Maestro (v1.27), a pedido do Flux para cumprir C3, I-S7-3 e o R1 (§13.5): `Notice::HooksLost` no lugar do `HookDied` (pânico num callback ou o relógio do I-S7-3; o adaptador trata como `SessionLocked(true)` mais `Error`); `ResumeHotkey::register(on_press)` com thread própria, no lugar do `ResumeHotkey::new(&Watcher)` e do `Notice::ResumeHotkey`; `DesktopSwitched` sai de um laço de 500 ms (`WM_TIMER`) que confere `input_desktop_is_default()`. A dep `windows` tem as features só na raiz (7040a2f), e o `clipsync-win` usa `workspace = true`.
 12. Maestro (v1.27), a pedido do Rivet (§13.9): `keyboard_layout` no fim do `InputState`, preenchido pelo módulo e mostrado pelo diagnóstico; atalhos "ativos" no diagnóstico do Windows só quando o hook existe.
+13. Vector (v1.28), aceito pelo Maestro: no lugar do `set_paused` da v1.26 (decisão 9), o `CaptureAdapter` ganha `holds_hooks`, `watch_resume` e `unwatch_resume`, com padrão vazio e `holds_hooks` true no Windows. A pausa só para o adaptador que segura hooks, e o portal do Linux não perde a sessão. O Flux implementa os três no `WinCapture`. O Rivet põe `MemHub::unlink` na feature `testing` para o teste do gatilho "par revogado" (§13.4 item 6).
+14. Maestro (v1.28): o C1 está fechado (2bd35a9 e 3027c09), e o script confere também os lints do `clipsync-win`.
 
 ### 13.14 Perguntas que só o usuário responde
 1. O terceiro PC: sistema e versão, sessão gráfica (Windows, GNOME Wayland, KDE ou X11) e quantos monitores? KDE e X11 ficam fora da S7.
