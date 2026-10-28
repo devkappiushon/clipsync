@@ -8,7 +8,7 @@ use super::winmath::{HotkeyTracker, barrier_crossing, capture_delta};
 use super::{BarrierSpec, Hotkey, Zone, ZoneRef};
 use crate::keymap;
 use clipsync_proto::{Edge, InputEvent};
-use clipsync_win::{RawEvent, Verdict, WinButton};
+use clipsync_win::{RawEvent, Synth, Verdict, WinButton};
 use std::fmt;
 use std::sync::Arc;
 
@@ -20,6 +20,22 @@ pub struct ArmedBarrier {
     pub edge: Edge,
     pub from: f32,
     pub to: f32,
+}
+
+/// What to press again locally when a capture ends: only the modifiers and buttons that the system
+/// says are physically down right now (`physical`), never what an old hook instance remembers
+/// (Sentinel S7-05: a stale set would press a Win and an Alt that nobody is holding).
+pub fn repress_synths(physical: &Held) -> Vec<Synth> {
+    let mut batch = Vec::new();
+    for code in physical.modifiers() {
+        if let Some(key) = keymap::to_windows(code) {
+            batch.push(Synth::Key { key, up: false });
+        }
+    }
+    for button in physical.buttons() {
+        batch.push(Synth::Button { button, down: true });
+    }
+    batch
 }
 
 /// What to do when the hooks die: make them again, or give up.

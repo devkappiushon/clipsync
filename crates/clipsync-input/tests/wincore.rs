@@ -1,11 +1,11 @@
 //! §13.6 "Adaptador Windows" item 1 (Flux): the decisions inside the hook callback, on every system.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use clipsync_input::adapter::wincore::{
-    ArmedBarrier, CaptureCore, Held, Out, Restart, RestartPolicy, resolve_barriers,
+    ArmedBarrier, CaptureCore, Held, Out, Restart, RestartPolicy, repress_synths, resolve_barriers,
 };
 use clipsync_input::adapter::{BarrierSpec, Hotkey, Zone, ZoneRef};
 use clipsync_proto::{Edge, InputEvent};
-use clipsync_win::{RawEvent, Verdict, WinButton};
+use clipsync_win::{RawEvent, Synth, Verdict, WinButton, WinKey};
 use std::sync::Arc;
 
 fn zone(x: i32, y: i32, w: u32, h: u32) -> Zone {
@@ -507,4 +507,30 @@ fn the_policy_is_copy_and_fixed_size() {
     fn is_copy<T: Copy>() {}
     is_copy::<RestartPolicy>();
     assert!(std::mem::size_of::<RestartPolicy>() <= 48);
+}
+
+#[test]
+fn coming_back_presses_only_what_is_physically_down() {
+    // nothing down: nothing pressed (the stale Win and Alt of an old hook instance are not an input here)
+    assert!(repress_synths(&Held::default()).is_empty());
+    let mut down = Held::default();
+    down.add_key(125); // KEY_LEFTMETA
+    down.add_key(30); // KEY_A is not safe to carry: never pressed again
+    down.add_button(WinButton::Left);
+    assert_eq!(
+        repress_synths(&down),
+        [
+            Synth::Key {
+                key: WinKey::Scan {
+                    code: 0x5B,
+                    extended: true
+                },
+                up: false
+            },
+            Synth::Button {
+                button: WinButton::Left,
+                down: true
+            },
+        ]
+    );
 }

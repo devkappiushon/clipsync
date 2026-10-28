@@ -8,7 +8,7 @@
 //!
 //! Nothing here logs a key, a scan code or a character (§13.2 rule 2e).
 use super::super::wincore::{
-    ArmedBarrier, CaptureCore, Held, Out, Restart, RestartPolicy, resolve_barriers,
+    ArmedBarrier, CaptureCore, Held, Out, Restart, RestartPolicy, repress_synths, resolve_barriers,
 };
 use super::super::winmath::{self, NEUTRAL_KEY, Rect};
 use super::super::{BarrierSpec, CaptureAdapter, CaptureEvent, Hotkey, InputError, Zone};
@@ -107,6 +107,16 @@ impl Shared {
         self.generation.fetch_add(1, Ordering::Release);
     }
 
+    /// A new hook instance starts from nothing: the set of held keys of the old one, and the flags
+    /// that belonged to its capture, must not leak into the next (Sentinel S7-05).
+    fn reset_input(&self) {
+        for slot in &self.held {
+            slot.store(0, Ordering::Relaxed);
+        }
+        self.begin.store(false, Ordering::Release);
+        self.ready.store(false, Ordering::Release);
+    }
+
     fn held(&self) -> Held {
         let words = std::array::from_fn(|i| self.held[i].load(Ordering::Relaxed));
         Held::from_words(words)
@@ -196,6 +206,8 @@ fn hook_closure(
 }
 
 fn start_hooks(shared: &Arc<Shared>, queue: &SyncSender<Msg>) -> Result<Hooks, WinError> {
+    // Every instance, the first or a recreated one, starts from nothing (Sentinel S7-05).
+    shared.reset_input();
     let notices = queue.clone();
     let flag = Arc::clone(shared);
     Hooks::start(
@@ -303,15 +315,8 @@ fn end_locally(shared: &Shared, cursor: Option<(i32, i32)>) -> Result<(), InputE
         let (nx, ny) = winmath::normalize_abs(virtual_rect(), x, y);
         batch.push(Synth::MoveAbs { nx, ny });
     }
-    let held = shared.held();
-    for code in held.modifiers() {
-        if let Some(key) = keymap::to_windows(code) {
-            batch.push(Synth::Key { key, up: false });
-        }
-    }
-    for button in held.buttons() {
-        batch.push(Synth::Button { button, down: true });
-    }
+    // Only what the system says is physically down now: never the set an old hook instance kept.
+    batch.extend(repress_synths(&reconcile(Held::default())));
     if batch.is_empty() {
         return Ok(());
     }
@@ -667,5 +672,89 @@ impl Drop for WinCapture {
         if let Some(queue) = self.queue.take() {
             let _ = queue.try_send(Msg::Stop);
         }
+    }
+}
+
+/// Runs on Windows only, with the rest of the file. The hook closure is called with events built by
+/// hand: no real hook is installed.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clipsync_proto::Edge;
+    use clipsync_win::Verdict;
+
+    use super::super::super::ZoneRef;
+
+    fn zone() -> Zone {
+        Zone {
+            index: 0,
+            name: Some("z".into()),
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+            scale: 1.0,
+        }
+    }
+
+    fn shared_with_a_barrier() -> Arc<Shared> {
+        let shared = Arc::new(Shared::new());
+        let spec = BarrierSpec {
+            zone: ZoneRef::Index(0),
+            edge: Edge::Right,
+            from: 0.0,
+            to: 1.0,
+        };
+        shared.install(&[spec], &[zone()]);
+        shared
+    }
+
+    fn key(scan: u32, extended: bool, up: bool) -> RawEvent {
+        RawEvent::Key {
+            vk: 0,
+            scan,
+            extended,
+            up,
+        }
+    }
+
+    /// Sentinel S7-05: pause with Win and Alt held, resume, cross with the mouse only and come back:
+    /// no Win or Alt may travel with the crossing or be pressed again on the way back.
+    #[test]
+    fn a_new_hook_instance_forgets_the_keys_the_old_one_held() {
+        let shared = shared_with_a_barrier();
+        let (queue, inbox) = sync_channel(64);
+
+        // the first instance sees Win and Alt go down, then the hooks are removed (the pause)
+        let mut first = hook_closure(Arc::clone(&shared), queue.clone());
+        assert_eq!(first(&key(0x5B, true, false)), Verdict::Pass);
+        assert_eq!(first(&key(0x38, false, false)), Verdict::Pass);
+        assert!(!shared.held().is_empty());
+        drop(first);
+
+        // resume: a new instance
+        shared.reset_input();
+        assert!(shared.held().is_empty());
+        let mut second = hook_closure(Arc::clone(&shared), queue);
+        // the user crosses with the mouse only
+        assert_eq!(second(&RawEvent::Move { x: 1000, y: 500 }), Verdict::Pass);
+        assert_eq!(second(&RawEvent::Move { x: 1919, y: 540 }), Verdict::Block);
+        let Ok(Msg::Out(Out::Activate { held, .. }, _)) = inbox.try_recv() else {
+            panic!("the crossing did not activate");
+        };
+        assert!(held.is_empty(), "nothing is held, nothing travels");
+        assert!(shared.held().is_empty());
+        // and on the way back nothing is pressed again unless the system says it is physically down
+        assert!(repress_synths(&Held::default()).is_empty());
+    }
+
+    #[test]
+    fn resetting_clears_the_flags_of_the_old_capture_too() {
+        let shared = Shared::new();
+        shared.begin.store(true, Ordering::SeqCst);
+        shared.ready.store(true, Ordering::SeqCst);
+        shared.reset_input();
+        assert!(!shared.begin.load(Ordering::SeqCst));
+        assert!(!shared.ready.load(Ordering::SeqCst));
     }
 }
