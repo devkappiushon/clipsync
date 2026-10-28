@@ -328,13 +328,18 @@ pub struct KeyDecision {
     pub neutral_tap: bool,
 }
 
-/// Recognizes Win+Alt+1 to 9, Win+Alt+L and Win+Alt+P in the stream of evdev key events. It keeps
-/// only what is held right now (Win, Alt, the swallowed keys): no history, no counters.
-#[derive(Clone, Default)]
+/// How many shortcut keys can be held at once. More than that cannot happen with two hands on
+/// Win+Alt+key; a fifth is simply not recognized.
+const SWALLOW_SLOTS: usize = 4;
+
+/// Recognizes Win+Alt+1 to 9, Win+Alt+L and Win+Alt+P in the stream of evdev key events. It is a
+/// function of what is held right now plus the key that just arrived: `Copy`, fixed size, no
+/// allocation, no history, no counters, no time window (Sentinel R3).
+#[derive(Clone, Copy, Default)]
 pub struct HotkeyTracker {
     wins: u8,
     alts: u8,
-    swallowed: Vec<u32>,
+    swallowed: [u32; SWALLOW_SLOTS],
     fired: bool,
 }
 
@@ -385,10 +390,10 @@ impl HotkeyTracker {
             return decision;
         }
 
-        if let Some(at) = self.swallowed.iter().position(|&c| c == code) {
+        if let Some(slot) = self.swallowed.iter_mut().find(|c| **c == code) {
             // auto-repeat of a swallowed key, or its release (possibly after Win or Alt went up)
             if !pressed {
-                self.swallowed.swap_remove(at);
+                *slot = 0;
             }
             decision.swallow = true;
             return decision;
@@ -397,8 +402,9 @@ impl HotkeyTracker {
             && self.wins != 0
             && self.alts != 0
             && let Some(hotkey) = shortcut_of(code)
+            && let Some(slot) = self.swallowed.iter_mut().find(|c| **c == 0)
         {
-            self.swallowed.push(code);
+            *slot = code;
             self.fired = true;
             decision.swallow = true;
             decision.shortcut = Some(hotkey);

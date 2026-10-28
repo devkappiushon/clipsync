@@ -471,3 +471,20 @@ fn debug_of_the_tracker_shows_nothing_held() {
     let text = format!("{t:?}");
     assert!(!text.contains("25") && !text.contains("125"), "{text}");
 }
+
+#[test]
+fn the_tracker_is_copy_and_holds_no_allocation() {
+    // Sentinel R3: a function of what is held now plus the key that arrived.
+    fn is_copy<T: Copy>() {}
+    is_copy::<HotkeyTracker>();
+    assert!(std::mem::size_of::<HotkeyTracker>() <= 32);
+    // a key that is not a shortcut leaves no trace: the same events give the same answers
+    let mut a = HotkeyTracker::new();
+    let before = a;
+    for _ in 0..10_000 {
+        press(&mut a, KEY_A);
+        release(&mut a, KEY_A);
+    }
+    assert_eq!(format!("{a:?}"), format!("{before:?}"));
+    assert_eq!(press(&mut a, KEY_LEFTMETA), KeyDecision::default());
+}
