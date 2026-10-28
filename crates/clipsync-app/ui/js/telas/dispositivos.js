@@ -37,6 +37,8 @@ export default function montar({ ir, assinar }) {
   let dispositivos = [];
   let painelChave = null;
   const painel = h("div", { class: "dispositivos__painel" });
+  // Tabela à esquerda, painel do selecionado à direita; sem dispositivo não há painel e a tabela ocupa tudo.
+  const colunas = h("div", { class: "colunas dispositivos__colunas" });
   const botaoParear = () => botao({ rotulo: "Parear novo dispositivo", variante: "primario", icone: "mais", aoClicar: () => ir("pareamento") });
 
   const lista = area({
@@ -44,8 +46,10 @@ export default function montar({ ir, assinar }) {
     buscar: () => api.devicesList(),
     pintar: (dados) => {
       dispositivos = dados.devices;
-      const atual = dispositivos.find((d) => d.peer_id === selecionado) ?? null;
+      // A primeira linha já vem selecionada.
+      const atual = dispositivos.find((d) => d.peer_id === selecionado) ?? dispositivos[0] ?? null;
       selecionado = atual?.peer_id ?? null;
+      colunas.classList.toggle("colunas--unica", atual === null);
       // Só repinta o painel se o dispositivo mudou: preserva o foco de quem acabou de mexer num interruptor.
       const chave = JSON.stringify(atual);
       if (chave !== painelChave) {
@@ -70,8 +74,17 @@ export default function montar({ ir, assinar }) {
         },
         { chave: "state", rotulo: "Estado", render: (d) => seloDispositivo(d.state) },
         { chave: "addr", rotulo: "Endereço", tipo: "mono", render: (d) => d.addr ?? h("span", { class: "muted" }, "sem endereço") },
-        { chave: "clipboard", rotulo: "Clipboard", render: (d) => rotuloClipboard(d.perms) },
-        { chave: "controle", rotulo: "Controle", render: (d) => (d.perms.input_in ? "controla" : "não controla") },
+        {
+          chave: "permissoes",
+          rotulo: "Permissões",
+          render: (d) =>
+            h(
+              "span",
+              { class: "dispositivos__permissoes-celula" },
+              h("span", null, `clipboard: ${rotuloClipboard(d.perms)}`),
+              h("span", null, `controle: ${d.perms.input_in ? "controla" : "não controla"}`),
+            ),
+        },
       ],
       linhas: devices,
       chaveLinha: (d) => d.peer_id,
@@ -130,21 +143,21 @@ export default function montar({ ir, assinar }) {
       { class: "dispositivos__permissoes" },
       interruptor({
         rotulo: "Pode me enviar clipboard",
-        descricao: motivoClipboard ?? "O texto que ele copiar chega à caixa desta máquina.",
+        descricao: motivoClipboard,
         marcado: dispositivo.perms.clipboard_in,
         desabilitado: motivoClipboard !== null,
         aoMudar: (valor) => gravarPermissoes({ clipboard_in: valor }),
       }),
       interruptor({
         rotulo: "Pode receber meu clipboard",
-        descricao: motivoClipboard ?? "O texto que você copiar aqui vai para ele.",
+        descricao: motivoClipboard,
         marcado: dispositivo.perms.clipboard_out,
         desabilitado: motivoClipboard !== null,
         aoMudar: (valor) => gravarPermissoes({ clipboard_out: valor }),
       }),
       interruptor({
         rotulo: "Pode controlar meu teclado e mouse",
-        descricao: motivoInput ?? "Confiança total: ele pode digitar e clicar qualquer coisa aqui enquanto estiver autorizado.",
+        descricao: motivoInput,
         marcado: dispositivo.perms.input_in,
         desabilitado: motivoInput !== null,
         aoMudar: async (valor) => {
@@ -171,9 +184,8 @@ export default function montar({ ir, assinar }) {
     const acoes = h(
       "div",
       { class: "dispositivos__acoes" },
-      botao({ rotulo: "Pausar este par", icone: "pausa", desabilitado: !recurso("peer_pause"), "aria-describedby": "dispositivos-pausa-nota" }),
-      notaPausa,
-      h("span", { class: "dispositivos__espaco" }),
+      botao({ rotulo: "Pausar par", icone: "pausa", desabilitado: !recurso("peer_pause"), "aria-describedby": "dispositivos-pausa-nota" }),
+      !recurso("peer_pause") && notaPausa,
       botao({ rotulo: "Reparear", icone: "atualizar", aoClicar: () => ir("pareamento") }),
       botao({
         rotulo: "Revogar",
@@ -193,34 +205,40 @@ export default function montar({ ir, assinar }) {
           lista.recarregar({ silencioso: true });
         },
       }),
+      h("p", { class: "nota" }, "Revogar pede o nome da máquina digitado para confirmar e apaga a chave dela daqui."),
     );
 
     trocar(painel, 
       cartao({
         filhos: [
-          h(
-            "div",
-            { class: "dispositivos__titulo" },
-            h("h2", null, dispositivo.name),
-            h("span", { class: "mono muted" }, dispositivo.short),
-            seloDispositivo(dispositivo.state),
-          ),
+          h("div", { class: "dispositivos__titulo" }, h("h2", null, dispositivo.name), seloDispositivo(dispositivo.state)),
           dispositivo.state === "blocked" && dispositivo.blocked_reason && aviso("erro", h("p", null, dispositivo.blocked_reason)),
           h(
-            "dl",
-            { class: "kv" },
-            h("dt", null, "Endereço"),
-            h("dd", { class: "mono" }, dispositivo.addr ?? "sem endereço"),
-            h("dt", null, "Versão do par"),
-            h("dd", { class: "mono" }, dispositivo.remote_version ?? "desconhecida"),
-            h("dt", null, "Pareado em"),
-            h("dd", null, formatarMomento(dispositivo.paired_at)),
-            h("dt", null, "Módulos do par"),
-            h("dd", null, rotuloModulos(dispositivo.remote_modules)),
-            h("dt", null, "Última atividade"),
-            h("dd", null, indisponivel()),
+            "div",
+            { class: "dispositivos__impressao" },
+            h("p", { class: "nota" }, "Impressão digital"),
+            h("p", { class: "mono" }, dispositivo.short),
           ),
-          h("h3", null, "Permissões que esta máquina concede"),
+          h(
+            "details",
+            { class: "dispositivos__detalhes" },
+            h("summary", null, "Detalhes do par"),
+            h(
+              "dl",
+              { class: "kv" },
+              h("dt", null, "Endereço"),
+              h("dd", { class: "mono" }, dispositivo.addr ?? "sem endereço"),
+              h("dt", null, "Versão do par"),
+              h("dd", { class: "mono" }, dispositivo.remote_version ?? "desconhecida"),
+              h("dt", null, "Pareado em"),
+              h("dd", null, formatarMomento(dispositivo.paired_at)),
+              h("dt", null, "Módulos do par"),
+              h("dd", null, rotuloModulos(dispositivo.remote_modules)),
+              h("dt", null, "Última atividade"),
+              h("dd", null, indisponivel()),
+            ),
+          ),
+          h("h3", null, "Permissões"),
           permissoes,
           acoes,
         ],
@@ -238,9 +256,9 @@ export default function montar({ ir, assinar }) {
       descricao: "Quem pode enviar, quem pode receber e quem pode controlar esta máquina.",
       acoes: [botaoParear()],
     }),
-    lista.no,
-    painel,
+    colunas,
   );
+  colunas.append(lista.no, painel);
 
   return { no, desmontar: cancelar };
 }
