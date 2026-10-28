@@ -4208,3 +4208,63 @@ Todos os nomes desta tabela estão em `crates/clipsync-input/tests/s7_module.rs`
 
 **Fechamento desta base: critérios 1 e 2 Passa; 3 Falha; 4 Falha; 5 Passa com o limite do portal declarado.** O CI já terminou e o job Windows está vermelho. Alterações posteriores da main e correções em andamento de outros agentes não mudam este resultado sobre 8cc14c4.
 
+### S7 · critérios 3 e 4 · ed4b7e1
+
+**Critério 3: Passa. Critério 4: Passa.** Reavaliação de Argus em **2026-10-28**, contrato **v1.32**, sobre **`ed4b7e13f69db954ad5bd25705020b5e5bda775d`**. Os dois achados que reprovaram 8cc14c4 foram corrigidos nesta base. A seção anterior permanece como histórico daquela revisão; este resultado não revalida automaticamente os outros critérios nem substitui o roteiro manual da §13.12.
+
+#### Procedência e resultado das execuções
+
+Nova extração por `git archive ed4b7e1`, em **`~/.cache/argus-s7-ed4b7e1-5c_h7q77/src/`**. SHA-256 do tar: **`c8b7120a4157471cfa04336f9baca6b015bdba1226e22cad37fb727d343ac9e2`**. Os **310 arquivos** foram conferidos contra `source-sha256.json`: nenhum alterado e nenhum arquivo extra, exceto os metadados do índice Git descartável necessário aos scripts. Confirmados como ancestrais da base: **6880b7f, b683c56, d6a2ef7, 0761414 e 205f79b** (`commits.json`).
+
+Comandos locais executados nessa extração com `export PATH=$HOME/.cargo/bin:$PATH`, Rust/Cargo **1.99.1**, `--locked` e o cache compartilhado por `CARGO_TARGET_DIR`. Os totais de suítes dirigidas não representam execução nativa Windows nesta máquina Linux.
+
+| Comando local | Veredito | Resultado |
+| --- | --- | --- |
+| `cargo test --locked -p clipsync-input --test keymap --test winmath --test wincore` | **Passa** | **59 testes**: keymap 10, winmath 27, wincore 22; zero falhas/ignorados. Inclui o novo `coming_back_presses_only_what_is_physically_down`. |
+| `cargo test --locked -p clipsync-ui` | **Passa** | **100 testes**, zero falhas/ignorados. Inclui a regressão da substituição dos itens do diagnóstico. Os testes exclusivamente Windows não são contados como executados aqui. |
+| `cargo test --locked -p clipsync-win` | **Passa nos tipos portáveis** | **2 testes** de redação de debug; zero testes Win32 no host Linux. |
+| `scripts/conferir-unsafe.sh` | **Passa** | Exit 0, `unsafe isolado em crates/clipsync-win/src/ffi.rs: ok`. |
+| `scripts/conferir-privacidade.sh` | **Passa** | Exit 0, `privacidade dos hooks: ok (8 arquivos)`. |
+| `grep -rn INPUT_SUPPORTED crates/` | **Passa** | Exit 1, stdout/stderr vazios. |
+| Busca por `Msg::Stop` ou `blocking_send` no trabalhador Windows | **Passa** | `rg -n 'Msg::Stop\|blocking_send' crates/clipsync-input/src/adapter/win/capture.rs`: exit 1, nenhuma ocorrência. |
+
+**O [CI 40759799821](https://github.com/devkappiushon/clipsync/actions/runs/40759799821) foi aguardado até terminar: `completed/success`, nos dois runners, sobre o SHA exato acima.** O passo de cache Windows também terminou antes do fechamento deste veredito. A prova vem de `gh run view` com JSON e log completo, salvos em `ci-status.json` e `ci.log`; os resultados locais estão em `test-results.json` e nos logs `windows-pure.log`, `ui.log`, `win-types.log`, `unsafe.log` e `privacy.log`.
+
+| Job / alvo | Veredito | Evidência final |
+| --- | --- | --- |
+| Linux, `fmt + clippy + test` | **Passa** | Fmt, clippy, os dois scripts e `cargo test --workspace --locked` verdes. |
+| Windows, `windows build + test` | **Passa** | Clippy do workspace com `--all-targets --locked -- -D warnings`, build de release da CLI, scripts e `cargo test --workspace --locked --no-fail-fast` verdes. |
+| `clipsync-ui` no Windows | **Passa** | **82 aprovados, zero falhas/ignorados**. O teste de diagnóstico anteriormente vermelho passou às **20:14:27 UTC**. |
+| Adaptador Windows | **Passa nos quatro testes novos** | Os quatro nomes da tabela seguinte constam como `ok` no job Windows, às **20:14:07 UTC**; não foram inferidos do resultado Linux. |
+| `clipsync-win` no Windows | **Passa** | **8 unitários e 6 testes Win32**, incluindo pânico dos callbacks, descarte de injetados, ciclo dos hooks e verificação dos handles. |
+
+#### Critério 3 · encerramento, hooks e estado físico
+
+| Item reavaliado | Veredito | Evidência em ed4b7e1 |
+| --- | --- | --- |
+| **6880b7f: parada independente da fila** | **Passa** | `adapter/win/capture.rs:343`: `emit` usa `try_send`; canal fechado termina, canal cheio consulta `Shared.stop` e espera em passos de **2 ms**. `Worker::run` consulta a flag e usa `recv_timeout` de **100 ms** (`:368`). `Msg::Stop` foi removida. Assim, a drenagem de overflow não pode mais consumir o sinal de parada que provocava o achado 1. |
+| **6880b7f: trabalhador termina antes de `stop`/`Drop` devolverem** | **Passa** | `capture.rs:675` e `:700`: os dois caminhos ligam `Shared.stop`, retiram os hooks e aguardam `join`. O teste Windows **`the_worker_leaves_by_the_flag_even_with_everything_full`** (`:803`) inicia entrada e saída cheias, mantém o receptor de saída aberto sem consumir, confirma a thread ainda esperando, liga a flag e exige que ela termine em até 3 s. `ok` no CI. |
+| **b683c56: HooksLost durante parada** | **Passa** | `capture.rs:482`: `recreate_hooks` retorna false imediatamente com `stop=true`. Teste Windows **`a_lost_hook_is_not_recreated_while_stopping`** (`:839`) confirma o retorno e ausência de hook instalado; `ok` no CI. |
+| **b683c56: hook instalado na janela de corrida também sai** | **Passa por leitura da ordem de encerramento** | Depois do `join`, `stop()` faz novo `take/drop` de `shared.hooks` (`:689`), e `Drop` faz o mesmo (`:710`). Nesse ponto o trabalhador já terminou e não pode repor outro hook. Isso cobre a corrida em que ele passou pela guarda antes de a flag ser ligada. O teste anterior cobre a guarda inicial; não força essa segunda janela com hooks reais. |
+| **d6a2ef7: estado antigo não atravessa instâncias** | **Passa** | `Shared::reset_input` (`:117`) zera os cinco words de `held`, `begin` e `ready`; `start_hooks` o chama antes de cada `Hooks::start` (`:213`), inclusive na recriação. Testes Windows **`a_new_hook_instance_forgets_the_keys_the_old_one_held`** (`:763`) e **`resetting_clears_the_flags_of_the_old_capture_too`** (`:791`) passaram. O primeiro simula Win/Alt, remove a closure antiga, reinicia e cruza somente com mouse: o conjunto transportado fica vazio. |
+| **d6a2ef7: reaperto só do estado físico atual** | **Passa** | `end_locally` monta o reaperto com `repress_synths(&reconcile(Held::default()))` (`:324`), sem usar o `Shared.held` antigo. `reconcile` consulta apenas os oito modificadores e cinco botões da API fechada (`:249`). `tests/wincore.rs:513`, **`coming_back_presses_only_what_is_physically_down`**, passou localmente e nos dois CIs: vazio não gera pressionar; modificador e botão entram; letra é descartada. |
+| Keymap, geometria, atalhos e política de HooksLost | **Passa na cobertura automática contratada** | 10 testes de keymap, 27 de winmath e agora 22 de wincore, também verdes no Windows. Permanecem os casos ABNT2/US, DPI, monitor com origem negativa, bordas, toque neutro, estado fixo, debug redigido e limite de três reinícios em 10 s. |
+| Unsafe, privacidade e constante antiga | **Passa nos controles de código** | Scripts verdes localmente e nos dois CIs; 62 construções unsafe encontradas, todas em `clipsync-win/src/ffi.rs`; `INPUT_SUPPORTED` ausente. Continua a ressalva meramente textual: o grep amplo de `allow(unsafe_code)` dá duas linhas, atributo em `ffi.rs:12` e comentário em `Cargo.toml:16`, sem segunda autorização de unsafe. |
+| Handles / C4 | **Passa no teste adotado pelo contrato v1.32** | `ten_thousand_desktop_checks_do_not_leak_handles` passou no Windows às **20:14:38 UTC**. Mantém 200 chamadas de aquecimento, 10.000 chamadas medidas e tolerância de +2 handles; não se declara igualdade exata de contagens, que o log de sucesso não informa. |
+
+**O achado de parada sob saturação da revisão 8cc14c4 está fechado nesta base.** A prova reúne leitura dos caminhos de parada com o teste Windows do trabalhador bloqueado no canal cheio. A guarda contra recriação e a remoção depois do `join` fecham também o S7-08 no escopo inspecionado. O S7-05 fica coberto pelo reset e pela mudança da fonte do reaperto, com as regressões descritas acima.
+
+Mantém-se o limite aceito expressamente na **v1.32, §13.6 e §13.13.21**: não há teste completo do trabalhador com plataforma falsa, percorrendo três quedas reais de Hooks, `Leave`/`ReleaseAll`, a quarta queda e `InputReload`. Os quatro novos testes do adaptador executam no Windows, mas usam eventos construídos e caminhos que não instalam hooks reais; os seis testes de `clipsync-win` cobrem a camada Win32 separadamente. A verificação da limpeza após `join` é por leitura, sem forçar essa corrida no sistema. Esses limites não são apresentados como execução do roteiro manual.
+
+#### Critério 4 · diagnóstico e suíte da UI
+
+| Item reavaliado | Veredito | Evidência em ed4b7e1 |
+| --- | --- | --- |
+| **0761414: UI substitui o diagnóstico fixo pelo estado do agente** | **Passa** | `clipsync-ui/src/diag.rs:202`, `with_agent_state`, remove os itens antigos que têm o mesmo par **área/nome** antes de adicionar os itens calculados. `gather` usa essa função em `:242`. O estado real decide os textos de agente parado, input desligado, ausência de ligação e atalhos ativos. |
+| **0761414: no máximo um item de teclado/atalhos da área input** | **Passa** | Unitário **`the_agent_state_items_replace_the_input_crate_items_of_the_same_name`** (`src/diag.rs:750`) verifica substituição, status/texto e preservação de outra área com nome igual. O teste de integração **`diagnostics_show_the_keyboard_layout_and_on_windows_the_shortcuts`** (`tests/diag.rs:115`) agora verifica a contagem e o estado sem ligação; passou no Linux e no Windows. |
+| **205f79b: diagnose da CLI não anuncia ativação sem conhecer o perfil** | **Passa por leitura, compilação e clippy Windows** | `clipsync-input/src/diag.rs:103` produz **`DiagStatus::Warn`** e o texto condicional **“ativos quando há ligação desta máquina no layout”**, em lugar do `Ok` fixo. Não foi executada uma CLI Windows interativa nesta máquina; a verificação do novo texto é estática. |
+| Suíte inteira de `clipsync-ui` | **Passa** | 100 testes no Linux local, suíte verde no CI Linux e **82 testes no CI Windows**; nenhuma falha. A duplicação que provocava o achado 2 não voltou a ocorrer no teste de integração. |
+| Atalhos, autoteste e flags da §13.11.4 | **Passa** | Conferidos como `ok` no log Windows: `global_shortcuts_need_windows_and_the_input_module`, `self_test_calls_the_input_module_when_it_is_on`, `resume_hotkey_refused_comes_from_the_input_state`, `switch_device_comes_from_the_input_state` e, no proto, `input_state_without_the_s7_fields_decodes_with_their_defaults`. Defaults preservados: recusa false, switch true; features false sem agente. |
+
+**O achado de diagnóstico Windows da revisão 8cc14c4 está fechado. Resultado final em ed4b7e1: critério 3 Passa; critério 4 Passa.** Não foram modificados fontes, iniciado servidor ou repetido o teste manual do app. O CI indicado terminou completamente verde antes deste registro.
+
