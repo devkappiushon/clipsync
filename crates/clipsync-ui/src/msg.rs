@@ -16,7 +16,7 @@ pub const UNEXPECTED_REPLY: &str = "resposta inesperada do agente";
 pub const INVALID_NAME: &str =
     "nome inválido: use de 1 a 64 bytes, sem caracteres de controle ou invisíveis";
 pub const NO_MODULE: &str = "ligue pelo menos um módulo";
-pub const RECREATE_CONFIRM: &str = "este dispositivo já está configurado: recriar troca a identidade, e os pares terão de parear de novo";
+pub const RECREATE_CONFIRM: &str = "este dispositivo já está configurado: recriar troca a identidade e apaga a lista de dispositivos pareados, e os pares terão de parear de novo";
 pub const SELF_TEST_UNSUPPORTED: &str = "sem adaptador nesta plataforma";
 pub const SELF_TEST_MODULE_OFF: &str = "módulo desligado";
 pub const SELF_TEST_MISSING: &str = "teste automático indisponível nesta versão";

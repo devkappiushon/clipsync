@@ -138,6 +138,15 @@ pub(crate) async fn create(ctx: &Ctx, args: OnboardingCreateArgs) -> Result<Crea
     // The running agent holds the old identity: an in_app one stops, an external one is not
     // ours (`agent_external`).
     agent::stop(ctx).await?;
+    if ctx.profile.is_initialized() {
+        // S6-02: every peer pinned the old key, and the old grants (input_in included) must not
+        // carry over to the new identity. Emptied first: a failure below leaves the safe side.
+        let _one = ctx.peers_lock.lock().await;
+        ctx.profile.update_peers(|peers| {
+            peers.peer.clear();
+            Ok::<_, UiError>(())
+        })?;
+    }
 
     let taken = lock(&ctx.pending_identity).take();
     let identity = match taken {

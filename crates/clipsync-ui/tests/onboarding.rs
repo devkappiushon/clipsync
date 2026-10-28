@@ -68,7 +68,14 @@ async fn create_writes_the_identity_shown_by_start_and_starts_the_agent() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_existing_profile_needs_confirmation_and_recreate_changes_the_identity() {
     let dir = tempfile::tempdir().unwrap();
-    let (_, old) = init_profile(dir.path(), "a", CLIPBOARD_ONLY);
+    let (pa, old) = init_profile(dir.path(), "a", CLIPBOARD_ONLY);
+    let (pb, _) = init_profile(dir.path(), "b", CLIPBOARD_ONLY);
+    let all = clipsync_proto::PeerPerms {
+        clipboard_in: true,
+        clipboard_out: true,
+        input_in: true,
+    };
+    pair_files(&pa, &pb, all, all);
     let ui = start(dir.path(), "a").await;
     let s = ok(&ui, json!({ "cmd": "onboarding_start" })).await;
     assert_eq!(s["already_initialized"], json!(true));
@@ -78,6 +85,12 @@ async fn an_existing_profile_needs_confirmation_and_recreate_changes_the_identit
     let e = err(&ui, create("a", false)).await;
     assert_eq!(e.code, "needs_confirmation");
     assert!(e.message.contains("parear de novo"), "{}", e.message);
+    assert!(e.message.contains("apaga a lista"), "{}", e.message);
+    assert_eq!(
+        pa.load_peers().unwrap().peer.len(),
+        1,
+        "nothing changes unconfirmed"
+    );
     assert_eq!(app_state(&ui).await["device"]["short"], json!(old.short()));
 
     let c = ok(&ui, create("a", true)).await;
@@ -88,6 +101,12 @@ async fn an_existing_profile_needs_confirmation_and_recreate_changes_the_identit
         st["device"]["short"],
         json!(fp),
         "the agent runs the new identity"
+    );
+    // S6-02: the old pairings (and their grants) do not carry over.
+    assert!(pa.load_peers().unwrap().peer.is_empty());
+    assert_eq!(
+        ok(&ui, json!({ "cmd": "devices_list" })).await["devices"],
+        json!([])
     );
     ui.shutdown().await;
 }
