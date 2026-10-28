@@ -393,3 +393,93 @@ Nenhum no recorte revisado.
 - **Windows** (`reg.exe`, instalador sem assinatura, `http://tauri.localhost`): nada exercitado.
 - **Front de layout:** só busca de sinks; leitura completa junto com o backend.
 - **Reverificação dos achados:** S6-01 e S6-02 pedem teste de regressão do Rivet; reabro quando o Maestro avisar da correção.
+
+---
+
+# S6 · final (415caf2 e 7c770ef)
+
+**Critério 8 da §12.9 (Sentinel): PASSA.** 0 BLOQUEANTE · 0 MÉDIO · 6 BAIXO abertos · 11 informativos. Os dois MÉDIO da seção anterior (S6-01 e S6-02) estão fechados e provados por execução. Dos 16 achados da seção "S6 · webview e superfície (parcial, 32d7916)", 15 estão fechados e 1 (S6-16) ficou parcial, como BAIXO. A revisão das partes novas (layout e input do Vector, revogação avisada, autoteste do input, recusa registrada do lado recusado) achou 5 BAIXO novos. Nenhum bloqueia o release.
+
+**Base.** Código revisado: 415caf2 (todas as correções do Flux, Pixel e Rivet, mais o Vector e a revogação avisada) e 7c770ef (só core). A HEAD hoje é 512f116: depois de 415caf2 só entraram README, versão 0.2.0, um teste do input, contrato v1.18 e o 7c770ef. `clipsync-ui` e `clipsync-app` ficaram idênticos desde 415caf2.
+
+**Como foi verificado.**
+- Export de `git archive` (não o checkout compartilhado). Cada correção foi conferida no código e, quando dava, repetida com a mesma sonda da rodada anterior (`~/.cache/sentinel-s6-039fd63/`, agora também `sentinel_probe2.rs`), contra o código novo.
+- **Executado:** 9 testes da sonda (7 da rodada anterior, 2 novos) e a suíte do `clipsync-ui` inteira no export de 415caf2: todos os binários de teste passaram, 0 falhas (inclui `tests/layout.rs` com 13 testes e `tests/seguranca_s6.rs`). Os achados marcados "executado" saíram desses testes; os marcados "por leitura" não foram executados.
+- **Não verificado:** o app Tauri continua sem compilar aqui (sem headers do WebKitGTK), então CSP, ACL e bloqueio de navegação foram lidos, não vistos rodando. Windows não foi exercitado. Não testei com um daemon de notificação real. Não forjei pacotes QUIC para o S6-21.
+
+## Conferência das correções
+
+| Achado | Estado | Evidência |
+| --- | --- | --- |
+| S6-01 corrida em `peers.toml` | **Fechado** (executado) | A mesma sonda de 150 rodadas deu 0 pares revogados de volta, 0 permissões perdidas, 0 erros (antes: 136, 3 e 10). `Profile::update_peers` (`profile.rs:572-584`) trava um arquivo e todos os escritores passam por ela: `devices.rs:205` e `:237`, `onboarding.rs:145`, `core/pairing.rs:251`, `core/agent.rs:158`. `write_private` ganhou nome de `tmp` único (`profile.rs:293-313`). |
+| S6-02 recriar perfil | **Fechado** (executado) | Depois de `recreate: true` o par antigo some de `peers.toml` e a identidade muda (`onboarding.rs:136-146`). A lista é apagada antes de gravar a identidade nova, então uma falha deixa o lado seguro. |
+| S6-03 mock no pacote | **Fechado** (leitura) | `ui/` não tem mais `mock*`, `galeria*` nem `componentes.html` (busca no export); eles estão em `ui-dev/`, e `tauri.conf.json`, `build.rs` e `Cargo.toml` não o citam. `api.js:9-35` só importa o simulador em `http://127.0.0.1` ou `localhost` e, fora disso, rejeita com erro visível. O servidor de dev (`scripts/servir-ui-dev.py`) escuta só em 127.0.0.1 e confere o caminho com `realpath`. |
+| S6-04 navegação | **Fechado** (leitura e testes do módulo) | `window.rs:26-35`: sem porta, usuário ou senha; `tauri` só com host `localhost`; `on_new_window` nega tudo. |
+| S6-05 marcação na notificação | **Fechado** (leitura) | `notify_text.rs` escapa `&`, `<` e `>` no Linux, `&` primeiro; título e corpo passam por `for_system` (`app/src/events.rs`). |
+| S6-06 `.desktop` | **Fechado** (executado) | `Launcher::check` recusa caractere de controle e caminho que não seja UTF-8, e `enable_in` chama `check` (`autostart.rs:147-150`). `$APPIMAGE` relativo é ignorado (a sonda caiu no executável). Resíduo: `Launcher::new(...).desktop_entry()` chamado direto ainda monta o texto sem checar, mas nenhum caminho de gravação o usa sem passar por `check`. |
+| S6-07 gravação de arquivos | **Fechado** (executado) | `ui.toml` sai com modo 600, e o symlink plantado em `ui.toml.tmp-*` não foi seguido (a vítima ficou `ORIGINAL`). `fsio::write_atomic` cria o `tmp` com `O_EXCL`, fixa o modo e faz `fsync`. O `.desktop` sai 644 de propósito. |
+| S6-08 `prefs_set` parcial | **Fechado** (executado) | Com `ui.toml` impossível de gravar, o erro volta e o `.desktop` não é criado (`prefs.rs:196-250`, `undo_autostart`). |
+| S6-09 reload falho | **Fechado** (leitura e teste) | `reload_after_save` tenta duas vezes e responde `config` com `details.saved: true` e o texto "salvo, mas o agente ainda não aplicou" (`devices.rs:147-155`). |
+| S6-10 cancelar em `waiting_peer` | **Fechado** (leitura) | `pair_cancel` nessa etapa responde `wrong_step` (`pairing.rs`, `PAIR_ALREADY_DECIDED`); o fim fica com a outra máquina. |
+| S6-11 janela de pareamento | **Fechado** (leitura) | `window_secs` agora vai de 1 a 120. `pareamento.js` cancela a tentativa ao sair da tela em `listening`, `connecting`, `code` e `permissions`, e não em `waiting_peer`. |
+| S6-12 `event_id` | **Fechado** (executado) | `"+f"` repetido 16 vezes agora é recusado (`api.rs`, dígito a dígito). |
+| S6-13 notificações | **Fechado** (leitura) | `features.os_notifications` é verdadeiro (`status.rs`), então os interruptores funcionam. A casca só mostra o tipo ligado e, sem preferências lidas, mostra nada (`notify_prefs.rs`, falha fechada). |
+| S6-14 pacote de suporte | **Fechado** (executado) | Arquivo com modo 600, `create_new`, nome com sufixo `-2` a `-9` se existir, e o texto gravado é igual ao da prévia (a sonda deu `true`; antes `false`). A prévia fica guardada por 10 minutos por perfil. |
+| S6-15 redação | **Fechado** (leitura e execução) | Nomes e ids com 4 ou mais caracteres saem em qualquer lugar do texto; os curtos saem como palavra isolada, e `-`, `_`, `.` contam como separador (`diag.rs:309-345`). A sonda não achou `ana` nem `casa` no arquivo. |
+| S6-16 autoteste | **Parcial** (leitura e teste) | Um `Resume` que falha agora aparece no resultado da tela (`onboarding.rs`, `SELF_TEST_STILL_PAUSED`). Continuam abertos: perda de conteúdo que não é texto, e o comando poder ser chamado a qualquer hora. Vira BAIXO residual (abaixo). |
+| I-S6-1 capabilities | **Fechado** (leitura) | `capabilities/default.json` agora tem exatamente `allow-clipsync`, `core:event:allow-listen` e `core:event:allow-unlisten`. O front só usa `invoke` e `event.listen`. |
+
+## Partes novas revisadas
+
+- **Layout e input do Vector (`layout.rs`, `input.rs`, `clipsync-input/src/{layout,self_test}.rs`).** Estado: **sem bloqueante e sem médio**; achei três BAIXO (S6-17, S6-18, S6-19).
+  - Certo e conferido: `UiRequest` recusa campo desconhecido; ids de par passam por `known_peer` (64 hex e par do perfil); monitor com no máximo `MAX_NAME_BYTES`; `from` e `to` finitos e dentro de 0..1; ordem de validação da §12.5; `hotkey` de 1 a 9; `dead_corner_px` até 32; teto de ligações (`MAX_LAYOUT_LINKS`); `x` e `y` com teto de 1.000.000 em `set_device`; `base_rev` conferido dentro do lock (`WRITE`, um escritor por vez); `layout.validate()` e `ensure_no_manual_barriers` antes de gravar; `reload` falho vira `applied_but_not_loaded` com o arquivo salvo; todo nome e monitor de par passa por `clean`; `input_test` limita a 5 a 60 s, exige par pareado e conectado e vira `denied`, `offline` ou `not_linked` por texto fixo; `lock_to_screen` e `switch_to_device` só falam com o módulo. A oferta de layout de um par chega como `pending_offer` e só é gravada por `layout_offer_answer` com `accept: true`; `LayoutOffer` e `Zones` exigem `input_in`, como na tabela já verificada pelo Argus.
+  - O autoteste do input só pergunta aos portais, sem diálogo, sem sessão, sem mexer em cursor ou tecla (`self_test.rs:1-18`, `:112-135`).
+  - Front de layout: texto de par só por `textContent` ou `aria-label`; sem `innerHTML`, `style=`, `fetch` nem `window.open` (busca nos 3 sinks de novo, nada).
+- **Revogação avisada (`transport.rs`, `agent.rs`, `control.rs`): sem achado.** Estado: **ok**. O par removido sai do id autenticado da conexão e não do conteúdo da mensagem (`control_task(peer, ...)`, `revoked_by(peer)`), então um par só consegue esquecer a si mesmo. `Bye{Revoked}` só vai a par com versão 2. Se `peers.toml` não grava, a revogação vale até reiniciar (falha para o lado seguro). Executado (`sentinel_probe2`): B muda a permissão que dá a A e A **não** o esquece; B revoga A e, em até 4 s, A e B não têm mais um ao outro em `peers.toml`. O canal de controle agora abre antes da malha, e um agente que falha ao subir desfaz a publicação do socket (`Published::drop`). `wait_port_released` só tenta fazer `bind` e solta a porta na hora.
+- **Recusa registrada do lado recusado (7c770ef).** Estado: **um BAIXO** (S6-21). O texto vem de `PEER_REFUSED_US` (fixo, sem dado do par), uma entrada por par, e o nome sai por `clean` e pelo escape de notificação.
+
+## BAIXO abertos
+
+**S6-16 (residual) · O autoteste do clipboard escreve no clipboard real.** `crates/clipsync-ui/src/onboarding.rs:240-322`, `crates/clipsync-clipboard/src/self_test.rs:49-113`.
+- O texto anterior volta; imagem ou arquivo não voltam, e uma cópia feita durante a janela de até 1,5 s é perdida. No Windows o texto devolvido entra no histórico e na nuvem (S5-02). `onboarding_self_test` ainda pode ser chamado a qualquer hora. O agente fica pausado durante o teste, então nada vai para os pares.
+- Correção: pedir confirmação na tela quando o clipboard tiver conteúdo, ou recusar fora do onboarding; escrever a perda de conteúdo que não é texto no `detail` do resultado.
+
+**S6-17 · `layout.toml` é gravado sem `create_new`, com modo 664 e segue symlink (executado).** `crates/clipsync-input/src/layout.rs:465-479`.
+- `Layout::write` usa `File::create` num `layout.toml.tmp` de nome fixo. Prova: com um symlink em `layout.toml.tmp` apontando para um arquivo da vítima, `layout_set_device` respondeu `ok` e sobrescreveu a vítima; o arquivo saiu com modo 664. Mesmo padrão do S6-07, só que no crate do Vector. O diretório do perfil é 0700, então só o mesmo usuário planta o link: baixo.
+- Correção: gravar por `create_new` com modo 0600 e nome único, como `write_private` do core ou `fsio::write_atomic` do crate da UI (mover para um crate comum).
+
+**S6-18 · `layout_offer_answer` aceita "a oferta pendente", sem dizer qual (por leitura).** `crates/clipsync-ui/src/layout.rs:1155-1180`, `crates/clipsync-input/src/module.rs:853-857`.
+- O módulo guarda uma só oferta e a substitui por qualquer `LayoutOffer` novo (de qualquer par com `input_in`). O comando não leva o par nem o `rev` da oferta que a tela mostrou. Se outra oferta chegar entre a tela e o clique, o usuário aceita a oferta nova sem ter visto. Só pares a quem o usuário já deu `input_in` (confiança total) podem ofertar, por isso é baixo.
+- Correção: `layout_offer_answer {accept, from_peer_id, rev}` e responder `no_offer` ou `stale_offer` quando a pendente for outra.
+
+**S6-19 · Aceitar uma oferta contorna o limite de posição do `set_device` (por leitura).** `crates/clipsync-ui/src/layout.rs:1127-1136` contra `:986-989`; `clipsync-input/src/layout.rs:364-381` (`validate` não confere `x` e `y`).
+- `apply_offer` copia `x` e `y` do remetente (só encaixa na malha de 16 px), sem o teto de 1.000.000. Coordenadas absurdas deixam um dispositivo fora da tela do layout, difícil de achar e de mover de volta. Sem efeito sobre o input.
+- Correção: aplicar o mesmo teto em `apply_offer`, ou melhor, em `Layout::validate`, que serve aos dois caminhos.
+
+**S6-20 · A casca ignora o tipo `device_removed` (por leitura).** `crates/clipsync-app/src/notify_prefs.rs` (`allows`), `crates/clipsync-ui/src/events.rs:338-346`.
+- A UI emite a notificação "Dispositivo removido" (segue a preferência `block`), mas `NotifyPrefs::allows` só conhece `item_received`, `device_connected` e `block`; o resto é negado. Resultado: ninguém é avisado de que um par o removeu. Falha para o lado seguro, mas a função não chega ao usuário.
+- Correção: `"device_removed" => self.block` em `allows`, com teste.
+
+**S6-21 · O registro "recusou a conexão" não exige que o certificado do par tenha sido verificado (por leitura, não executado).** `crates/clipsync-core/src/transport.rs:683-688` (ramo de erro de `dial_once`), `:720-725`, `crates/clipsync-core/src/tls.rs:331-334`.
+- `refused_our_certificate` compara só o texto fixo do `CONNECTION_CLOSE`. No ramo de erro de discagem a conexão ainda não passou pelo fim do handshake, e o texto não é autenticado. Quem responder no endereço de um par (IP reaproveitado) ou injetar um pacote de fechamento consegue gerar o bloqueio falso "NOME recusou a conexão: este dispositivo não está mais pareado lá" e, com `block` ligado, a notificação de sistema. Efeito: informação falsa que empurra o usuário a reparear; não dá acesso a nada. Não forjei pacote para confirmar; a leitura mostra que o ramo não consulta se o verificador aceitou o certificado do par.
+- Correção: registrar só no ramo pós-handshake (`:720-725`, com o par autenticado) ou exigir que o `PinVerifier` tenha aceitado o certificado antes; se não der, trocar o texto por "possível recusa" e não notificar.
+
+## Informativos
+
+- **I-S6-2 · `app.security.freezePrototype: true`** continua fora de `tauri.conf.json`. Sem custo.
+- **I-S6-3 · Os portões de confirmação são do front** (`acknowledge_full_trust`, `recreate`, nome digitado ao revogar). O revogar envia `dispositivo.name`, não o texto digitado (`dispositivos.js:189`).
+- **I-S6-4 · `clean` não cobre todo caractere de formatação e não limita tamanho.** Executado de novo: `unknown_command` ecoa 200.022 bytes e `bad_request` ecoa 50.058 bytes em `details`. Só o front chama.
+- **I-S6-5 · A chave privada fica em memória sem limpeza** em `pending_identity` (`lib.rs`, `onboarding.rs:91-99`). O `Debug` é redigido.
+- **I-S6-6 · Travas seguradas durante E/S.** O `Mutex` de preferências fica preso durante `autostart::set` e a gravação (`prefs.rs:196-220`); o do agente, até 15 s em `launch`. Somou-se o `File::lock` de `update_peers`, que bloqueia a thread do runtime enquanto outro processo grava `peers.toml` (curto).
+- **I-S6-7 · `reg.exe` ainda é chamado pelo nome** (`autostart.rs`, Windows). Usar `%SystemRoot%\System32\reg.exe`. Não exercitado.
+- **I-S6-8 · S1-03 e S1-04 continuam alcançáveis pela tela.** Parear com um endereço conhecido substitui o par sem avisar no `pair_result`, e a sonda QUIC com ALPN errado encerra o anfitrião (a janela agora dura no máximo 120 s).
+- **I-S6-9 · O texto de clipboard dos pares passa pelo processo da UI a cada segundo** (`events.rs`, `clipboard::inbox`); é descartado na hora e nenhum evento o leva.
+- **I-S6-11 · Nomes curtos na redação (S6-15, resíduo).** Nome com até 3 caracteres só sai como palavra isolada, então `ana1` ou `pc2` dentro de um texto passam. Os textos do pacote são gerados pelo crate e hoje não os trazem.
+- **I-S6-12 · O servidor de dev da UI** (`scripts/servir-ui-dev.py`) escuta só em 127.0.0.1 e não entra no pacote, mas serve `ui-dev/` com `Cache-Control: no-store`; não o deixe rodando em máquina compartilhada.
+- **I-S6-13 · `ui/README.md` vai no pacote** (o `frontendDist` embute a pasta inteira). Só texto, sem risco.
+
+## Veredito do critério 8
+
+**PASSA.** CSP idêntica à do contrato; capabilities no mínimo que o front usa; `build.rs` com um comando; navegação restrita à origem exata do app; nenhuma URL remota; sem `devtools`; o mock e a galeria fora do pacote com falha fechada; entrada validada, com campo desconhecido recusado e limites nos comandos do layout e do input; texto de par limpo no crate e só por `textContent` no front; gravações por arquivo novo com `fsync` e rename; nada de segredo em log, em `UiError` ou em evento. Nenhum BLOQUEANTE nem MÉDIO aberto. Recomendo corrigir S6-17, S6-20 e S6-21 antes da tag v0.2.0 (cada um é uma mudança pequena), mas nenhum dos seis BAIXO abertos impede o release.
+
+**O que não cobre este veredito.** O app Tauri em execução (CSP, ACL e navegação lidas, não vistas), o Windows, o daemon de notificação real e o instalador. O critério 6 (app real) é do Maestro e do Argus.
