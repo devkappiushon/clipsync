@@ -1,3 +1,121 @@
-// Mock do domínio diagnostico. Registra os comandos com registrar() de ./nucleo.js.
+// Mock do domínio diagnóstico: itens por área (sistema, adaptadores, rede, conflitos), rede com pares,
+// últimos bloqueios (sem conteúdo) e pacote de suporte com prévia redigida e exportação para Downloads.
 
-export {};
+import { EU } from "./dados.js";
+import { atraso, cenario, erro, estado, plataforma, registrar } from "./nucleo.js";
+
+const AGORA = Date.now();
+const MIN = 60_000;
+
+function itensLinux() {
+  return [
+    { area: "sistema", name: "Sistema operacional", status: "ok", detail: "Ubuntu 26.04.1 LTS · GNOME 50.1 · Wayland" },
+    { area: "sistema", name: "XWayland", status: "ok", detail: "DISPLAY=:0, servidor X11 respondendo" },
+    { area: "sistema", name: "Portais", status: "ok", detail: "InputCapture v1 · RemoteDesktop v2 (teclado, ponteiro, touchscreen)" },
+    { area: "sistema", name: "Monitores", status: "ok", detail: "eDP-1 1920×1080 @ 0,0 (escala 1,5)" },
+    { area: "adaptadores", name: "Clipboard", status: estado.modulos.clipboard ? "ok" : "missing", detail: estado.modulos.clipboard ? "x11-xfixes · data-control ausente no compositor: observação pela ponte XWayland · plataforma validada" : "Módulo desligado nesta máquina." },
+    { area: "adaptadores", name: "Captura de entrada", status: estado.modulos.input ? "ok" : "missing", detail: estado.modulos.input ? "portal-inputcapture · 1 diálogo por sessão · experimental" : "Módulo desligado nesta máquina." },
+    { area: "adaptadores", name: "Emulação de entrada", status: estado.modulos.input ? "ok" : "missing", detail: estado.modulos.input ? "portal-remotedesktop · token salvo, sem novo diálogo" : "Módulo desligado nesta máquina." },
+    { area: "conflitos", name: "Input Leap", status: "warn", detail: "Em execução (Flatpak, cliente de 192.168.115.30): os dois podem disputar teclado e mouse. Pause um deles." },
+    { area: "conflitos", name: "Barrier", status: "ok", detail: "Não detectado." },
+    { area: "conflitos", name: "Gerenciador de clipboard", status: "warn", detail: "GPaste ativo: ele pode reescrever o clipboard logo depois de uma aplicação. Se um item sumir, desligue o GPaste." },
+  ];
+}
+
+function itensWindows() {
+  return [
+    { area: "sistema", name: "Sistema operacional", status: "ok", detail: "Windows 11 Pro 24H2 (build 26100)" },
+    { area: "sistema", name: "Sessão", status: "ok", detail: "Área de trabalho interativa, sem RDP" },
+    { area: "sistema", name: "Monitores", status: "ok", detail: "\\\\.\\DISPLAY1 2560×1440 @ 0,0" },
+    { area: "adaptadores", name: "Clipboard", status: "ok", detail: "win32 · plataforma experimental" },
+    { area: "adaptadores", name: "Captura de entrada", status: "missing", detail: "Teclado e mouse ainda não funcionam no Windows." },
+    { area: "conflitos", name: "Mouse Without Borders", status: "ok", detail: "Não detectado." },
+  ];
+}
+
+function rede() {
+  const pares = estado.dispositivos.map((d) => ({ peer_id: d.peer_id, name: d.name, state: d.state, addr: d.addr }));
+  return {
+    listen: "0.0.0.0:47800",
+    addresses: ["192.168.115.12:47800", "10.8.0.3:47800"],
+    peers: pares,
+  };
+}
+
+function bloqueios() {
+  if (cenario === "vazio") return [];
+  const casa = estado.dispositivos.find((d) => d.name === "pc-de-casa");
+  const antigo = estado.dispositivos.find((d) => d.name === "notebook-antigo");
+  return [
+    { at_unix_ms: AGORA - 28 * MIN, peer_id: casa?.peer_id ?? null, peer_name: "pc-de-casa", module: "clipboard", reason: "Oferta recusada: malha pausada." },
+    { at_unix_ms: AGORA - 3 * 60 * MIN, peer_id: antigo?.peer_id ?? null, peer_name: "notebook-antigo", module: "input", reason: "Par sem permissão de controle tentou entrar." },
+    { at_unix_ms: AGORA - 26 * 60 * MIN, peer_id: null, peer_name: null, module: null, reason: "Conexão de 192.168.115.90 recusada: chave desconhecida." },
+  ];
+}
+
+const IP = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g;
+
+/** Pacote de suporte redigido como o crate faz: ids, nomes e IPs saem; o texto nunca leva conteúdo. */
+function pacoteSuporte() {
+  const contagem = { peer_id: 0, peer_name: 0, ip: 0, device_name: 1 };
+  const semIp = (texto) =>
+    texto.replace(IP, () => {
+      contagem.ip += 1;
+      return "[ip removido]";
+    });
+  const pares = estado.dispositivos.map((d, i) => {
+    contagem.peer_id += 1;
+    contagem.peer_name += 1;
+    return semIp(`par ${i + 1}: [nome removido] · [id removido] · ${d.state} · ${d.addr}`);
+  });
+  const blocos = bloqueios().map((b) => {
+    if (b.peer_id) contagem.peer_id += 1;
+    if (b.peer_name) contagem.peer_name += 1;
+    return semIp(`${new Date(b.at_unix_ms).toISOString()} · ${b.peer_name ? "[nome removido]" : "sem par"} · ${b.module ?? "geral"} · ${b.reason}`);
+  });
+  const linhas = [
+    "ClipSync 0.2.0 · pacote de suporte",
+    `plataforma: ${plataforma}`,
+    "dispositivo: [nome removido] · id: [removido]",
+    `agente: ${estado.agente} · pausado: ${estado.pausado ? "sim" : "não"}`,
+    `módulos: clipboard=${estado.modulos.clipboard ? "ligado" : "desligado"} input=${estado.modulos.input ? "ligado" : "desligado"}`,
+    "",
+    "[sistema]",
+    ...(plataforma === "linux" ? itensLinux() : itensWindows()).map((i) => semIp(`${i.area}/${i.name}: ${i.status} · ${i.detail}`)),
+    "",
+    "[rede]",
+    semIp(`escuta: ${rede().listen} · endereços: ${rede().addresses.join(", ")}`),
+    ...pares,
+    "",
+    "[últimos bloqueios]",
+    ...blocos,
+    "",
+    "Não entram: chave privada, peers.toml, portal-tokens.toml, conteúdo de clipboard.",
+  ];
+  const redactions = Object.entries(contagem)
+    .filter(([, count]) => count > 0)
+    .map(([kind, count]) => ({ kind, count }));
+  return { text: linhas.join("\n"), redactions };
+}
+
+registrar({
+  diagnostics_get: () => ({
+    items: plataforma === "linux" ? itensLinux() : itensWindows(),
+    network: rede(),
+    blocks: bloqueios(),
+  }),
+
+  support_bundle_preview: () => pacoteSuporte(),
+
+  support_bundle_export: async () => {
+    await atraso(700);
+    if (cenario === "estados") throw erro("io", "Não foi possível gravar em Downloads: pasta sem permissão de escrita.");
+    const texto = pacoteSuporte().text;
+    const carimbo = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+    const pasta = plataforma === "windows" ? "C:\\Users\\joao\\Downloads\\" : "/home/joao/Downloads/";
+    return { path: `${pasta}clipsync-suporte-${carimbo}.txt`, bytes: new TextEncoder().encode(texto).length };
+  },
+});
+
+// EU fica importado para o nome não vazar no texto: o pacote nunca o inclui.
+void EU;
