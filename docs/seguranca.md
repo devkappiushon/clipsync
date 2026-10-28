@@ -270,3 +270,126 @@ S1-04 pede mudança de contrato (§5.3: o que conta como "tentativa"). Decisão 
 3. Conta B: `$p=[IO.Pipes.NamedPipeClientStream]::new('.','clipsync-<hex>',[IO.Pipes.PipeDirection]::InOut); $p.Connect(1000)` deve dar `UnauthorizedAccessException` (confirma que não há escrita).
 4. Conta B: o mesmo com `PipeDirection]::In`. Se conectar, S5-04 está confirmado; se der erro, a DACL é mais fechada que a documentada e o S5-04 cai para informativo.
 5. Conta A: `taskkill /f /im clipsync.exe`. Conta B: crie `[IO.Pipes.NamedPipeServerStream]::new('clipsync-<hex>')`. Conta A: `echo teste | clipsync send --stdin`. Se B recebe o quadro, S5-01 está confirmado.
+
+---
+
+# S6 · webview e superfície (parcial, 32d7916)
+
+**Veredito parcial (critério 8 da §12.9): 0 BLOQUEANTE · 2 MÉDIO · 14 BAIXO · 10 informativos.** Nenhum achado bloqueia a S6 sozinho. Os dois MÉDIO devem ser corrigidos antes do release v0.2.0, porque ambos deixam com acesso um par que o usuário quis remover. **Não encerra o critério 8:** o layout e o input do Vector (`layout.rs`, `input.rs`, commit 32d7916) chegaram durante a revisão e ficam de fora, e a revogação avisada ao par (contrato v1.16) ainda não existe (ver "Pendente").
+
+**Base.** Pedido em 5a55688, reaberto em 4c1eaed (com `devices.rs` e `pairing.rs`) e feito sobre a HEAD, que andou durante o trabalho: 4c1eaed, 039fd63, 3c614e8, 2aeb1c0, 32d7916. Todo arquivo revisado é idêntico em 2aeb1c0 e 32d7916; o último commit mexeu só em `layout.rs`, `input.rs` e `tests/layout.rs`. Entrou no caminho: a casca ligada ao `clipsync-ui` real (81b7e49), a tela Preferências (5b8fea1), o clipboard, o diagnóstico e o autoteste do clipboard (2aeb1c0).
+
+**Como foi verificado.**
+- Leitura integral, num export de `git archive` (não no checkout compartilhado), de `tauri.conf.json`, `capabilities/default.json`, `build.rs` e `src/*.rs` do app; de `clipsync-ui/src/{lib,api,agent,status,onboarding,devices,pairing,clipboard,diag,prefs,autostart,events,msg}.rs`; de `profile.rs` e `pairing.rs` do core; de `self_test.rs` do clipboard; e de `ui/js/{api,dom,estado,app,areas}.js` mais as telas de pareamento, dispositivos, diagnóstico e preferências. `clipboard.js` e `layout.js`: busca de sinks e leitura do trecho do preview.
+- Código-fonte de `tauri-2.12.5` e `tauri-plugin-notification-2.7.0` no cache do Cargo, para saber o que `core:default` e `notification:default` liberam e se o corpo da notificação é escapado.
+- **Executado:** uma sonda descartável (7 testes, `cargo test -p clipsync-ui --test sentinel_probe`, todos passando) com agentes reais em perfis temporários. Ela fica fora do repositório, em `~/.cache/sentinel-s6-039fd63/` (`sentinel_probe.rs` e `probe.log`). Os achados marcados "executado" saíram dela; os marcados "por leitura" não foram executados.
+- **Não verificado:** o app Tauri não compila nesta máquina (sem headers do WebKitGTK), então CSP, ACL e bloqueio de navegação foram lidos, não vistos rodando. Windows (`reg.exe`, instalador) não foi exercitado. A suíte de testes do próprio projeto não foi rodada por mim.
+
+## BLOQUEANTE
+
+Nenhum no recorte revisado.
+
+## MÉDIO
+
+**S6-01 · Corrida em `peers.toml`: um par revogado pode voltar sozinho (executado).** `crates/clipsync-ui/src/devices.rs:183-208` (`set_perms`) e `:211-223` (`revoke`), `crates/clipsync-core/src/pairing.rs:248-257` (`save` do pareamento), `crates/clipsync-core/src/profile.rs:291-308` (`write_private`), `:483-497` (`set_clipboard_mode`) e `:556-559` (`save_peers`).
+- Todo comando que muda `peers.toml` carrega, altera e grava sem trava. A gravação passa por `write_private` com `sync_all`, então a janela entre a leitura e o `rename` dura milissegundos. Duas chamadas concorrentes perdem uma das alterações, e o Tauri roda os comandos em paralelo.
+- Prova: `device_revoke` de B e `device_set_perms` de C em paralelo, 150 rodadas, runtime multi-thread. O par B revogado reapareceu em `peers.toml` em **136** rodadas, com o `revoke` respondendo `removed: true`. A permissão de C se perdeu em 3 rodadas e 10 chamadas falharam com erro de gravação, porque o `tmp` tem nome fixo por processo (`tmp-<pid>`).
+- Efeito: o usuário vê "revogado", mas o par continua com a chave fixada e as permissões antigas, inclusive `input_in`. O mesmo vale para um pareamento que termina enquanto o usuário mexe numa permissão. Em uso normal a janela é pequena, mas é uma falha de revogação sem aviso.
+- Correção: (1) uma função única no `Profile`, `update_peers(|peers| ...)`, que pega um lock de arquivo (`File::lock`, estável no Rust 1.89, sem dependência nova) e um `tokio::sync::Mutex` no `Ctx`, e lê, aplica e grava dentro do lock; `devices.rs`, `pairing::save` do core e a CLI passam a usar só ela. (2) Nome de `tmp` único por gravação (contador ou aleatório). (3) Teste de regressão com o roteiro da sonda.
+
+**S6-02 · Recriar o perfil mantém `peers.toml` com as permissões antigas, inclusive `input_in` (executado).** `crates/clipsync-ui/src/onboarding.rs:119-165`, `crates/clipsync-core/src/profile.rs:439-441`.
+- `onboarding_create` com `recreate: true` troca chave e certificado, mas `init_with` só cria `peers.toml` se ele não existir. A mensagem e o contrato dizem que "os pares terão de parear de novo", o que sugere que eles somem.
+- Prova: perfil A com o par B (`clipboard_in`, `clipboard_out` e `input_in` ligados), `onboarding_create` com `recreate: true`: a identidade mudou e B continuou em `peers.toml` com `input_in = true`.
+- Efeito: um par honesto não conecta mais, porque fixou a chave antiga. Um par perdido ou comprometido, que ignora a fixação, continua aceito pela nova identidade com controle de teclado e mouse. Quem recria o perfil costuma estar reagindo a um problema, que é o caso em que isso mais pesa.
+- Correção: com `recreate` verdadeiro, gravar um `peers.toml` vazio e dizer isso na tela de confirmação (guardar o antigo como `peers.toml.bak` com modo 0600 só se o usuário pedir). Teste: depois do recreate, `devices_list` vem vazio.
+
+## BAIXO
+
+**S6-03 · O mock entra no pacote e o app cai nele se `window.__TAURI__` faltar.** `crates/clipsync-app/ui/js/api.js:9-12` e `:69-72`, `crates/clipsync-app/tauri.conf.json:6` (`frontendDist: ./ui`), `ui/mock.js`, `ui/mock/*.js`.
+- Respostas ao item 2: o mock só é importado por `import("../mock.js")` quando `window.__TAURI__` é falso. `?cenario=` só é lido dentro do próprio mock (`mock/nucleo.js:6`), nunca antes dele. Com `withGlobalTauri: true`, dentro do Tauri o objeto existe, então nenhum dado do mock é usado e o mock não está no caminho de nenhum comando real (o `invoke` do mock só mexe em estado em memória). Isso vale por leitura; não vi o app rodar.
+- A trava é uma só. Se a injeção do `__TAURI__` falhar, a interface mostra pares e dados inventados sem aviso, e o usuário pode agir sobre eles achando que são reais (fail-open). Além disso `mock.js`, `mock/`, `componentes.html`, `js/galeria.js` vão no binário, porque o `frontendDist` embute a pasta inteira.
+- **O mock precisa sair do pacote.** Correção: (1) mover mock, galeria e página de componentes para fora de `ui/` (por exemplo `ui-dev/`) ou gerar um `frontendDist` filtrado no build; (2) em `api.js`, se `location.protocol === "tauri:"` ou `location.hostname === "tauri.localhost"` e `__TAURI__` não existir, rejeitar com erro visível em vez de importar o mock.
+
+**S6-04 · O filtro de navegação é mais largo que o necessário.** `crates/clipsync-app/src/window.rs:26-32`.
+- `"tauri" => true` aceita qualquer host, e `http(s)://tauri.localhost` aceita qualquer porta e credencial na URL. Os testes (`:58-71`) só cobrem domínio externo, `file:` e `javascript:`. Não há `on_new_window`. O front não tem links externos nem `window.open` (busca feita) e a CSP bloqueia frames, então hoje não há caminho de uso.
+- Correção: aceitar só `tauri://localhost` e `http(s)://tauri.localhost` com `port().is_none()` e `username().is_empty()`; registrar `on_new_window` negando tudo; ampliar os testes com porta, `user@host` e `tauri://outro`.
+
+**S6-05 · Nome de par entra sem escape no corpo da notificação do sistema (por leitura; depende do daemon).** `crates/clipsync-ui/src/events.rs:328-349` e `:358-364`, `crates/clipsync-ui/src/msg.rs:46-63`, `crates/clipsync-app/src/events.rs:74-79`; `tauri-plugin-notification-2.7.0/src/desktop.rs:492-493` passa o corpo direto ao `notify-rust`.
+- `clean` e `validate_device_name` aceitam `<`, `>` e `&`. No Linux, daemons que interpretam a marcação do freedesktop (o GNOME mostra `<b>`, `<i>`, `<a href>`) podem desenhar o nome de um par pareado como texto formatado ou link clicável nas notificações "Bloqueio", "está conectado" e "enviou N bytes". Não testei com um daemon real.
+- Correção: no Linux, escapar `&`, `<` e `>` em título e corpo antes de `show()` (em `notify`, na casca, com `cfg(target_os = "linux")`). No Windows o texto não é interpretado, então não escapar lá.
+
+**S6-06 · O `.desktop` do autostart aceita quebra de linha no caminho e `$APPIMAGE` relativo (executado).** `crates/clipsync-ui/src/autostart.rs:53-56`, `:92-108`, `:121-130`.
+- `desktop_quote` escapa `"`, `` ` ``, `$`, `\` e `%`, mas não `\n` nem `\r`. Prova: `Launcher::new("/tmp/x\nExec=/tmp/evil\nX-Injected=1").desktop_entry()` gerou **duas** linhas `Exec=` e uma chave injetada. `from_env` aceita `$APPIMAGE=app.AppImage` (relativo) e grava `"app.AppImage" --hidden`, que o ambiente gráfico resolve a partir de outro diretório. Exige controle do ambiente do processo ou um diretório de instalação com nome malicioso, ou seja, quem já executa como o usuário. Persistência no login é justamente o que o autostart faz, por isso registro.
+- Correção: recusar (erro `io` em português) caminho que não seja UTF-8, que tenha caractere de controle ou que não seja absoluto; checar que `$APPIMAGE` é arquivo regular antes de gravar.
+
+**S6-07 · Gravação de `ui.toml` e do `.desktop` sem `create_new`, sem modo 0600 e sem `fsync` (executado).** `crates/clipsync-ui/src/prefs.rs:153-164`, `crates/clipsync-ui/src/autostart.rs:121-130`.
+- Os dois usam `fs::write` num `tmp` de nome previsível, que segue symlink. Prova: com um symlink em `ui.toml.tmp-<pid>` apontando para um arquivo da vítima, `prefs_set` respondeu `ok` e sobrescreveu a vítima. Os arquivos saíram com modo 664 (umask 002 aqui). Não há segredo neles e o diretório do perfil é 0700, então só o mesmo usuário planta o link: baixo. O padrão certo já existe em `write_private` (`profile.rs:291`).
+- Correção: exportar e reaproveitar `write_private` do core nos dois; no `.desktop`, abrir com `create_new` e modo 0644 explícito.
+
+**S6-08 · `prefs_set` pode dar erro depois de já ter mudado o autostart (executado).** `crates/clipsync-ui/src/prefs.rs:196-213`.
+- A ordem é autostart primeiro, `ui.toml` depois. Prova: com `ui.toml` impossível de gravar, `prefs_set {autostart: true, appearance}` devolveu erro **e** criou o `.desktop`. O usuário lê "não foi possível salvar" e fica com início automático ligado, que é o item de consentimento explícito (§12.5, "padrão desligado").
+- Correção: se a gravação de `ui.toml` falhar, desfazer o autostart (voltar ao estado anterior) antes de responder o erro.
+
+**S6-09 · Gravação feita, mas o `ReloadPeers` falha: erro na tela e agente com a regra antiga (por leitura).** `crates/clipsync-ui/src/devices.rs:198-199`, `:220-221` e `:131-141`.
+- `set_perms` e `revoke` gravam `peers.toml` e só depois pedem o reload. Qualquer erro que não seja "agente parado" volta ao front como falha, mas o arquivo já mudou. No `revoke`, o par removido do arquivo segue conectado no agente até ele recarregar ou reiniciar.
+- Correção: se o reload falhar depois da gravação, responder com código próprio (`reload_failed`, com `details.saved: true`) e a tela dizer "salvo, mas o agente ainda não aplicou: reinicie o agente"; tentar o reload mais uma vez antes de desistir.
+
+**S6-10 · Cancelar em `waiting_peer` pode deixar o par gravado e o resultado dizer `cancelled` (por leitura).** `crates/clipsync-ui/src/pairing.rs:351-358` e `:407-438`, `crates/clipsync-core/src/pairing.rs:226-237`.
+- O core grava `peers.toml` de forma síncrona e só então espera o `ReloadPeers`. `pair_cancel` usa `task.abort()`, que pode cair depois do `save` e antes do reload. O `watch` vê a tarefa cancelada e emite `cancelled`, mas o par já está no arquivo e o agente não o conhece até recarregar. O contrato diz "cancelled e não grava"; o teste cobre só o cancelamento antes do `finish`.
+- Correção: depois do `abort`, o `watch` relê `peers.toml`; se o par apareceu, emitir `paired` e mandar `ReloadPeers`. Ou tornar o trecho gravar e recarregar não cancelável (`spawn` interno).
+
+**S6-11 · A janela de pareamento fica aberta ao sair da tela, e o teto de 600 s não está no contrato (por leitura).** `crates/clipsync-ui/src/pairing.rs:32` e `:244`, `crates/clipsync-app/ui/js/telas/pareamento.js:411-416`.
+- `desmontar` só cancela as assinaturas e o relógio, não chama `pair_cancel`. Quem sai da tela com o anfitrião ouvindo deixa a porta de pareamento aberta em todas as interfaces pelo tempo restante (até 10 minutos com `window_secs: 600`), sem nada na tela mostrando isso. Pareamento sem decisão do usuário não acontece (recusa em 120 s), mas a porta aceita conexões não autenticadas, e o S1-04 (sonda QUIC com ALPN errado encerra o anfitrião) segue aberto.
+- Correção: ao sair da tela com tentativa em `listening`, `connecting` ou `code`, chamar `pair_cancel`, ou mostrar um aviso fixo na barra lateral enquanto houver tentativa. Pôr `MAX_WINDOW_SECS` no contrato ou baixá-lo para 180.
+
+**S6-12 · `event_id` aceita `+` (executado).** `crates/clipsync-ui/src/api.rs:377-392`.
+- O id do item da caixa usa `u8::from_str_radix`, que aceita o sinal `+`. Prova: `"+f"` repetido 16 vezes foi aceito e é igual a `"0f"` repetido 16 vezes. Já `PeerId::from_hex` (crate `hex`) recusa `+`. Aliasing inofensivo hoje, mas a regra "32 hex" deixa de valer, e `clipboard_preview`, `clipboard_copy_item` e `clipboard_discard_item` usam esse parser.
+- Correção: usar `hex::decode_to_slice`, como o `PeerId`.
+
+**S6-13 · As notificações do sistema não podem ser desligadas pela tela (por leitura).** `crates/clipsync-ui/src/status.rs:108-119` (`os_notifications` fica `false`), `crates/clipsync-app/ui/js/telas/preferencias.js:105-123`, `crates/clipsync-ui/src/prefs.rs:51-58`.
+- O front desabilita os três interruptores quando `os_notifications` é falso. Mas o `Notifications::default()` liga "Item recebido" e "Bloqueio", e a casca mostra a notificação de qualquer jeito, com nome do par, motivo e tamanho, inclusive na tela bloqueada. Quem não quer não consegue desligar pelo app.
+- Correção: ligar `os_notifications` (a casca já mostra notificações, decisão 10), ou fazer a casca respeitar a feature e não emitir enquanto ela for falsa.
+
+**S6-14 · O pacote de suporte é gravado sem `create_new`, com modo 664, e não é o texto da prévia (executado).** `crates/clipsync-ui/src/diag.rs:534-545` e `:249`, `:529-532`.
+- `fs::write` direto em `Downloads/clipsync-suporte-AAAAMMDD-HHMMSS.txt`: segue symlink, sobrescreve o arquivo do mesmo segundo e sai com o modo da umask (664 aqui, legível por outros usuários locais). Prova: o arquivo exportado tinha modo 664. O conteúdo é regerado na exportação (a linha `gerado em (unix ms)` muda a cada chamada), então o arquivo **não é igual** à prévia que o usuário aprovou (executado: `file == prévia` deu falso). O contrato diz "o mesmo texto". A redação roda nas duas vezes, então o risco é o texto aprovado diferir do gravado, não vazamento.
+- Correção: `bundle_export` receber o texto da prévia (ou guardá-lo na `Ui` por alguns minutos) e gravar esse; abrir com `create_new` e modo 0600; se o nome existir, acrescentar `-2`.
+
+**S6-15 · A redação do pacote de suporte só troca nome como palavra inteira (por leitura).** `crates/clipsync-ui/src/diag.rs:309-338`, teste que fixa o comportamento em `:551-561` (`"pc-da-ana e ana"` mantém o primeiro `ana`).
+- `-`, `_` e `.` contam como parte da palavra, então um nome de par ou o nome desta máquina dentro de um texto composto (`ana-notebook`, `casa.local`) passa sem redação. Hoje os textos que entram no pacote são gerados pelo próprio crate e os nomes aparecem soltos, então não achei vazamento em execução (a sonda trocou `ana` e `casa` corretamente). O risco vem de qualquer texto novo de módulo ou de diagnóstico que cite o nome dentro de um identificador.
+- Correção: redigir também nome dentro de palavra composta (comparar sem limite de palavra para nomes com 4 ou mais caracteres, aceitando o excesso de redação) e acrescentar ao teste de "nenhum nome sobra" uma verificação sobre o texto final inteiro, com `contains`, para todo nome conhecido.
+
+**S6-16 · O autoteste do clipboard escreve no clipboard real e pode perder conteúdo (por leitura).** `crates/clipsync-ui/src/onboarding.rs:210-250`, `crates/clipsync-clipboard/src/self_test.rs:49-113`.
+- O teste lê o texto atual, grava um texto sintético, lê de volta e devolve o anterior. Conteúdo que não é texto (imagem, arquivo) não volta: o clipboard fica vazio. Uma cópia feita pelo usuário durante a janela de até 1,5 s é sobrescrita. No Windows o texto devolvido entra no histórico (Win+V) e na nuvem, como no S5-02. O comando `onboarding_self_test` não é limitado ao onboarding, então qualquer tela pode chamá-lo a qualquer hora.
+- O agente é pausado antes (certo: o texto sintético não vai para os pares) e o `Pause` é persistido. Se o `Resume` falhar, só há um `tracing::warn!` (`:248`) e o app segue pausado sem avisar o usuário.
+- Correção: recusar `onboarding_self_test` quando o perfil já foi inicializado há mais de um minuto, ou pedir confirmação na tela; tratar falha do `Resume` devolvendo `UiError` visível ("o agente ficou pausado"); documentar a perda de conteúdo que não é texto.
+
+## Informativos
+
+- **I-S6-1 · `core:default` e `notification:default` dão mais do que o front usa.** `capabilities/default.json:6`. No código-fonte do `tauri-2.12.5` (`build.rs`), `core:default` liga `emit`/`emit_to`, criação e edição de `tray` e `menu`, `path:resolve*`, getters de janela e `internal_toggle_devtools`; `notification:default` liga `notify`, canais e ações. O front só usa `invoke` e `event.listen` (`api.js:10`, `:70`), e a notificação sai pelo Rust (`events.rs` da casca), que não passa pela ACL. Mínimo suficiente: `allow-clipsync`, `core:event:allow-listen` e `core:event:allow-unlisten`. É mudança do contrato §12.7 regra 3 ("exatamente" os três), por isso fica como sugestão; hoje o dano é contido por CSP e ausência de conteúdo remoto.
+- **I-S6-2 · Dureza opcional do Tauri:** `app.security.freezePrototype: true` não está em `tauri.conf.json`. Sem custo, reduz poluição de protótipo.
+- **I-S6-3 · Os portões de confirmação são do front.** `acknowledge_full_trust`, `recreate` e o nome digitado no revogar são argumentos que o próprio front manda. O diálogo exige digitar o nome (`componentes.js:272-277`), mas o revogar envia `dispositivo.name` e não o texto digitado (`dispositivos.js:189`), então `name_mismatch` do backend nunca é a barreira real. Aceitável com CSP e sem conteúdo remoto; registro para ninguém contar com o backend como segunda trava.
+- **I-S6-4 · `clean` não cobre todos os caracteres de formatação** (mesmo caso do I-6 da S1: U+00AD, U+180E, U+206A a U+206F, tags). E ele não limita tamanho: `unknown_command` ecoou 200.022 bytes e `bad_request` ecoou 50.058 bytes do valor recebido em `details` (executado, `api.rs:401-418`). Só o próprio front chama, então é ruído; um teto de 256 caracteres no eco resolve.
+- **I-S6-5 · A chave privada fica em memória sem limpeza** em `pending_identity` entre `onboarding_start` e `onboarding_create` (`lib.rs:85`, `onboarding.rs:91-99`, clonada em `:150`). O `Debug` de `Identity` é redigido (`profile.rs:55-59`), então não vaza em log. Sem `zeroize` por decisão de dependência.
+- **I-S6-6 · Travas seguradas durante E/S.** O `Mutex` de preferências fica preso durante `autostart::set` (que no Windows espera o `reg.exe`) e a gravação (`prefs.rs:198-214`). O `tokio::Mutex` do agente fica preso até 15 s em `launch` (`agent.rs:153`) e `app_state` espera por ele (`agent.rs:221`). Só travamento de tela, sem risco de dados.
+- **I-S6-7 · `reg.exe` é chamado pelo nome.** `autostart.rs:195` e `:224`. O Windows procura primeiro na pasta do executável. Usar `%SystemRoot%\System32\reg.exe`. Não pude exercitar no Windows.
+- **I-S6-8 · O S1-03 e o S1-04 agora são alcançáveis pela tela.** Parear com um endereço já conhecido substitui o par existente sem o `pair_result` avisar (`core/pairing.rs:248-257`), e a sonda QUIC com ALPN errado encerra o anfitrião (a UI mostra `failed`). Continuam abertos por decisão do contrato v1.10.
+- **I-S6-9 · O texto de clipboard dos pares passa pelo processo da UI a cada segundo.** A consulta de eventos chama `clipboard::inbox` (`events.rs:233`), que traz os itens com preview; `InboxItem::new` descarta o texto na hora e nenhum evento o leva (conferido). Fica em memória só durante a consulta. Se o front ou um log novo passar a ver o item bruto, o conteúdo vaza; um teste que serialize o evento e procure um texto sintético trava isso.
+- **I-S6-10 · O que está certo e foi conferido:**
+  - A CSP de `tauri.conf.json:23` é idêntica à do contrato, sem `unsafe-inline` nem `unsafe-eval`, e `default-src 'none'` cobre frames, objetos e workers.
+  - `capabilities/default.json` tem só a janela `main` e exatamente `core:default`, `notification:default` e `allow-clipsync`. `build.rs` declara só o comando `clipsync` no `app_manifest`.
+  - O `tauri` do `Cargo.toml` raiz tem só a feature `tray-icon`: sem `devtools`, plugin único de notificação, versões fixadas com `=`.
+  - Nenhuma URL remota na interface: o único `http` do front é o `xmlns` de um SVG em `data:`; as fontes são locais.
+  - Busca no front por `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`, `eval`, `new Function`, `srcdoc`, `DOMParser`, `style=`, `href`/`src` dinâmicos, `fetch`, `WebSocket` e `window.open`: nenhum achado. `h()` (`dom.js:78-91`) põe todo filho como nó de texto; `style` só usa o CSSOM (permitido pela CSP); o `import()` de telas (`app.js:86`) usa um nome de uma tabela fixa; `localStorage` guarda só o tema.
+  - Texto do par e do clipboard na tela (nome, motivo, endereço, preview, prévia do pacote, `agent_error`, detalhes do diagnóstico) entra por `h()` ou `textContent` em pareamento, dispositivos, clipboard, diagnóstico e preferências.
+  - `UiRequest` recusa campo desconhecido (executado: `app_state` com `args: {x:1}` dá `bad_request`). `peer_id` usa `hex` estrito. Os grants de módulo desligado são cortados no core (`core/pairing.rs:221-223`). `pair_finish` antes de `pair_code_matches` dá `wrong_step`. O `confirm` recusa por tempo, cancelamento e ausência da `Ui`. A chave não aparece em `UiError`, evento nem log.
+  - Clipboard: o preview é limpo e só então cortado em 200 caracteres (`clipboard.rs:263-274`), a lista nunca leva preview, `set_mode` grava `[clipboard] mode` por `write_private` e valida `auto` ou `manual` (`profile.rs:483-497`), e as mensagens do módulo mapeiam para códigos fixos, com o resto virando `internal` já limpo.
+  - Pacote de suporte: não lê a caixa do clipboard, não inclui chave, `peers.toml` cru nem `portal-tokens.toml`; id, nome, IP e nome da máquina saem (executado: nenhum `ana` nem `casa` soltos no arquivo).
+
+## Pendente (revisar quando o Maestro avisar)
+
+- **Layout e input do Vector** (`layout.rs`, `input.rs`, commit 32d7916): validação de `layout_set_link`, limites de `x`, `y` e `seconds`, `layout.toml` por tmp + rename, texto de par em `Zones` e `EnterAt` passando por `clean`, `layout_copy_to_peers`, `layout_offer_answer` (aceitar grava uma oferta de par) e `input_test`.
+- **Revogação avisada ao par** (contrato v1.16): ainda não implementada no `device_revoke`.
+- **Input no autoteste:** a parte do input só entra quando o Vector entregar o `self_test` dele.
+- **Windows** (`reg.exe`, instalador sem assinatura, `http://tauri.localhost`): nada exercitado.
+- **Front de layout:** só busca de sinks; leitura completa junto com o backend.
+- **Reverificação dos achados:** S6-01 e S6-02 pedem teste de regressão do Rivet; reabro quando o Maestro avisar da correção.
