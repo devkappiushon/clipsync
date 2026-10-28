@@ -23,6 +23,9 @@ use crate::{CoreError, Profile, State, msg};
 
 const MODULE_QUEUE: usize = 1024;
 const MODULE_STOP_GRACE: Duration = Duration::from_secs(3);
+/// Bound on waiting for the UDP port to be free after the mesh shut down.
+const PORT_RELEASE_WAIT: Duration = Duration::from_secs(3);
+const PORT_RELEASE_POLL: Duration = Duration::from_millis(5);
 const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 const CLIP_SEND_TIMEOUT: Duration = Duration::from_secs(15);
 const INPUT_OFFER_TIMEOUT: Duration = Duration::from_secs(5);
@@ -79,10 +82,10 @@ pub async fn run(
             }
         })
     });
-    let host = mesh.host();
     let mut tasks = JoinSet::new();
     for (m, rx) in runners {
-        let host = host.clone();
+        // Each module holds its own handle: none may outlive `run` here (see wait_port_released).
+        let host = mesh.host();
         tasks.spawn(async move {
             let kind = m.kind();
             if let Err(e) = m.run(host, rx).await {
@@ -119,8 +122,34 @@ pub async fn run(
     if let Some(r) = revocations {
         r.abort();
     }
+    let bound = mesh.local_addr().ok();
     mesh.shutdown().await;
+    drop(mesh);
+    if let Some(addr) = bound {
+        wait_port_released(addr).await;
+    }
     served
+}
+
+/// The UDP socket belongs to quinn's endpoint driver, which stops only after the last handle to
+/// the endpoint is gone, and the tasks that hold one (modules and connection tasks, aborted
+/// above) let go of it after `shutdown` returns. So `run` returns only once the port binds
+/// again: a restart, another agent or a test can take it at once (CI Windows, 601cd7f; here 3
+/// stops in 30 still held it).
+async fn wait_port_released(addr: SocketAddr) {
+    let deadline = tokio::time::Instant::now() + PORT_RELEASE_WAIT;
+    loop {
+        match std::net::UdpSocket::bind(addr) {
+            Ok(_) => return,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {}
+            // Not ours to judge (address gone, permission): nothing to wait for.
+            Err(_) => return,
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return tracing::warn!(%addr, "port still bound after the agent stopped");
+        }
+        tokio::time::sleep(PORT_RELEASE_POLL).await;
+    }
 }
 
 /// Writes peers.toml without `peer` and reloads the mesh, like `ReloadPeers` after a local

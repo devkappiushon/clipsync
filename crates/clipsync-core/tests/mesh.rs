@@ -245,8 +245,18 @@ fn start(n: &Node, echo: bool) -> Running {
 }
 
 async fn stop(r: Running) {
-    let _ = r.stop.send(());
-    r.task.await.unwrap().unwrap();
+    // A host handed to the test holds the mesh, and with it the UDP port: let go first, or
+    // `agent::run` waits for the port until its deadline.
+    let Running {
+        task,
+        stop,
+        _clip_host,
+        input_host,
+        ..
+    } = r;
+    drop((_clip_host, input_host));
+    let _ = stop.send(());
+    task.await.unwrap().unwrap();
 }
 
 async fn status(p: &Profile) -> Option<AgentStatus> {
@@ -423,6 +433,26 @@ async fn mesh_restart_reconnects() {
     stop(rb).await;
 }
 
+/// `agent::run` returns only with its UDP port free (CI Windows, 601cd7f: the test below bound
+/// B's port right after stopping B and found it taken). Here the old code left it taken in 3
+/// stops out of 30.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_agent_has_released_its_port() {
+    for _ in 0..10 {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (node(&dir, "a"), node(&dir, "b"));
+        trust(&a, &b, "b", ALL);
+        trust(&b, &a, "a", ALL);
+        let (mut ra, rb) = (start(&a, false), start(&b, false));
+        next_peer_up(&mut ra.clip).await;
+        stop(rb).await;
+        let rebound = UdpSocket::bind(b.addr);
+        assert!(rebound.is_ok(), "b's port still taken: {rebound:?}");
+        drop(rebound);
+        stop(ra).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn mesh_changed_key_is_blocked_with_constant_reason() {
     let dir = tempfile::tempdir().unwrap();
@@ -522,6 +552,7 @@ async fn mesh_inbound_refusals_are_recorded_newest_first_and_capped() {
     assert!(!serde_json::to_string(&s).unwrap().contains(SECRET));
     // A was not refused by anyone.
     assert!(status(&a.profile).await.unwrap().recent_blocks.is_empty());
+    drop(host);
     stop(ra).await;
     stop(rb).await;
 }
@@ -624,6 +655,7 @@ async fn stream_and_datagram() {
             "datagram p95 {d95:?} >= 1 ms"
         );
     }
+    drop(host);
     stop(ra).await;
     stop(rb).await;
 }
@@ -837,6 +869,7 @@ async fn mesh_never_sends_a_protocol_2_message_to_a_version_1_peer() {
         matches!(got, Frame::Module(ModuleMsg::Input(InputMsg::Enter { .. }))),
         "{got:?}"
     );
+    drop(host);
     stop(ra).await;
     ep.close(0u32.into(), b"");
 }
