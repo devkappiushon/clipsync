@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.18, Keel, 2026-10-28)
+# Contrato · ClipSync MVP de hoje (v1.19, Keel, 2026-10-28)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -23,6 +23,7 @@ v1.15 (registro do Flux, casca em 367def0): §12.7 item 3. O Tauri 2.12.5 exige 
 v1.16 (decisões do Maestro, 2026-10-28): §12.6 e §12.9 item 2 (2). Revogação avisada ao par: `CloseCode::Revoked = 8` no fim do enum; no `device_revoke`, A manda `Bye{Revoked}` ao par v2 antes de fechar, e B tira A do próprio `peers.toml` (dono: Rivet). A §12.5 ganha a notificação `device_removed`. Assinatura comum do `self_test` (L7) no clipboard e no input: `self_test() -> SelfTestOutcome`.
 v1.17 (decisões do Maestro, 2026-10-28, rodada de correções da S6): §12.7 capabilities mínimas (`allow-clipsync`, `core:event:allow-listen`, `core:event:allow-unlisten` e só o que o front usar), a partir do informativo I-S6-1 do Sentinel (7a722ca); o mock e a galeria saem do pacote para `crates/clipsync-app/ui-dev/`, o `api.js` falha fechado, e o portal usa `scripts/servir-ui-dev.py`. §12.1: `prefs.rs` e `diag.rs` do `clipsync-ui` passam ao Flux. §12.5: códigos do Vector (`input_off`, `no_layout`, `no_offer`, `link_not_found` depois do `stale_rev`, `denied` e `offline` do `switch_to_device`) e `window_secs` do `pair_host_start` até `PAIR_WINDOW_SECS` (120). Sair da tela 3 cancela a tentativa, menos em `waiting_peer`.
 v1.18 (Maestro, a partir do 7c770ef do Rivet): §12.6, item 6 da revogação. Com B offline, quem é recusado registra: um par conhecido que rejeita o certificado deste dispositivo deixa uma entrada em `recent_blocks` com o motivo "recusou a conexão: este dispositivo não está mais pareado lá"; quem recusa não registra. §12.7 item 3 ganha a lista final das capabilities (c68d980).
+v1.19 (decisões do Maestro, 2026-10-28, achados S6-18 e S6-19 do Sentinel em 0f0b312): §12.5, o `layout_offer_answer` recebe `from_peer_id` e `rev` da oferta exibida, e oferta trocada dá `stale_offer` (490335f do Vector). §12.6, teto de 1.000.000 em `x` e `y` no `Layout::validate` (e4e6308).
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -999,7 +1000,7 @@ Formato: `cmd {args} -> retorno · erros próprios`.
 - `layout_set_device {peer_id, x, y, hotkey: null|1..9, base_rev} -> {device: LayoutDevice, layout_rev} · hotkey_taken, stale_rev` (o crate encaixa x e y em `snap_px`)
 - `layout_set_options {dead_corner_px: 0..32, base_rev} -> {options, layout_rev} · out_of_range, empty_segment, stale_rev` (`empty_segment` lista as ligações em `details.links` e não aplica nada)
 - `layout_copy_to_peers {peer_ids: null|[...]} -> {rev, results: [{peer_id, name, status: "offered"|"offline"|"denied"|"unsupported", reason}]} · no_layout` (v1.17: `layout.toml` ainda não gravado)
-- `layout_offer_answer {accept} -> {layout_rev} · no_offer` (aceitar grava a oferta pendente no `layout.toml`)
+- `layout_offer_answer {accept, from_peer_id, rev} -> {layout_rev} · no_offer, stale_offer` (v1.19, S6-18, 490335f). `from_peer_id` e `rev` são os da `pending_offer` que a tela mostrou. Sem oferta pendente dá `no_offer`. Pendente de outro par ou de outra revisão dá `stale_offer`, tanto ao aceitar quanto ao recusar, com a oferta pendente em `details: {from_peer_id, rev}`, e nada é aplicado. Aceitar grava no `layout.toml` a oferta conferida, nunca uma que chegou depois.
 - `lock_to_screen {locked} -> {screen_locked}` (estado do agente, não persiste)
 - `switch_to_device {peer_id} -> {active_peer_id} · offline, not_linked, denied` (v1.17: tela travada, par com versão 1 ou recusa, do par ou do portal, dá `denied`; par pareado e desconectado dá `offline`)
 - `input_test {peer_id, seconds: 5..60} -> {stats: {received, lost, out_of_order, p50_us, p95_us, max_us}} · denied, offline` (loopback do §8; pode abrir o diálogo do portal)
@@ -1155,6 +1156,7 @@ pub struct BlockRecord { pub at_unix_ms: u64, pub peer: Option<PeerId>, pub peer
    a = { peer = "<64 hex>", monitor = "HDMI-1", edge = "right", from = 0.5, to = 1.0 }
    b = { peer = "<64 hex>", monitor = "eDP-1", edge = "left", from = 0.0, to = 1.0 }
    ```
+   Teto de posição (v1.19, S6-19 do Sentinel, e4e6308): `Layout::validate` recusa dispositivo com `x` ou `y` fora de -1.000.000 a 1.000.000 (`clipsync_input::layout::MAX_CANVAS_PX`). O teto vale para o `layout_set_device`, para a oferta aceita no `layout_offer_answer` e para a leitura do arquivo (`invalid_field`). A coordenada da oferta é saturada, nunca dá a volta até zero.
 2. Captura contínua: com input ligado e pelo menos uma ligação local no `layout.toml`, o agente instala as barreiras derivadas e captura sozinho. Sem ligação, vale o §8 regra 1 (só loopback).
 3. `[[input.barrier]]` manual e ligação no `layout.toml` juntos dão `ModuleError::Config` com motivo.
 4. Barreira ganha `peer_monitor`, `peer_from` e `peer_to` opcionais. Posição no destino: `peer_from + t * (peer_to - peer_from)`, com `t = (pos - from) / (to - from)`.
@@ -1257,3 +1259,4 @@ Comandos da raiz, com `export PATH=$HOME/.cargo/bin:$PATH`.
 13. Maestro (v1.16): a revogação avisa o par v2 com `Bye{Revoked}`, e o par se remove sozinho (§12.6, dono Rivet). O `self_test` tem uma assinatura só no clipboard e no input, e o Rivet faz o mapeamento.
 14. Maestro (v1.17, rodada de correções): capabilities mínimas (§12.7 item 3); mock e galeria em `ui-dev/`, fora do pacote, `api.js` falhando fechado e portal por `scripts/servir-ui-dev.py` (§12.7 Pixel itens 3 e 5); `prefs.rs` e `diag.rs` com o Flux (§12.1); códigos do Vector e teto de `window_secs` registrados na §12.5. Decisão do Pixel, aceita: sair da tela 3 em `waiting_peer` não cancela a tentativa.
 15. Maestro (v1.18): com B offline na hora do revoke, quem é recusado registra o par em `recent_blocks`, uma vez por par, e quem recusa não registra (§12.6 revogação, item 6).
+16. Maestro (v1.19): a resposta à oferta de layout diz qual oferta o usuário viu (`from_peer_id` e `rev`), e oferta trocada dá `stale_offer` (código do Vector). O teto de posição de 1.000.000 fica no `Layout::validate`, para valer em todo caminho.
