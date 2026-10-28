@@ -17,6 +17,7 @@ pub mod input;
 pub mod layout;
 pub mod msg;
 pub mod onboarding;
+pub mod pairing;
 pub mod prefs;
 pub mod status;
 
@@ -83,6 +84,8 @@ pub(crate) struct Ctx {
     pub(crate) pending_identity: Mutex<Option<Identity>>,
     /// `ui.toml`, read once at start; `prefs_set` keeps it in step with the file.
     pub(crate) prefs: Mutex<prefs::Stored>,
+    /// The one pairing attempt, if any.
+    pub(crate) pairing: Mutex<pairing::Pairing>,
     /// The fake clipboard of the in-app agent, when the profile asks for one (tests).
     pub(crate) fake_clipboard: Mutex<Option<clipsync_clipboard::FakeClipboardHandle>>,
     poller: Mutex<Option<JoinHandle<()>>>,
@@ -138,6 +141,7 @@ impl Ui {
             agent: tokio::sync::Mutex::new(agent::Slot::Stopped),
             pending_identity: Mutex::new(None),
             prefs: Mutex::new(stored_prefs),
+            pairing: Mutex::new(pairing::Pairing::default()),
             fake_clipboard: Mutex::new(None),
             poller: Mutex::new(None),
         });
@@ -177,6 +181,13 @@ impl Ui {
     pub fn fake_clipboard(&self) -> Option<clipsync_clipboard::FakeClipboardHandle> {
         lock(&self.ctx.fake_clipboard).clone()
     }
+}
+
+/// Wall clock in ms since the Unix epoch (§12.2 rule 4: times are `*_unix_ms`).
+pub(crate) fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 pub(crate) fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {

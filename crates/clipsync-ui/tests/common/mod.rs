@@ -9,8 +9,8 @@ use std::net::{SocketAddr, UdpSocket};
 use std::path::Path;
 use std::time::Duration;
 
-use clipsync_core::{InitOptions, Profile};
-use clipsync_proto::{ModuleSet, PeerId};
+use clipsync_core::{InitOptions, PeerEntry, Profile};
+use clipsync_proto::{ModuleSet, PeerId, PeerPerms};
 use clipsync_ui::{Ui, UiError, UiEvent, UiOptions};
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
@@ -51,6 +51,37 @@ pub fn init_profile(dir: &Path, name: &str, modules: ModuleSet) -> (Profile, Pee
         .id();
     (profile, id)
 }
+
+pub const BOTH: ModuleSet = ModuleSet {
+    clipboard: true,
+    input: true,
+};
+
+/// Pairs two profiles by writing each side's `peers.toml`, like a finished pairing would.
+/// `a_grants` is what `a` grants `b`, and the other way round.
+pub fn pair_files(a: &Profile, b: &Profile, a_grants: PeerPerms, b_grants: PeerPerms) {
+    let entry = |of: &Profile, grants: PeerPerms| {
+        let cfg = of.load_config().unwrap();
+        PeerEntry {
+            id: of.load_identity().unwrap().id(),
+            name: cfg.device_name,
+            addr: Some(cfg.listen),
+            paired_at: "2026-10-28T12:00:00Z".into(),
+            perms: grants,
+        }
+    };
+    for (me, other, grants) in [(a, b, a_grants), (b, a, b_grants)] {
+        let mut peers = me.load_peers().unwrap();
+        peers.upsert(entry(other, grants));
+        me.save_peers(&peers).unwrap();
+    }
+}
+
+pub const NONE: PeerPerms = PeerPerms {
+    clipboard_in: false,
+    clipboard_out: false,
+    input_in: false,
+};
 
 /// Options for the profile `base/name`; autostart and downloads also live under `base`.
 pub fn opts(base: &Path, name: &str) -> UiOptions {

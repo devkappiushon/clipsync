@@ -21,6 +21,47 @@ pub const SELF_TEST_UNSUPPORTED: &str = "sem adaptador nesta plataforma";
 pub const SELF_TEST_MODULE_OFF: &str = "módulo desligado";
 pub const SELF_TEST_MISSING: &str = "teste automático indisponível nesta versão";
 
+// 2 · dispositivos
+pub const UNKNOWN_PEER: &str = "dispositivo não encontrado entre os pareados";
+pub const MODULE_OFF: &str = "o módulo dessa permissão está desligado neste dispositivo";
+pub const FULL_TRUST: &str = "permitir que esse dispositivo controle o teclado e o mouse daqui é confiança total: confirme para continuar";
+pub const NAME_MISMATCH: &str = "o nome digitado não confere com o nome do dispositivo";
+
+// 3 · pareamento
+pub const NO_ATTEMPT: &str = "nenhum pareamento em andamento com esse número";
+pub const WRONG_STEP: &str = "essa ação não vale nesta etapa do pareamento";
+pub const PAIR_BUSY: &str = "já existe um pareamento em andamento: conclua ou cancele antes";
+pub const BAD_ADDR: &str = "endereço inválido: use IP:PORTA, por exemplo 192.168.0.10:53122";
+pub const PAIR_DECLINED_PEER: &str = "o outro dispositivo recusou o pareamento";
+pub const PAIR_NO_DECISION: &str = "sem decisão em 2 minutos: pareamento recusado";
+pub const PAIR_EXPIRED: &str = "nenhum dispositivo se conectou dentro do prazo";
+pub const PAIR_NO_ANSWER: &str = "o outro dispositivo não respondeu: confira o endereço e a porta";
+pub const PAIR_PEER_CLOSED: &str = "o outro dispositivo encerrou a tentativa";
+pub const PAIR_TIMEOUT: &str = "o outro dispositivo não respondeu a tempo";
+
+// notificações do sistema: fatos, nunca conteúdo de clipboard (§12.2 regra 7)
+pub const NOTIFY_CONNECTED: &str = "Dispositivo conectado";
+pub const NOTIFY_BLOCK: &str = "Bloqueio";
+
+pub fn notify_connected(name: &str) -> String {
+    format!("{name} está conectado")
+}
+
+pub fn notify_block(name: Option<&str>, reason: &str) -> String {
+    match name {
+        Some(n) => format!("{n}: {reason}"),
+        None => reason.to_string(),
+    }
+}
+
+pub fn bind(detail: &str) -> String {
+    format!("não foi possível abrir a porta do pareamento: {detail}")
+}
+
+pub fn pair_failed(detail: &str) -> String {
+    format!("o pareamento falhou: {detail}")
+}
+
 pub fn unknown_command(cmd: &str) -> String {
     format!("comando desconhecido: {cmd}")
 }

@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::devices::Perms;
 use crate::prefs::{Appearance, Notifications};
-use crate::{Ctx, agent, clean, input, layout, msg, onboarding, prefs, status};
+use crate::{Ctx, agent, clean, devices, input, layout, msg, onboarding, pairing, prefs, status};
 
 /// Stable error codes: the front switches on these, never on the message.
 pub mod code {
@@ -32,6 +32,15 @@ pub mod code {
     // onboarding
     pub const INVALID_NAME: &str = "invalid_name";
     pub const NO_MODULE: &str = "no_module";
+    // devices
+    pub const MODULE_OFF: &str = "module_off";
+    pub const NAME_MISMATCH: &str = "name_mismatch";
+    // pairing
+    pub const PAIR_BUSY: &str = "pair_busy";
+    pub const BIND: &str = "bind";
+    pub const BAD_ADDR: &str = "bad_addr";
+    pub const NO_ATTEMPT: &str = "no_attempt";
+    pub const WRONG_STEP: &str = "wrong_step";
 }
 
 /// Rejection of a command; serialized as `{code, message, field, details}`. `message` is
@@ -416,6 +425,16 @@ pub(crate) async fn route(ctx: &Arc<Ctx>, req: UiRequest) -> Result<Value, UiErr
         R::OnboardingCheckName(a) => json(onboarding::check_name(&a.name)?),
         R::OnboardingCreate(a) => json(onboarding::create(ctx, a).await?),
         R::OnboardingSelfTest => json(onboarding::self_test(ctx).await?),
+        R::DevicesList => json(devices::list(ctx).await?),
+        R::DeviceSetPerms(a) => json(devices::set_perms(ctx, a).await?),
+        R::DeviceRevoke(a) => json(devices::revoke(ctx, a).await?),
+        R::DevicePause(a) => json(devices::pause(&a)?),
+        R::PairHostStart(a) => json(pairing::host_start(ctx, a).await?),
+        R::PairJoinStart(a) => json(pairing::join_start(ctx, a).await?),
+        R::PairCodeMatches(a) => json(pairing::code_matches(ctx, a).await?),
+        R::PairFinish(a) => json(pairing::finish(ctx, a)?),
+        R::PairCancel(a) => json(pairing::cancel(ctx, a)?),
+        R::PairState => json(pairing::state(ctx)),
         R::LayoutGet => json(layout::get(ctx).await?),
         R::LayoutSetLink(a) => json(layout::set_link(ctx, a).await?),
         R::LayoutRemoveLink(a) => json(layout::remove_link(ctx, a).await?),
@@ -428,19 +447,8 @@ pub(crate) async fn route(ctx: &Arc<Ctx>, req: UiRequest) -> Result<Value, UiErr
         R::InputTest(a) => json(input::input_test(ctx, a).await?),
         R::PrefsGet => json(prefs::get(ctx)),
         R::PrefsSet(a) => json(prefs::set(ctx, a)?),
-        // Stages 3 and 4 of the clipsync-ui (devices, pairing, clipboard, diagnostics) answer
-        // here until they land.
-        R::DevicesList
-        | R::DeviceSetPerms(_)
-        | R::DeviceRevoke(_)
-        | R::DevicePause(_)
-        | R::PairHostStart(_)
-        | R::PairJoinStart(_)
-        | R::PairCodeMatches(_)
-        | R::PairFinish(_)
-        | R::PairCancel(_)
-        | R::PairState
-        | R::ClipboardGet
+        // Stage 4 of the clipsync-ui (clipboard, diagnostics) answers here until it lands.
+        R::ClipboardGet
         | R::ClipboardPreview(_)
         | R::ClipboardSetMode(_)
         | R::ClipboardCopyItem(_)

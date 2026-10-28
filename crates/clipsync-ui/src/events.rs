@@ -5,15 +5,17 @@
 //! compares with the previous look, so an external agent produces the same events. 7 to 11 and
 //! 12 (saved) are born where the crate acts.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 
+use clipsync_proto::{BlockRecord, PeerId, PeerState};
 use serde::{Deserialize, Serialize};
 
-use crate::Ctx;
 use crate::clipboard::ItemState;
 use crate::devices::Device;
-use crate::prefs::Prefs;
+use crate::prefs::{Notifications, Prefs};
 use crate::status::{self, AgentMode, ModuleName, Modules};
+use crate::{Ctx, clean, lock, msg};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "event", content = "data", rename_all = "snake_case")]
@@ -184,6 +186,12 @@ pub struct ScreenLockChanged {
 pub(crate) struct Snapshot {
     agent: AgentStateData,
     paused: bool,
+    /// An agent answered `Status` in this tick.
+    live: bool,
+    /// Connected peers: `peer_connected` and `peer_disconnected` compare these.
+    connected: BTreeMap<PeerId, PeerConnected>,
+    /// The agent's `recent_blocks`, newest first.
+    blocks: Vec<BlockRecord>,
 }
 
 impl Snapshot {
@@ -193,22 +201,96 @@ impl Snapshot {
             Some(s) => s.paused,
             None => ctx.profile.load_state().is_ok_and(|s| s.paused),
         };
+        let (connected, blocks) = match &o.status {
+            Some(s) => (
+                s.peers
+                    .iter()
+                    .filter(|p| p.state == PeerState::Connected)
+                    .map(|p| {
+                        let ev = PeerConnected {
+                            peer_id: p.id.to_hex(),
+                            short: p.id.short(),
+                            name: clean(&p.name),
+                            addr: p.addr.map(|a| a.to_string()),
+                        };
+                        (p.id, ev)
+                    })
+                    .collect(),
+                s.recent_blocks.clone(),
+            ),
+            None => (BTreeMap::new(), Vec::new()),
+        };
         Self {
             agent: AgentStateData {
                 agent: o.agent,
                 error: o.agent_error,
             },
             paused,
+            live: o.status.is_some(),
+            connected,
+            blocks,
         }
     }
 
-    fn diff(&self, now: &Snapshot) -> Vec<UiEvent> {
+    /// Blocks in `now` that this look did not have, oldest first. The ring is newest first, so
+    /// they are the ones before our newest; a ring that lost it (new agent) is all new.
+    fn new_blocks<'a>(&self, now: &'a Snapshot) -> impl Iterator<Item = &'a BlockRecord> {
+        let fresh = match self.blocks.first() {
+            Some(top) => now
+                .blocks
+                .iter()
+                .position(|b| b == top)
+                .unwrap_or(now.blocks.len()),
+            None => now.blocks.len(),
+        };
+        now.blocks[..fresh].iter().rev()
+    }
+
+    fn diff(&self, now: &Snapshot, notify: Notifications) -> Vec<UiEvent> {
         let mut out = Vec::new();
         if now.paused != self.paused {
             out.push(UiEvent::PauseChanged(PauseChanged { paused: now.paused }));
         }
         if now.agent != self.agent {
             out.push(UiEvent::AgentState(now.agent.clone()));
+        }
+        for (id, p) in &self.connected {
+            if !now.connected.contains_key(id) {
+                out.push(UiEvent::PeerDisconnected(PeerRef {
+                    peer_id: p.peer_id.clone(),
+                    short: p.short.clone(),
+                    name: p.name.clone(),
+                }));
+            }
+        }
+        for (id, p) in &now.connected {
+            if !self.connected.contains_key(id) {
+                out.push(UiEvent::PeerConnected(p.clone()));
+                if notify.device_connected {
+                    out.push(UiEvent::Notification(Notification {
+                        kind: NotificationKind::DeviceConnected,
+                        title: msg::NOTIFY_CONNECTED.to_string(),
+                        body: msg::notify_connected(&p.name),
+                    }));
+                }
+            }
+        }
+        for b in self.new_blocks(now) {
+            let ev = PeerBlocked {
+                peer_id: b.peer.map(|id| id.to_hex()),
+                name: b.peer_name.as_deref().map(clean),
+                module: b.module.map(ModuleName::from),
+                reason: clean(&b.reason),
+                at_unix_ms: b.at_unix_ms,
+            };
+            if notify.block {
+                out.push(UiEvent::Notification(Notification {
+                    kind: NotificationKind::Block,
+                    title: msg::NOTIFY_BLOCK.to_string(),
+                    body: msg::notify_block(ev.name.as_deref(), &ev.reason),
+                }));
+            }
+            out.push(UiEvent::PeerBlocked(ev));
         }
         out
     }
@@ -224,8 +306,13 @@ pub(crate) async fn poll(ctx: Weak<Ctx>, first: Snapshot) {
         };
         tokio::time::sleep(every).await;
         let Some(c) = ctx.upgrade() else { return };
-        let now = Snapshot::take(&c).await;
-        for ev in last.diff(&now) {
+        let mut now = Snapshot::take(&c).await;
+        if !now.live {
+            // No agent this tick: keep the ring, so the same blocks are not new next time.
+            now.blocks = std::mem::take(&mut last.blocks);
+        }
+        let notify = lock(&c.prefs).notifications;
+        for ev in last.diff(&now, notify) {
             c.emit(ev);
         }
         last = now;
