@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.24, Keel, 2026-10-28)
+# Contrato · ClipSync MVP de hoje (v1.25, Keel, 2026-10-28)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -29,6 +29,7 @@ v1.21 (Keel, a partir do d43a13b do Rivet, S6-21 do Sentinel): §12.6, item 6 da
 v1.22 (decisão do Maestro, 2026-10-28, rodada de fidelidade ao Figma): §12.1, as telas Clipboard, Diagnóstico e Preferências do front passam ao Flux, e a tela Layout ao Vector; o Pixel fica com o resto de `ui/` e de `ui-dev/`, inclusive os arquivos compartilhados. §12.9 item 5 ganha o tamanho da comparação (1280×800) e a regra das colunas.
 v1.23 (decisão do Maestro, 2026-10-28, a partir do 13255e3 do Rivet e da falha do CI 40680756334): §5 regra 3h e §12.5 tela 3. No pareamento, a primeira recusa de qualquer lado encerra os dois na hora; quem cancela depois do código manda `Confirm{false}` e espera o ack (até 2 s) antes de fechar; o outro lado vê `declined_peer`.
 v1.24 (decisão do Maestro, 2026-10-28, a partir do d7a4d79 do Rivet): §5 regra 3i e §12.5 tela 3. Cancelar em `listening` ou `connecting` solta o endpoint e a porta de pareamento e fecha a conexão com PairFailed nos dois lados, por guardas no drop.
+v1.25 (pedido do Maestro, 2026-10-28): §13 nova, S7 · layout de telas de verdade. Input no Windows (hooks e SendInput) num crate próprio, `clipsync-win`, com `unsafe` só no `ffi.rs`, pendente da revisão do Sentinel; teclado pela posição física; proto v3 (`EnterSpan`, `Returned`, `Refused`, `ModuleHost::request_pause`); `Zones` em tempo real; release v0.3.0.
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -1283,3 +1284,272 @@ Comandos da raiz, com `export PATH=$HOME/.cargo/bin:$PATH`.
 19. Maestro (v1.22): rodada de fidelidade ao Figma. O Maestro comparou as 9 telas em 1280×800 com os quadros, e o app empilha numa coluna o que o Figma põe em duas. A posse do front se divide por tela (§12.1): Flux com Clipboard, Diagnóstico e Preferências; Vector com Layout; Pixel com o resto e os compartilhados. Keel: §12.9 item 5 ganha o tamanho da captura e a regra das colunas.
 20. Maestro (v1.23): no pareamento, a primeira recusa de qualquer lado encerra os dois na hora. Quem cancela depois do código manda `Confirm{false}` e espera o ack (até 2 s) antes de fechar, e o outro lado vê `declined_peer` (§5 regra 3h e §12.5 tela 3; Rivet, 13255e3, a partir da falha do CI 40680756334).
 21. Maestro (v1.24): cancelar em `listening` ou `connecting` solta o endpoint e a porta e fecha a conexão com PairFailed nos dois lados, por guardas no drop (§5 regra 3i e §12.5 tela 3; Rivet, d7a4d79).
+
+## 13. S7 · layout de telas de verdade (v1.25)
+Pedido do usuário (2026-10-28, depois de aprovar a S6): "a parte de layout de telas". O cenário real (prompt mestre §3) é o PC Windows (192.168.115.30, 2 monitores, teclado e mouse físicos) controlando o notebook Linux (1 monitor, `eDP-1`) e o terceiro PC (sistema a confirmar, §13.14). Hoje o input só existe no Linux. Meta da S7: o módulo Input nas máquinas do cenário, para o Input Leap poder sair.
+
+Entra: captura e emulação no Windows; teclado entre Windows e Linux (ABNT2 e US, acentos, AltGr); `Zones` em tempo real nos dois sistemas; volta só pelo trecho ligado, paredes e cantos mortos; atalhos no Windows; soltar e reconciliar teclas na troca; arrasto através da borda; tela bloqueada e área de trabalho segura; interface; provas e release v0.3.0.
+
+Fora: X11 e macOS (entram se o terceiro PC pedir); ir de um destino a outro sem passar pela máquina do teclado físico (ex.: notebook direto ao terceiro PC); atalhos globais no Linux (portal GlobalShortcuts); atalho configurável; movimento relativo para jogos; arrastar arquivo ou janela entre máquinas.
+
+### 13.1 Posse e ordem
+```
+crates/clipsync-win/ (novo)                                            [Flux]    chamadas Win32, unsafe isolado (§13.3), API da §13.5
+crates/clipsync-input/src/keymap.rs e tests/keymap.rs                  [Flux]    tradução de teclas e botões, pura (§13.7)
+crates/clipsync-input/src/adapter/win/** (cfg(windows))                [Flux]    WinCapture, WinEmulate e o self_test do Windows (§13.6)
+crates/clipsync-input/src/adapter/winmath.rs e tests/winmath.rs        [Flux]    decisões puras do adaptador Windows, testadas nos dois CIs
+crates/clipsync-input/** (o resto: adapter/{mod,fake,portal,session}.rs, lib.rs, module.rs, capture.rs, layout.rs, probe/**, self_test.rs)   [Vector]
+crates/clipsync-ui/src/{layout,input}.rs e os testes deles             [Vector]
+crates/clipsync-proto/**, crates/clipsync-core/** e o resto do clipsync-ui   [Rivet]
+crates/clipsync-cli/**                                                 [Flux]
+crates/clipsync-app/ui/** e ui-dev/**                                  [Pixel]   (a divisão por tela da v1.22 acabou com a rodada)
+Cargo.toml raiz, Cargo.lock, .github/workflows/**, README.md, release  [Maestro]
+docs/contrato.md, docs/workboard.md, docs/matriz-compatibilidade.md, docs/decisoes/**   [Keel]
+```
+Ordem:
+0. O Sentinel revisa a decisão da §13.3 antes da primeira linha do `clipsync-win`. Todo o resto começa já.
+1. Primeiro, em até 30 min cada, com marca no workboard: Vector, as mudanças de trait e de fake da §13.6 e o `SUPPORTED` ("trait S7 pronto"); Rivet, o proto v3 da §13.4 ("proto S7 pronto"). O Flux começa pelo `keymap.rs` e pelo `winmath.rs`, que não dependem de ninguém.
+2. Depois, em paralelo: Flux (`clipsync-win` depois do aval do Sentinel, adaptador Windows, cli), Vector (módulo e Linux), Rivet (core e ui), Pixel (front com o mock).
+3. Argus e Sentinel; Maestro com o v0.3.0; o usuário com o roteiro da §13.12.
+
+### 13.2 Regras
+1. O prompt mestre §8 vale inteiro. O destino nunca emula com tela bloqueada, área de trabalho segura (UAC, Ctrl+Alt+Del, logon) ou pausa: responde `Refused` (§13.4), e a origem devolve o cursor. A origem encerra a sessão (`Leave` e `ReleaseAll`) quando a própria tela bloqueia ou a área de trabalho de entrada muda.
+2. **Hooks de baixo nível (privacidade).** Eles veem todas as teclas, então:
+   - (a) só existem com o módulo input ligado e pelo menos uma ligação local no `layout.toml` (a captura contínua da §12.6 item 2). Máquina que só recebe não instala hook nenhum;
+   - (b) evento marcado como injetado (`LLKHF_INJECTED`, `LLMHF_INJECTED`) passa direto, sem ser lido: nem o que o ClipSync injeta nem o de outro programa vira captura;
+   - (c) fora da captura ativa, o callback devolve "passa". O de mouse só confere o cruzamento das barreiras. O de teclado só atualiza duas coisas: o conjunto do que está pressionado agora (esvazia ao soltar) e o reconhecimento dos atalhos. Do callback só saem `Activated`, `Hotkey` e, na ativação, o pressionar do que está seguro;
+   - (d) durante a captura ativa, cada evento é bloqueado e vira `InputEvent` no canal do módulo, sem cópia;
+   - (e) proibido: log, `Debug`, `Display` ou `tracing` com vk, scan code, código evdev ou caractere; buffer, histórico, contador por tecla, arquivo ou telemetria. `Debug` de evento de tecla é redigido, como no `InputEvent`;
+   - (f) o callback não espera nada (sem lock bloqueante, sem await, sem I/O): manda por canal sem limite e retorna. O Windows remove em silêncio o hook que estoura o `LowLevelHooksTimeout`;
+   - (g) parar o módulo, pausar tudo ou sair remove os hooks (Drop do `Hooks`).
+3. Unidades: `InputEvent::Motion` e `Scroll` continuam em px lógicos (§4). `ZoneInfo` fica no espaço da plataforma: px lógicos no GNOME; no Windows, px físicos do desktop virtual, com `scale` = DPI/96. Só o dono das zonas converte; a origem não precisa saber o espaço do destino, porque a volta é decidida no destino (§13.6 Vector item 2).
+4. Escopo visível (§12.2 regra 6): o que não existe numa plataforma aparece desabilitado, com "indisponível nesta versão".
+5. `cfg(windows)` só no `clipsync-win` (funções) e em `adapter/win/`. Todo o resto do código novo compila e testa nos dois sistemas.
+
+### 13.3 Decisão: `unsafe_code = "forbid"` e o Win32 (item 4 do pedido)
+**(a) Crate maduro com API segura.** Levantamento de 2026-10-28, na API do crates.io e no código de cada crate:
+- `rdev` 0.5.3 (2023-06): bloqueia pelo `grab` (feature `unstable_grab`), mas o hook não para, o callback mora num `static mut`, depende do `winapi` 0.3.9 (parado desde 2020), o mouse absoluto não desconta a origem do desktop virtual (erra com monitor à esquerda do principal) e o teclado sai só por VK. A 0.6 nunca foi publicada;
+- `rdevin` 0.1.0 (2025-05): fork de um release só, que se declara instável, com o mesmo `winapi`;
+- `willhook` 0.6.3 (2023-12): não bloqueia, sempre chama `CallNextHookEx`;
+- `inputbot` 0.6.0 (2023-08): bloqueia só tecla ou botão com bind; movimento, roda e soltura passam;
+- `enigo` 0.6.1 (2025-08, ativo): só emula; o absoluto é normalizado pelo monitor principal, sem `VIRTUALDESK`; DPI v1;
+- `winapi-easy` 0.3.0 (2025-11): bloqueia, mas não tem `SendInput` de movimento, scan code nem monitores;
+- `display-info` 0.5.10: lista monitores, sem aviso de mudança;
+- `input-capture` e `input-emulation` 0.4.0 (lan-mouse): cobrem quase tudo, mas são GPL-3.0 (proibido, prompt mestre §5);
+- nenhum chama `OpenInputDesktop` nem `WTSRegisterSessionNotification`: a regra do secure desktop exigiria `unsafe` nosso mesmo com (a).
+
+**(b) Crate `windows` da Microsoft, `=0.62.2`,** a versão mais nova e a mesma que o Tauri já puxa no `Cargo.lock`, num lugar só, pequeno e auditado.
+
+Limite técnico, provado pelo Keel com o rustc do projeto: `#[allow(unsafe_code)]` num módulo não compila sob `forbid` (erro E0453), e o Cargo recusa `[lints] workspace = true` junto com `[lints.rust]` no mesmo crate. Então (b) é um crate próprio.
+
+**Recomendação: (b).** Critério: a menor superfície de `unsafe` que cobre o requisito inteiro, com licença compatível e mantida por quem mantém a API do sistema. A opção (a) não cobre o requisito (nenhum crate bloqueia tudo e emula certo no desktop virtual), traz de 28 a 263 blocos `unsafe` de terceiros pouco mantidos e ainda não dispensa `unsafe` nosso.
+
+Como fica:
+1. Crate novo `crates/clipsync-win` (Flux). Os tipos compilam em todo sistema; as funções ficam em `cfg(windows)`. A dep `windows =0.62.2` só em `[target.'cfg(windows)'.dependencies]`, com exatamente estas features: `Win32_Foundation`, `Win32_UI_WindowsAndMessaging`, `Win32_UI_Input_KeyboardAndMouse`, `Win32_Graphics_Gdi`, `Win32_Devices_Display`, `Win32_UI_HiDpi`, `Win32_System_StationsAndDesktops`, `Win32_System_RemoteDesktop`, `Win32_System_Threading` e `Win32_System_LibraryLoader`. Feature nova é mudança de contrato.
+2. Lints próprios, sem `workspace = true`: `[lints.rust] unsafe_code = "deny"` e `unsafe_op_in_unsafe_fn = "deny"`; `[lints.clippy]` com as seis do workspace mais `undocumented_unsafe_blocks = "deny"` e `multiple_unsafe_ops_per_block = "deny"`.
+3. `unsafe` só em `crates/clipsync-win/src/ffi.rs`, que tem o único `#![allow(unsafe_code)]` do repositório. Um bloco por chamada, cada um com `// SAFETY:` dizendo por que os ponteiros e handles valem. O resto do crate não tem `unsafe` e expõe só a API segura da §13.5.
+4. Toda decisão (cruzamento, tradução, coordenadas, atalhos, o que bloquear) fica no `clipsync-input`, sob `forbid`. O `clipsync-win` só chama o sistema e converte tipos.
+5. Prova (CI nos dois runners): `grep -rn 'allow(unsafe_code)' crates/` acha exatamente uma linha, em `crates/clipsync-win/src/ffi.rs`; `grep -rnE '\bunsafe\s*(\{|fn|impl|extern|trait)' crates --include='*.rs'` só acha linhas desse arquivo.
+6. O Sentinel revisa esta decisão antes da primeira linha do `clipsync-win` e revisa o `ffi.rs` bloco a bloco antes do v0.3.0.
+
+### 13.4 Proto v3 (Rivet)
+`PROTOCOL_VERSION = 3`, `MIN_PROTOCOL_VERSION = 1`. Variantes novas no fim do `InputMsg`:
+```rust
+/// v3. Entrada com o trecho de volta. `pos`, `back_from` e `back_to` vão de 0 a 1 ao longo da
+/// borda inteira do monitor de destino; a origem já descontou os cantos mortos.
+EnterSpan { session: u32, edge: Edge, monitor: Option<String>, pos: f32, back_from: f32, back_to: f32 },
+/// v3. Destino para a origem: o cursor saiu pelo trecho de volta, em `pos` (0 a 1 na borda inteira).
+Returned { session: u32, pos: f32 },
+/// v3. Destino para a origem: não emulo nesta sessão.
+Refused { session: u32, reason: RejectReason },
+```
+1. `validate`: `pos`, `back_from` e `back_to` finitos, de 0 a 1; `back_from < back_to`; `monitor` passa no `validate_monitor_name`. O módulo só manda `Refused` com `Locked`, `Paused` ou `ApplyFailed`.
+2. `min_version` das três é 3. Mandar a par com versão menor dá `RemoteTooOld`, e nada sai (§12.10 decisão 7).
+3. Autorização: `EnterSpan` como `EnterAt` (só entra com `input_in` concedido ao remetente; a pausa bloqueia). `Returned` e `Refused` como `Stats`: passam sem `input_in`, e o módulo só age se a `session` for uma que este nó abriu para aquele par.
+4. `ModuleHost` ganha `fn request_pause(&self, paused: bool);`, pelo mesmo caminho do `pause` e do `resume` do controle (`state.toml`, `ModuleInput::Paused` aos módulos, evento `pause_changed`). O `MemHub` implementa e conta as chamadas. Quem usa é o atalho Win+Alt+P.
+5. Hello v3 é aceito pela regra do 0.1.0 e do 0.2.x (3 >= 1).
+
+### 13.5 `clipsync-win`: API segura (Flux)
+```rust
+// crates/clipsync-win/src/lib.rs. Os tipos compilam em todo sistema; as funções, só em cfg(windows).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum WinButton { Left, Right, Middle, X1, X2 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum WinKey { Scan { code: u8, extended: bool }, Vk(u16) }
+/// O que o hook viu, já sem os eventos injetados. `Debug` de `Key` é redigido.
+pub enum RawEvent {
+    Move { x: i32, y: i32 },                               // MSLLHOOKSTRUCT.pt, px físicos do desktop virtual
+    Button { button: WinButton, down: bool },
+    Wheel { delta: i32, horizontal: bool },                // em unidades de WHEEL_DELTA (120)
+    Key { vk: u32, scan: u32, extended: bool, up: bool },  // KBDLLHOOKSTRUCT
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum Verdict { Pass, Block }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum Notice { DisplayChanged, SessionLocked, SessionUnlocked, DesktopSwitched }
+#[derive(Debug, Clone, PartialEq)]
+pub struct Monitor { pub friendly: String, pub device: String, pub path: String, pub x: i32, pub y: i32, pub width: u32, pub height: u32, pub dpi: u32, pub primary: bool }
+pub enum Synth { MoveAbs { nx: i32, ny: i32 }, Button { button: WinButton, down: bool }, Wheel { delta: i32, horizontal: bool }, Key { key: WinKey, up: bool } }
+#[derive(thiserror::Error, Debug)] #[error("win32 {call}: {code}")] pub struct WinError { pub call: &'static str, pub code: u32 }
+
+#[cfg(windows)] pub struct Hooks;     // Drop: tira os dois hooks, fecha a janela oculta e encerra a thread
+#[cfg(windows)] impl Hooks {
+    /// Thread própria com janela oculta de nível superior (janela só de mensagem não recebe o
+    /// broadcast de WM_DISPLAYCHANGE), WTSRegisterSessionNotification, os hooks WH_MOUSE_LL e
+    /// WH_KEYBOARD_LL e o laço de mensagens. `on_input` roda dentro do callback (§13.2 regra 2f).
+    pub fn start(on_input: Box<dyn FnMut(&RawEvent) -> Verdict + Send>, on_notice: Box<dyn FnMut(Notice) + Send>) -> Result<Hooks, WinError>;
+}
+#[cfg(windows)] pub struct Watcher;   // igual ao Hooks, sem hook: só Notice (máquina que só recebe)
+#[cfg(windows)] impl Watcher { pub fn start(on_notice: Box<dyn FnMut(Notice) + Send>) -> Result<Watcher, WinError>; }
+#[cfg(windows)] pub fn monitors() -> Result<Vec<Monitor>, WinError>;   // EnumDisplayMonitors, GetMonitorInfoW, GetDpiForMonitor, QueryDisplayConfig
+#[cfg(windows)] pub fn virtual_screen() -> (i32, i32, i32, i32);      // SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN
+#[cfg(windows)] pub fn cursor_pos() -> Result<(i32, i32), WinError>;
+#[cfg(windows)] pub fn send(inputs: &[Synth]) -> Result<usize, WinError>;   // SendInput; MoveAbs com ABSOLUTE|VIRTUALDESK; Key por SCANCODE (+EXTENDEDKEY) ou VK
+#[cfg(windows)] pub fn input_desktop_is_default() -> bool;           // OpenInputDesktop + GetUserObjectInformationW(UOI_NAME) == "Default"; falha = false
+#[cfg(windows)] pub struct CursorPark; // enquanto vive: cursor estacionado em (x, y) e escondido (janela própria sob o ponto com cursor vazio)
+#[cfg(windows)] impl CursorPark { pub fn new(x: i32, y: i32) -> Result<CursorPark, WinError>; }
+#[cfg(windows)] pub fn keyboard_layout() -> Option<String>;           // KLID do GetKeyboardLayoutNameW, só para diagnóstico
+```
+Regras: toda função que lê ou escreve coordenadas põe a thread em `DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2` na entrada e devolve o contexto anterior na saída (o processo não muda; a CLI não tem manifesto). A normalização do `MoveAbs` (0 a 65535 sobre o desktop virtual, com origem negativa) é do `winmath.rs`, não daqui.
+
+### 13.6 `clipsync-input`
+**Traits e fakes (Vector, primeiro):**
+```rust
+pub enum CaptureEvent {                // as quatro de hoje, mais:
+    Hotkey(Hotkey),                    // atalho reconhecido; as teclas dele não vão a lugar nenhum
+    ZonesChanged(Vec<Zone>),           // monitores mudaram (§13.8)
+    SessionLocked(bool),               // tela desta máquina bloqueou (true) ou voltou; área de trabalho segura conta como bloqueio
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum Hotkey { GoTo(u8), ToggleLock, TogglePause }
+pub enum InputError { /* as de hoje, mais: */ Locked }   // tela bloqueada ou área segura: nada foi emulado
+pub trait CaptureAdapter {   /* o de hoje, mais: */
+    /// Troca as barreiras sem recriar a sessão (no portal, sem diálogo novo).
+    async fn set_barriers(&mut self, barriers: &[BarrierSpec]) -> Result<(), InputError> { Err(InputError::Other("unsupported".into())) }
+    /// Devolve o cursor na barreira `barrier`, em `pos` (0 a 1), um pixel para dentro da zona.
+    async fn release_at(&mut self, barrier: usize, pos: f32) -> Result<(), InputError> { let _ = (barrier, pos); self.release().await }
+}
+pub trait EmulateAdapter {   /* o de hoje, mais: */
+    /// Põe o cursor na entrada. Padrão: a rajada relativa de hoje (§8 regra 8); o `entry_events_at`
+    /// sai do module.rs para o adapter.
+    async fn enter(&mut self, zone: &Zone, zones: &[Zone], edge: Edge, pos: f32) -> Result<(), InputError> { self.emit(&entry_events_at(edge, pos, zone, zones)).await }
+    /// Posição real do cursor, quando a plataforma diz (Windows). Portal: None.
+    fn cursor(&self) -> Option<(i32, i32)> { None }
+}
+impl FakeCaptureHandle { pub fn hotkey(&self, h: Hotkey); pub fn set_zones(&self, z: Vec<Zone>); pub fn session_locked(&self, on: bool); pub fn barriers(&self) -> Vec<BarrierSpec>; }
+impl FakeEmulateHandle { pub fn set_locked(&self, on: bool); pub fn events(&self) -> Vec<InputEvent>; }
+pub const SUPPORTED: bool = cfg!(any(target_os = "linux", windows));   // lib.rs; substitui os dois INPUT_SUPPORTED (cli e ui)
+#[cfg(windows)] pub use adapter::{WinCapture, WinEmulate};
+```
+No `build`, `auto` vira o portal no Linux e o Windows no Windows. `AdapterChoice` ganha `Windows` (`"windows"` no `config.toml`).
+
+**Módulo (Vector):**
+1. Destino v3: no `Enter`, `EnterAt` ou `EnterSpan`, se pausado responde `Refused{Paused}`; emulador sem permissão, `Refused{ApplyFailed}`; `enter` ou `emit` com `InputError::Locked`, `Refused{Locked}`, e a sessão local fecha com `release_all`. Datagrama de sessão recusada é descartado e contado. Par v2 não recebe `Refused` (fica como hoje).
+2. Volta, no destino (`EnterSpan`): o módulo acompanha o cursor no espaço das zonas locais, com a posição real (`emu.cursor()`) quando houver, senão com a estimativa (ponto de entrada mais a soma dos `Motion`, convertidos ao espaço local e presos à união das zonas). Quando o cursor está no trecho `back_from..back_to` da borda `edge` do monitor de entrada e o movimento empurra para fora mais de `RETURN_SLACK_PX` somados, o destino manda `Returned{session, pos}`, para de emular a sessão e solta tudo. A linha do trecho vale como borda mesmo que outro monitor local encoste ali. Fora do trecho, toda borda é parede.
+3. Volta, na origem: para par v3, a origem manda `EnterSpan` com `pos` e o trecho `peer_from..peer_to` da ligação (§12.6 item 4), já sem os cantos mortos (`trim_dead_corner` no comprimento da zona de destino), e não usa o `VirtualCursor`. Ao receber `Returned{pos}`, faz `t = (pos - peer_from) / (peer_to - peer_from)`, chama `release_at(barreira, from + t * (to - from))` e fecha a sessão com `Leave`. Com a trava ligada, `Returned` é ignorado. Para par v2, fica como hoje (`EnterAt` e `VirtualCursor`).
+4. Troca: logo depois do `Activated`, o adaptador de captura emite um `Input` de pressionar para cada modificador e botão ainda seguro (assim Shift e arrasto atravessam), e o destino aplica depois de posicionar o cursor. Na volta e em toda troca, o destino solta tudo (`release_all`), como hoje.
+5. Atalhos: `GoTo(n)` vira `InputSwitch` para o dispositivo com `hotkey = n` no `layout.toml`; o `n` do próprio dispositivo devolve o cursor. `ToggleLock` inverte o `InputLock`. `TogglePause` chama `host.request_pause(!host.paused())`.
+6. `SessionLocked(true)` na origem fecha a sessão com `Leave` e `ReleaseAll` e não deixa barreira ativar até `SessionLocked(false)`.
+7. `Zones` em tempo real (§13.8).
+8. Tela bloqueada no Linux (`adapter/session.rs`, cfg linux): `LockedHint` da sessão no logind (`org.freedesktop.login1`, a sessão de `XDG_SESSION_ID` ou de `GetSessionByPID`), lido na subida e acompanhado por `PropertiesChanged`. O `PortalCapture` emite `SessionLocked`, e o `PortalEmulate` devolve `InputError::Locked`. Sem logind, trata como desbloqueado e o diagnóstico avisa.
+9. Textos novos em `msg.rs`, sem travessão: "<nome> está com a tela bloqueada: o controle voltou para esta máquina", "<nome> está pausado: o controle voltou para esta máquina", "<nome> não deixou emular teclado e mouse".
+
+**Adaptador Windows (Flux, `src/adapter/win/`):**
+1. `WinCapture` (nome `"win-hooks"`):
+   - `zones()` e `known_zones()` vêm de `monitors()`, sem diálogo; o nome de cada zona sai do `winmath`;
+   - `start` sobe o `Hooks`. A barreira é o segmento da §8 regra 7 sobre a zona. Ativa quando o cursor está no último pixel do segmento e o evento empurra para fora, ou quando o ponto novo cruza a linha do segmento (borda entre dois monitores locais). O evento que ativa é bloqueado;
+   - durante a captura ativa: `CursorPark` no centro do monitor da barreira; delta = ponto do hook menos o ponto estacionado, em px lógicos pela escala desse monitor; roda vira `ScrollDiscrete` com `dy = -delta` no vertical e `dx = delta` no horizontal;
+   - na ativação, solta localmente (`send` de soltar, que volta marcado como injetado e o hook ignora) tudo o que estava pressionado, e emite o pressionar dos seguros (item 4 do módulo). Na volta, pressiona de novo localmente o que ainda está fisicamente seguro;
+   - `release_at` desfaz o `CursorPark` e põe o cursor na barreira, um pixel para dentro;
+   - teclas por `keymap::from_windows`; atalhos Win+Alt+1 a 9, Win+Alt+L e Win+Alt+P, com ou sem captura ativa: as teclas do atalho são engolidas, e um toque de tecla neutra evita que o Win solto abra o menu Iniciar. Win+Alt+C e Win+Alt+V ficam "indisponível nesta versão";
+   - `Notice::DisplayChanged` vira `ZonesChanged`; `SessionLocked`, `SessionUnlocked` e `DesktopSwitched` viram `SessionLocked(bool)` (`input_desktop_is_default()` decide o valor depois de `DesktopSwitched`).
+2. `WinEmulate` (nome `"win-sendinput"`):
+   - `start` sobe o `Watcher`;
+   - antes de cada lote, `input_desktop_is_default()` e a sessão desbloqueada; senão `Err(InputError::Locked)`, sem injetar nada;
+   - `Motion`: posição nova = cursor atual mais delta vezes a escala do monitor atual, presa à união dos monitores, mandada como `MoveAbs`. Não usa movimento relativo, para a aceleração do Windows não agir duas vezes;
+   - `enter`: `MoveAbs` direto no ponto (monitor, borda, `pos`), um pixel para dentro;
+   - teclas por `keymap::to_windows`; `ScrollDiscrete` vira roda com o sinal trocado no vertical; `Scroll` em px vira roda com 120 por 15 px, acumulando o resto (valor inicial, a afinar no roteiro);
+   - `release_all` solta o que este emulador pressionou; `cursor()` = `cursor_pos()`.
+3. `adapter::win::self_test()`, chamado pelo `self_test.rs` do Vector: sobe e desce os hooks, lê os monitores e confere a área de trabalho. Dá `Experimental("captura e emulação do Windows prontas, ainda sem prova nesta máquina")` até a matriz registrar o roteiro, ou `Unavailable(motivo)`.
+4. `winmath.rs` (puro, todo sistema): nome estável da zona (o nome amigável do `QueryDisplayConfig`; vazio, o `device` sem `\\.\`; repetido ganha " 2", " 3" na ordem do `path`; corte em 64 bytes na fronteira de caractere); zonas a partir dos monitores; cruzamento de barreira; normalização do `MoveAbs`; px físicos para lógicos por DPI; reconhecimento dos atalhos a partir da sequência de teclas.
+
+### 13.7 Teclado entre plataformas
+1. **Decisão: o fio leva a posição física da tecla** (código evdev, como no §4), e quem recebe aplica o próprio layout. Dead keys, AltGr e ç são do layout do destino, então o destino precisa estar configurado com o layout do teclado físico da origem (§13.14). Motivo: o libei não aceita keymap do cliente (o keymap vai do EIS ao cliente), e o `SendInput` por scan code também usa o layout do Windows de destino. Isso corrige o prompt mestre §2.3 item 7, que supunha mandar o keymap da origem. Traduzir caractere por caractere não cabe nesta versão.
+2. `keymap.rs` (Flux, puro, testado nos dois CIs):
+   ```rust
+   pub fn from_windows(vk: u32, scan: u32, extended: bool) -> Option<u32>;   // None = descartar
+   pub fn to_windows(code: u32) -> Option<clipsync_win::WinKey>;             // None = sem tecla no Windows: descartado e contado
+   pub fn button_from_windows(b: clipsync_win::WinButton) -> u32;
+   pub fn button_to_windows(code: u32) -> Option<clipsync_win::WinButton>;
+   ```
+   - bloco principal: scan code do set 1 sem E0 é igual ao código evdev (de 0x01 `KEY_ESC` a 0x58 `KEY_F12`), menos o que segue;
+   - com E0: 0x1C `KEY_KPENTER` (96), 0x1D `KEY_RIGHTCTRL` (97), 0x35 `KEY_KPSLASH` (98), 0x37 `KEY_SYSRQ` (99), 0x38 `KEY_RIGHTALT` (100, AltGr), 0x47 `KEY_HOME` (102), 0x48 `KEY_UP` (103), 0x49 `KEY_PAGEUP` (104), 0x4B `KEY_LEFT` (105), 0x4D `KEY_RIGHT` (106), 0x4F `KEY_END` (107), 0x50 `KEY_DOWN` (108), 0x51 `KEY_PAGEDOWN` (109), 0x52 `KEY_INSERT` (110), 0x53 `KEY_DELETE` (111), 0x5B `KEY_LEFTMETA` (125), 0x5C `KEY_RIGHTMETA` (126), 0x5D `KEY_COMPOSE` (127);
+   - ABNT2: 0x73 `KEY_RO` (89, "/ ?"), 0x7E `KEY_KPCOMMA` (121, o "." extra do teclado numérico), 0x56 `KEY_102ND` (86, "\ |");
+   - por VK, nos dois sentidos: `VK_PAUSE` com `KEY_PAUSE` (119), `VK_NUMLOCK` com `KEY_NUMLOCK` (69); na emulação, `KEY_SYSRQ` sai como `VK_SNAPSHOT`;
+   - descartado: scan code com o bit 0x200 (o LCtrl falso que o Windows gera com o AltGr, 0x21D, e os Shift falsos);
+   - botões: `BTN_LEFT` 0x110, `BTN_RIGHT` 0x111, `BTN_MIDDLE` 0x112, `BTN_SIDE` 0x113 (X1, voltar), `BTN_EXTRA` 0x114 (X2, avançar).
+
+   O Flux confere cada valor em `linux/input-event-codes.h` e na Keyboard Scan Code Specification da Microsoft. Testes: ida e volta de toda tecla física do ABNT2 e do US; casos nomeados ç (0x27 com `KEY_SEMICOLON` 39), acento agudo e crase (0x1A com `KEY_LEFTBRACE` 26), til e circunflexo (0x28 com `KEY_APOSTROPHE` 40), aspas (0x29 com `KEY_GRAVE` 41), AltGr, "/ ?" e o LCtrl falso descartado.
+3. Linux: a emulação já manda evdev pelo libei (`portal.rs`), sem tradução. O emulador lê o keymap que o EIS anuncia só para o diagnóstico ("layout do teclado nesta máquina", o nome do `xkb_symbols` quando vier). No Windows, o diagnóstico mostra o KLID (`00010416` é Português (Brasil ABNT2); `00000409` é EUA).
+4. **P4b** (roteiro §13.12 passos 4 e 8): no editor do destino, o teclado da origem digita ``ação É ç Ç à ü ã õ â ê ~ ^ ´ ` / ? \ |``, e com AltGr: AltGr+Q dá `/`, AltGr+W dá `?`, AltGr+1 dá `¹`, AltGr+2 dá `²`. Passa quando o texto sai igual ao que o teclado do próprio destino produz, nos dois sentidos.
+
+### 13.8 `Zones` em tempo real
+1. O módulo republica `Zones` quando o conteúdo muda (nome, posição, tamanho ou escala de qualquer zona), não só a quantidade, como faz hoje o `on_note`, e reinstala as barreiras por `set_barriers`, sem recriar a sessão: no InputCapture v1, sessão nova é diálogo novo.
+2. Fontes: o módulo relê `known_zones()` a cada 2 s em toda plataforma, o que cobre o Linux sem sessão (estimativa do `/sys/class/drm`) e a máquina que só recebe. Com sessão de captura, o `ZonesChanged` do adaptador adianta a mudança: no Linux, pelo sinal `ZonesChanged` do InputCapture e um `GetZones`; no Windows, pelo `WM_DISPLAYCHANGE`.
+3. A barreira cuja zona sumiu fica inativa até a zona voltar, e a ligação continua no `layout.toml`.
+
+### 13.9 Interface
+- **Rivet (`clipsync-ui`):** `INPUT_SUPPORTED` dá lugar a `clipsync_input::SUPPORTED`; `features.global_shortcuts` fica true no Windows com input ligado; o onboarding libera o input no Windows, e o `onboarding_self_test` chama o self_test do input lá; o diagnóstico ganha "layout do teclado" e, no Windows, "atalhos ativos".
+- **Vector (`clipsync-ui/src/layout.rs`):** a tela 4 no Windows lista os monitores reais pelo `known_zones()`; `tests/layout_windows.rs` reescrito para input ligado com adaptadores falsos; `input_off` só com o módulo desligado.
+- **Flux (cli):** `INPUT_SUPPORTED` dá lugar a `clipsync_input::SUPPORTED`; `clipsync init` oferece input no Windows; `probe input --capture` e `--emulate` passam a existir no Windows (o probe é do Vector).
+- **Pixel:** a tela 4 mostra os monitores do Windows com nome e escala quando for diferente de 100%; onboarding e Dispositivos sem "indisponível" no input quando `features` disser; Preferências mostram os atalhos como texto fixo, "ativos nesta máquina" no Windows e "indisponível nesta versão" no Linux; as mensagens de recusa aparecem como bloqueio; o mock ganha `?cenario=windows` (2 monitores, um com escala 1,5).
+
+### 13.10 Deps, CI e release (Maestro)
+1. Deps aprovadas pelo Keel, fixadas com `=`: `windows =0.62.2` (só no `clipsync-win`, só `cfg(windows)`, features da §13.3 item 1) e `zbus =5.19.0` (só no `clipsync-input`, só Linux, `default-features = false`, feature `tokio`). As duas já estão no `Cargo.lock`, e nenhuma versão pode mudar lá.
+2. Membro novo `crates/clipsync-win` no workspace e no `default-members` (no Linux compila só os tipos).
+3. CI: Linux e Windows como hoje; o clippy do Windows cobre o `cfg(windows)`. Passo novo nos dois runners: os greps da §13.3 item 5.
+4. Release v0.3.0 (workspace em 0.3.0): os mesmos 6 pacotes, com o nome v0.3.0, e o `SHA256SUMS`. A tag sai com os critérios 1 a 7 da §13.11 passando; o roteiro do usuário (critério 8) pode vir depois do release, como na S6.
+
+### 13.11 Critérios de pronto (passa/não passa)
+1. **Rivet:** `cargo test -p clipsync-proto` e `cargo test -p clipsync-core` verdes com: (a) round-trip postcard de `EnterSpan`, `Returned` e `Refused`; (b) `validate` recusa `pos` 1.5, NaN, `back_from >= back_to` e nome de monitor inválido; (c) `EnterSpan` só entra com `input_in` e sem pausa; `Returned` e `Refused` passam sem `input_in`; (d) as três a par com versão 2 dão `RemoteTooOld`, e nada sai; (e) Hello v3 aceito com mínimo 1; (f) `request_pause(true)` pausa os dois módulos e emite `pause_changed`, como o controle.
+2. **Vector:** `cargo test -p clipsync-input` e `cargo test -p clipsync-ui --test layout` verdes nos dois CIs, com adaptadores falsos:
+   - (a) destino bloqueado (`set_locked(true)`) responde `Refused{Locked}` ao `EnterSpan`, nada é emitido, e a origem fecha a sessão com o texto da §13.6 item 9;
+   - (b) empurrar para fora dentro do trecho de volta gera `Returned` com o `pos` certo, e a origem chama `release_at` na posição mapeada; empurrar a mesma borda fora do trecho, ou outra borda, não gera nada; com a trava, `Returned` é ignorado;
+   - (c) botão seguro na ativação chega ao destino como pressionar depois do posicionamento; na volta, `pressed_now() == 0` no destino;
+   - (d) `hotkey(GoTo(n))` abre sessão no dispositivo com `hotkey = n`; o `n` do próprio fecha a sessão; `ToggleLock` alterna o `InputLock`; `TogglePause` chama `request_pause` (contado no `MemHub`);
+   - (e) `set_zones` com a mesma quantidade e outra resolução faz o par v2 com `input_in` receber `Zones` novo em até 3 s, e `barriers()` mostra a geometria nova; sem mudança, nada sai;
+   - (f) `session_locked(true)` na origem fecha a sessão com `Leave` e `ReleaseAll` e impede ativação até `false`;
+   - (g) par v2: a origem manda `EnterAt` e usa o `VirtualCursor`, sem variante v3;
+   - (h) no CI Windows, `layout_windows.rs`: com input ligado e adaptadores falsos, os comandos da tela 4 funcionam; `input_off` só com o módulo desligado.
+3. **Flux:** `cargo test -p clipsync-input --test keymap --test winmath` verdes nos dois CIs, com os casos da §13.7 item 2 e do `winmath` (nomes estáveis e repetidos; `MoveAbs` nos quatro cantos de um desktop virtual com origem negativa; px lógicos a 96, 120, 144 e 192 dpi; cruzamento no último pixel e na borda entre monitores; Win+Alt+N, L e P reconhecidos e o toque neutro gerado); `cargo clippy` verde no CI Windows com o `clipsync-win` e o adaptador; os greps da §13.3 item 5; `grep -rn 'INPUT_SUPPORTED' crates/` não acha nada (com o Rivet).
+4. **Rivet (ui):** `cargo test -p clipsync-ui` verde nos dois CIs; no Windows, `features.global_shortcuts` true com input ligado, e `onboarding_self_test` traz o input diferente de `not_tested`.
+5. **Pixel:** os greps do §12.9 item 5 seguem passando; no portal com o mock, `?cenario=windows` mostra na tela 4 os dois monitores com nome e escala, Preferências mostram os atalhos ativos (e "indisponível nesta versão" no cenário Linux), e o onboarding libera teclado e mouse; veredito do Argus.
+6. **Maestro:** CI verde nos dois runners na base da tag; v0.3.0 com os 6 pacotes e `sha256sum -c SHA256SUMS` OK.
+7. **Sentinel:** a decisão da §13.3 revisada antes do `clipsync-win`; na revisão final, sem bloqueante: cada `unsafe` do `ffi.rs` com `SAFETY` correto, os hooks contra a §13.2 regra 2, `Returned` e `Refused` só para sessão do mesmo par, e o bloqueio de tela nos dois sistemas.
+8. **Usuário:** o roteiro da §13.12, com a resposta por passo registrada pelo Argus; a matriz ganha a linha de input do Windows.
+
+### 13.12 Roteiro manual do usuário (PC Windows e notebook)
+Antes: parar o Input Leap nos dois (servidor no PC, cliente Flatpak no notebook); instalar o v0.3.0 nos dois; PC e notebook pareados; no notebook, em Dispositivos, ligar "pode controlar este dispositivo" para o PC (e no PC para o notebook, para o passo 8); no PC, na tela Layout, ligar a borda inferior do monitor 2 ao topo do `eDP-1`, com o atalho 1 no PC e o 2 no notebook, e copiar o layout para o notebook.
+
+1. Abrir Layout no PC. Deve ver: os 2 monitores do PC com nome e o `eDP-1` do notebook.
+2. Levar o mouse à borda inferior do monitor 2; depois à do monitor 1 e aos cantos. Deve ver: o cursor some do PC e aparece no topo do notebook, na posição proporcional; no monitor 1 e nos cantos, nada.
+3. No notebook, empurrar as bordas esquerda, direita e de baixo; depois subir pela de cima. Deve ver: nas três, nada; pela de cima, o cursor volta ao monitor 2 no ponto correspondente.
+4. No notebook, num editor, digitar a frase da P4b (§13.7 item 4) e rolar a roda. Deve ver: o texto igual; a página rolando no sentido certo.
+5. Segurar Shift no PC, cruzar e digitar uma letra; soltar, voltar e digitar no PC. Depois apertar o botão perto da borda, cruzar segurando e soltar no notebook. Deve ver: maiúscula no notebook e minúscula no PC; a seleção começa na entrada do notebook, e nada fica preso no PC.
+6. Win+Alt+2, Win+Alt+1, Win+Alt+L duas vezes, Win+Alt+P duas vezes. Deve ver: vai ao notebook e volta; as bordas param e voltam a trocar; pausa (a bandeja mostra Retomar) e retoma; o menu Iniciar não abre.
+7. Com o cursor no notebook, bloquear o notebook (Super+L) e tentar cruzar de novo; depois, com o cursor no notebook, Win+L no PC. Deve ver: o cursor volta ao PC com o aviso de tela bloqueada, e a nova travessia é recusada; depois do Win+L, nada é digitado no notebook.
+8. Pelo teclado do notebook, cruzar para o PC (o diálogo do portal aparece uma vez) e digitar a frase da P4b no Bloco de Notas; depois abrir algo como administrador no PC e tentar controlar o aviso do UAC. Deve ver: o texto igual; nada injetado na tela do UAC.
+9. Com os dois apps abertos, mudar a escala ou a resolução de um monitor do PC. Deve ver: a tela Layout do notebook muda em até 3 s, e a ligação do monitor 2 continua.
+
+O usuário responde por passo ("ok" ou o que viu), e o Argus registra.
+
+### 13.13 Decisões da S7
+1. Keel (item 4 do pedido): opção (b), crate próprio `clipsync-win` com o `windows =0.62.2` e `unsafe` só no `ffi.rs` (§13.3). Depende da revisão do Sentinel antes dos builders do Win32.
+2. Keel: teclado pela posição física, com o layout do destino valendo (§13.7 item 1). Corrige o prompt mestre §2.3 item 7.
+3. Keel: com par v3, a volta é decidida no destino, que conhece as próprias zonas e unidades (`EnterSpan` e `Returned`); a origem só mapeia a posição. Com par v2, fica o `VirtualCursor`.
+4. Keel: hook só com ligação local; máquina que só recebe não tem hook.
+5. Keel: no Windows, o movimento emulado é absoluto, calculado a partir do delta, para não acelerar duas vezes.
+6. Keel: atalhos fixos e só no Windows nesta versão (Win+Alt+1 a 9, L e P).
+7. Maestro: proto v3 com o Rivet; release v0.3.0.
+
+### 13.14 Perguntas que só o usuário responde
+1. O terceiro PC: sistema e versão, sessão gráfica (Windows, GNOME Wayland, KDE ou X11) e quantos monitores? KDE e X11 ficam fora da S7.
+2. Qual o layout do teclado em cada máquina? O ClipSync manda a posição da tecla, e a máquina que recebe usa o próprio layout; com ABNT2 em todas, acento e ç saem certos.
+3. A disposição das telas: confirma "borda inferior do monitor 2 do PC leva ao topo do notebook"? Onde entra o terceiro PC?
+4. Precisa ir do notebook direto ao terceiro PC, sem passar pelo PC? Fica fora da S7.
+5. Precisa controlar, de outra máquina, programas abertos como administrador no PC? O Windows bloqueia essa entrada sem elevar o ClipSync, e a S7 não eleva.
