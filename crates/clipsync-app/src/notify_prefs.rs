@@ -25,12 +25,13 @@ impl NotifyPrefs {
         })
     }
 
-    /// `kind` é o `kind` do evento `notification`. Tipo desconhecido não passa.
+    /// `kind` é o `kind` do evento `notification`. Tipo desconhecido não passa. `device_removed`
+    /// (um par removeu este dispositivo, contrato v1.16) segue a preferência `block`.
     pub fn allows(&self, kind: &str) -> bool {
         match kind {
             "item_received" => self.item_received,
             "device_connected" => self.device_connected,
-            "block" => self.block,
+            "block" | "device_removed" => self.block,
             _ => false,
         }
     }
@@ -66,6 +67,21 @@ mod tests {
         let off = NotifyPrefs::from_prefs(&prefs(false, true, false)).expect("valid prefs");
         assert!(
             !off.allows("item_received") && off.allows("device_connected") && !off.allows("block")
+        );
+    }
+
+    #[test]
+    fn a_removal_follows_the_block_switch_and_nothing_else() {
+        let on = NotifyPrefs::from_prefs(&prefs(false, false, true)).expect("valid prefs");
+        assert!(on.allows("device_removed"));
+        let off = NotifyPrefs::from_prefs(&prefs(true, true, false)).expect("valid prefs");
+        assert!(
+            !off.allows("device_removed"),
+            "item and connected on, block off"
+        );
+        assert!(
+            !NotifyPrefs::default().allows("device_removed"),
+            "off until the prefs are known"
         );
     }
 
