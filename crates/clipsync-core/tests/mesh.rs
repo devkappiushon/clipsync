@@ -400,6 +400,21 @@ async fn mesh_unknown_identity_never_connects() {
             "A must never see PeerUp: {ev:?}"
         );
     }
+    // The refused side records it once, however many times it dialed; A records nothing (an
+    // unknown key could be anyone on the network).
+    let sc = status(&c.profile).await.unwrap();
+    assert_eq!(sc.recent_blocks.len(), 1, "{:?}", sc.recent_blocks);
+    let b = &sc.recent_blocks[0];
+    assert_eq!(
+        (b.peer, b.peer_name.as_deref(), b.module, b.reason.as_str()),
+        (
+            Some(a.id),
+            Some("a"),
+            None,
+            clipsync_core::msg::PEER_REFUSED_US
+        )
+    );
+    assert!(sa.recent_blocks.is_empty(), "{:?}", sa.recent_blocks);
     stop(ra).await;
     stop(rc).await;
 }
@@ -1013,7 +1028,17 @@ async fn a_revoked_peer_removes_the_revoker_itself() {
         peer_state(&d.profile, c.id).await,
         Some(PeerState::Connected)
     );
-    assert!(status(&d.profile).await.unwrap().recent_removals.is_empty());
+    // d learns why: one entry, c refused its certificate; c records nothing.
+    let sd = status(&d.profile).await.unwrap();
+    assert!(sd.recent_removals.is_empty());
+    let refusals: Vec<_> = sd
+        .recent_blocks
+        .iter()
+        .filter(|b| b.peer == Some(c.id))
+        .collect();
+    assert_eq!(refusals.len(), 1, "{:?}", sd.recent_blocks);
+    assert_eq!(refusals[0].reason, clipsync_core::msg::PEER_REFUSED_US);
+    assert!(status(&c.profile).await.unwrap().recent_blocks.is_empty());
     stop(rc).await;
     stop(rd).await;
 }

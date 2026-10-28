@@ -10,6 +10,9 @@ pub const KEY_CHANGED: &str = "chave do par mudou; repareie";
 pub const VERSION_MISMATCH: &str = "versão de protocolo incompatível";
 /// Dialer log when the peer refused our certificate (rule 6).
 pub const REFUSED_BY_PEER: &str = "recusado pelo par: certificado não confiável";
+/// recent_blocks entry on the side that was refused (v1.16): the peer no longer has us paired.
+/// The UI shows it after the peer's name.
+pub const PEER_REFUSED_US: &str = "recusou a conexão: este dispositivo não está mais pareado lá";
 /// ControlResponse::Error when a module's channel is closed.
 pub const MODULE_GONE: &str = "módulo encerrado";
 /// ControlResponse::Error / last_block when a module does not answer in time.

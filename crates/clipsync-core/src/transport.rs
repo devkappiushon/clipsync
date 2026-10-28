@@ -47,6 +47,12 @@ pub fn close(conn: &Connection, code: CloseCode) {
     conn.close(varint(code), code.reason());
 }
 
+/// A CONNECTION_CLOSE whose reason is one of the fixed rustls texts of a refused certificate.
+fn refused_our_certificate(e: &quinn::ConnectionError) -> bool {
+    matches!(e, quinn::ConnectionError::ConnectionClosed(c)
+        if tls::HANDSHAKE_REJECT_REASONS.iter().any(|r| r.as_bytes() == &c.reason[..]))
+}
+
 /// Reads one control frame. Above MAX_CONTROL_FRAME_BYTES the stream is stopped and reset with
 /// CloseCode::Protocol before anything is allocated (rule 10).
 pub async fn read_control(
@@ -122,6 +128,9 @@ struct Slot {
     active: Option<Active>,
     /// Wakes the dialer: connection lost, peers reloaded.
     wake: Arc<Notify>,
+    /// The peer refused our certificate and that is already in recent_blocks: one entry while
+    /// it repeats, cleared when a connection comes up again.
+    refused: bool,
 }
 
 struct Active {
@@ -142,6 +151,7 @@ impl Slot {
             state: PeerState::Disconnected,
             active: None,
             wake: Arc::new(Notify::new()),
+            refused: false,
         }
     }
 
@@ -462,6 +472,23 @@ impl Inner {
         blocks.truncate(MAX_RECENT_BLOCKS);
     }
 
+    /// The peer refused our certificate: it no longer has us paired (revoked while we were away,
+    /// or re-created). One recent_blocks entry while it repeats; nothing on the refusing side,
+    /// where an unknown key could be anyone on the network.
+    fn refused_by(&self, peer: PeerId) {
+        let first = match self.lock().get_mut(&peer) {
+            Some(slot) if !slot.refused => {
+                slot.refused = true;
+                true
+            }
+            _ => false,
+        };
+        if first {
+            tracing::warn!(peer = %peer, "{}", msg::REFUSED_BY_PEER);
+            self.push_block(Some(peer), None, msg::PEER_REFUSED_US.to_string());
+        }
+    }
+
     /// The peer removed us: remember it (status) and ask the agent to remove it from peers.toml.
     fn revoked_by(&self, peer: PeerId) {
         let Some(peer_name) = self.lock().get(&peer).map(|s| s.entry.name.clone()) else {
@@ -654,7 +681,12 @@ impl Inner {
             Ok(Err(e)) => {
                 return Err(match verifier.last_rejected() {
                     Some(got) => DialFail::KeyChanged(got),
-                    None => other(&e),
+                    None => {
+                        if refused_our_certificate(&e) {
+                            self.refused_by(peer);
+                        }
+                        other(&e)
+                    }
                 });
             }
             Err(_) => return Err(DialFail::Other("dial timeout".into())),
@@ -684,12 +716,13 @@ impl Inner {
                 Err(DialFail::Other(format!("closed: {code:?}")))
             }
             Ok(Err(HelloFail::Lost(e))) => {
-                if let Some(quinn::ConnectionError::ConnectionClosed(c)) = conn.close_reason()
-                    && tls::HANDSHAKE_REJECT_REASONS
-                        .iter()
-                        .any(|r| r.as_bytes() == &c.reason[..])
+                // TLS 1.3: our side may finish the handshake before the peer checks our
+                // certificate, so its refusal can also arrive here.
+                if conn
+                    .close_reason()
+                    .is_some_and(|r| refused_our_certificate(&r))
                 {
-                    tracing::warn!(peer = %peer, "{}", msg::REFUSED_BY_PEER);
+                    self.refused_by(peer);
                 }
                 Err(DialFail::Other(e))
             }
@@ -735,6 +768,7 @@ impl Inner {
                             generation,
                         });
                         slot.state = PeerState::Connected;
+                        slot.refused = false;
                         Installed::Won {
                             old,
                             fresh,
