@@ -51,3 +51,46 @@ pub const APPLIED: &str = "aplicado";
 pub const IN_INBOX: &str = "na caixa de recebidos";
 pub const STALE: &str = "antigo, só na caixa";
 pub const REFUSED: &str = "recusado";
+
+// Autoteste (contrato §12.6 clipboard item 5): o detalhe vai como está para a tela de onboarding.
+// Nunca leva conteúdo do clipboard.
+pub const SELF_TEST_PANIC: &str = "o autoteste do clipboard falhou por um erro interno";
+pub fn self_test_open_failed(detail: &str) -> String {
+    format!("não foi possível abrir o clipboard: {detail}")
+}
+pub fn self_test_read_failed(detail: &str) -> String {
+    format!("a leitura do clipboard falhou: {detail}")
+}
+pub fn self_test_write_failed(detail: &str) -> String {
+    format!("a escrita no clipboard falhou: {detail}")
+}
+pub const SELF_TEST_MISMATCH: &str =
+    "o texto lido do clipboard não confere com o texto de teste escrito";
+fn restored_note(had_text: bool) -> &'static str {
+    if had_text {
+        "o conteúdo anterior foi devolvido"
+    } else {
+        "o clipboard estava vazio e voltou a ficar vazio"
+    }
+}
+pub fn self_test_validated(had_text: bool, latency_ms: u128) -> String {
+    format!(
+        "escrita, leitura e aviso de mudança conferem em {latency_ms} ms; {}",
+        restored_note(had_text)
+    )
+}
+pub fn self_test_experimental(adapter: &str, had_text: bool, latency_ms: u128) -> String {
+    format!(
+        "escrita, leitura e aviso de mudança conferem em {latency_ms} ms, mas o adaptador {adapter} \
+         ainda não foi validado nesta plataforma (só texto, mudanças detectadas por polling); {}",
+        restored_note(had_text)
+    )
+}
+pub fn self_test_no_event(waited_ms: u128, had_text: bool) -> String {
+    format!(
+        "escrita e leitura conferem, mas o aviso de mudança não chegou em {waited_ms} ms: cópias \
+         feitas fora do ClipSync podem não ser detectadas; {}",
+        restored_note(had_text)
+    )
+}
+pub const SELF_TEST_RESTORE_FAILED: &str = "escrita, leitura e aviso de mudança conferem, mas não foi possível devolver o conteúdo anterior ao clipboard";

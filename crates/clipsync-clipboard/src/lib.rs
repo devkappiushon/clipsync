@@ -7,6 +7,7 @@ mod module;
 pub mod msg;
 #[cfg(target_os = "linux")]
 pub mod probe;
+mod self_test;
 
 use clipsync_proto::{Module, ModuleError};
 use std::path::Path;
@@ -19,6 +20,7 @@ pub use adapter::{ClipError, ClipSnapshot, ClipboardAdapter, FakeClipboard, Fake
 pub use config::{AdapterChoice, ClipMode, ClipboardConfig};
 pub use diag::diagnose;
 pub use module::build_with_adapter;
+pub use self_test::{SelfTestOutcome, self_test, self_test_with};
 
 /// Builds the module with the adapter picked by `cfg.adapter`. `auto` is the XWayland bridge (needs
 /// DISPLAY) on Linux and arboard polling on Windows.
