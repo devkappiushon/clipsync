@@ -787,6 +787,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "clipsync-ui"
+version = "0.1.0"
+dependencies = [
+ "clipsync-clipboard",
+ "clipsync-core",
+ "clipsync-input",
+ "clipsync-proto",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "cobs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
