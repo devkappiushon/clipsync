@@ -73,7 +73,9 @@ estado.eu = EU;
 estado.inicializado = cenario !== "sem-perfil";
 estado.agente = cenario === "erro" ? "failed" : cenario === "sem-perfil" ? "stopped" : "in_app";
 estado.erroAgente = cenario === "erro" ? "Não foi possível abrir a porta 47800: já está em uso." : null;
-estado.pausado = false;
+// Windows que recusou o Win+Alt+P de retomar (I-S7-2): o app abre pausado, que é quando o aviso importa.
+estado.retomadaRecusada = cenario === "windows-recusa";
+estado.pausado = estado.retomadaRecusada;
 estado.telaTravada = false;
 estado.modulos = { clipboard: true, input: true };
 estado.dispositivos = dispositivosPadrao();

@@ -60,7 +60,12 @@ function bloqueios() {
           { at_unix_ms: AGORA - 19 * MIN, peer_id: antigo?.peer_id ?? null, peer_name: "notebook-antigo", module: "input", reason: "notebook-antigo não deixou emular teclado e mouse" },
         ]
       : [];
+  // I-S7-2 (§13.2 regra 2g): o Windows não liberou Win+Alt+P para retomar. O texto é o do contrato.
+  const retomada = estado.retomadaRecusada
+    ? [{ at_unix_ms: AGORA - 2 * MIN, peer_id: null, peer_name: null, module: "input", reason: "o Windows não liberou Win+Alt+P para retomar: use a bandeja ou o botão Pausar tudo" }]
+    : [];
   return [
+    ...retomada,
     ...recusas,
     { at_unix_ms: AGORA - 28 * MIN, peer_id: casa?.peer_id ?? null, peer_name: "pc-de-casa", module: "clipboard", reason: "Oferta recusada: malha pausada." },
     { at_unix_ms: AGORA - 3 * 60 * MIN, peer_id: antigo?.peer_id ?? null, peer_name: "notebook-antigo", module: "input", reason: "Par sem permissão de controle tentou entrar." },

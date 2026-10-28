@@ -71,8 +71,21 @@
 }
 
 .preferencias .tabela td {
-  padding: var(--s-1) var(--s-3);
+  padding: var(--s-1) var(--s-2);
   vertical-align: middle;
+}
+
+.preferencias .tabela th {
+  padding-inline: var(--s-2);
+}
+
+/* Tabela de atalhos: a ação ocupa o que a tecla (sem quebra) deixa livre */
+.preferencias .tabela td:last-child {
+  white-space: nowrap;
+}
+
+.preferencias .tabela th:first-child {
+  width: 100%;
 }
 
 .preferencias__rodape {
@@ -85,4 +98,15 @@
   .preferencias__grade {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+.preferencias__acao {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--s-2);
+}
+
+.preferencias__acao .nota {
+  flex: 1 1 auto;
 }

@@ -9,7 +9,21 @@ import { h, trocar } from "../dom.js";
 import { recurso } from "../estado.js";
 import { INDISPONIVEL, mensagemDe } from "../formatar.js";
 
-const EVENTOS = ["prefs_changed", "resync"];
+// `pause_changed` entra porque é ao pausar que o Windows pode recusar o Win+Alt+P de retomar.
+const EVENTOS = ["prefs_changed", "pause_changed", "resync"];
+
+// O adaptador avisa como bloqueio de input, sem campo próprio no contrato (§13.2 regra 2g): reconhece pelo texto.
+const RECUSA_RETOMADA = /não liberou win\+alt\+p/i;
+
+/** O Windows recusou o Win+Alt+P de retomar? Sem agente ou sem diagnóstico, não há aviso a dar. */
+async function retomadaRecusada() {
+  try {
+    const { blocks } = await api.diagnosticsGet();
+    return blocks.some((b) => b.module === "input" && RECUSA_RETOMADA.test(b.reason));
+  } catch {
+    return false;
+  }
+}
 
 const NOTIFICACOES = [
   { chave: "item_received", rotulo: "Item recebido", descricao: "Mostra só a origem. O conteúdo copiado nunca aparece na notificação." },
@@ -41,7 +55,7 @@ function atalhos(prefs) {
   const s = prefs.shortcuts;
   return [
     { acao: "Abrir o ClipSync", tecla: s.open, vale: false },
-    { acao: "Pausar tudo", tecla: s.pause_all, vale: true },
+    { acao: "Pausar tudo", tecla: s.pause_all, vale: true, retomar: true },
     { acao: "Enviar o clipboard uma vez", tecla: s.send_once, vale: false },
     { acao: "Travar nesta tela", tecla: s.lock_screen, vale: true },
     ...irParaDispositivos(s.go_to_device),
@@ -51,11 +65,13 @@ function atalhos(prefs) {
 export default function montar({ ir, assinar }) {
   const avisoTopo = h("div");
   let atual = null;
+  let recusouRetomada = false;
 
   const regiao = area({
     linhas: 6,
     buscar: async () => {
       atual = await api.prefsGet();
+      recusouRetomada = recurso("global_shortcuts") && (await retomadaRecusada());
       return atual;
     },
     pintar: (prefs) =>
@@ -84,6 +100,16 @@ export default function montar({ ir, assinar }) {
     }
   }
 
+  /** Ação do atalho. No Windows, quando algo não vale, a observação vem sob o nome, na mesma linha da tabela. */
+  function acaoDoAtalho(a) {
+    const ligado = recurso("global_shortcuts");
+    let obs = null;
+    if (ligado && !a.vale) obs = indisponivel();
+    // Win+Alt+P pausa, mas o Windows não liberou a combinação para retomar: a retomada fica nos botões.
+    else if (ligado && a.retomar && recusouRetomada) obs = h("span", { class: "nota" }, "O Windows não liberou Win+Alt+P para retomar: use a bandeja ou Pausar tudo.");
+    return obs ? h("span", { class: "preferencias__acao" }, a.acao, obs) : a.acao;
+  }
+
   function cartaoAtalhos(prefs) {
     const lista = atalhos(prefs);
     const ligado = recurso("global_shortcuts");
@@ -96,9 +122,8 @@ export default function montar({ ir, assinar }) {
           : tabela({
               legenda: "Atalhos globais",
               colunas: [
-                { chave: "acao", rotulo: "Ação" },
+                { chave: "acao", rotulo: "Ação", render: acaoDoAtalho },
                 { chave: "tecla", rotulo: "Atalho", render: (a) => tecla(a.tecla) },
-                ...(ligado ? [{ chave: "estado", rotulo: "Estado", render: (a) => (a.vale ? "ativo" : indisponivel()) }] : []),
               ],
               linhas: lista,
               chaveLinha: (a) => a.acao,
@@ -110,7 +135,9 @@ export default function montar({ ir, assinar }) {
             "p",
             { class: "nota" },
             ligado
-              ? "Os atalhos valem com o módulo de teclado e mouse ligado, até durante o controle de outra máquina. As mesmas ações continuam em botões: Pausar tudo na barra lateral; Travar nesta tela e Ir para dispositivo no Layout de telas."
+              ? recusouRetomada
+                ? "Travar nesta tela e Ir para dispositivo também estão no Layout de telas."
+                : "Valem com o módulo de teclado e mouse ligado. As mesmas ações continuam em botões: Pausar tudo na barra lateral; Travar nesta tela e Ir para dispositivo no Layout de telas."
               : "Enquanto o atalho global não existe, as mesmas ações estão em botões: Pausar tudo na barra lateral e no menu da bandeja; Travar nesta tela e Ir para dispositivo no Layout de telas.",
           ),
           botao({ rotulo: "Abrir o Layout de telas", variante: "discreto", icone: "avancar", aoClicar: () => ir("layout") }),

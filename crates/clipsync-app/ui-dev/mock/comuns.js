@@ -1,7 +1,7 @@
 // Comandos comuns (barra lateral e bandeja): app_state, agent_start, agent_stop, pause_set.
 
 import { EU, features, malha } from "./dados.js";
-import { emitir, erro, estado, plataforma, registrar } from "./nucleo.js";
+import { cenario, emitir, erro, estado, plataforma, registrar } from "./nucleo.js";
 
 registrar({
   app_state: () => ({
@@ -36,6 +36,8 @@ registrar({
 
   pause_set: ({ paused }) => {
     estado.pausado = paused === true;
+    // O adaptador só tenta registrar o Win+Alt+P ao pausar; se o Windows recusar, o bloqueio fica registrado.
+    if (estado.pausado && cenario === "windows-recusa") estado.retomadaRecusada = true;
     emitir("pause_changed", { paused: estado.pausado });
     return { paused: estado.pausado };
   },

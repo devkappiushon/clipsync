@@ -5,7 +5,8 @@ const ATRASO_MS = 160;
 
 export const cenario = new URLSearchParams(location.search).get("cenario") ?? "padrao";
 // ?cenario=windows (ou ?plataforma=windows) simula o PC Windows da S7: dois monitores, um com escala 1,5, e o input ligado.
-export const plataforma = cenario === "windows" || new URLSearchParams(location.search).get("plataforma") === "windows" ? "windows" : "linux";
+// ?cenario=windows-recusa é o mesmo, com o Windows tendo recusado o Win+Alt+P de retomar (I-S7-2): abre pausado.
+export const plataforma = cenario.startsWith("windows") || new URLSearchParams(location.search).get("plataforma") === "windows" ? "windows" : "linux";
 
 /** Dados mutáveis do mock. Cada domínio usa sua própria chave. */
 export const estado = {};
