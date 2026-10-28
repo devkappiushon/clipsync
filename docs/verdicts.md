@@ -4020,3 +4020,65 @@ O cenário `vazio` significa ausência de pares, itens e bloqueios; não signifi
 
 **Resultado do critério 5: Passa em e40849c.** Não houve alteração de fonte, build, instalação, novo servidor, push ou execução de Playwright nesta revisão.
 
+### S6 · critério 6 e 7 · v0.2.0
+
+**Critério 6: Passa, com a execução interativa atribuída ao Maestro. Critério 7: Passa, verificado diretamente por Argus.** Revisão em **2026-10-28**, contrato **v1.24**, a partir de `docs/teste-app-real.md` nos commits `40b0446` e `2ca12be`. A confirmação documental e dos arquivos abaixo não é uma segunda execução dos fluxos de tela. Por instrução do Maestro, Argus não abriu o app, não executou os scripts AT-SPI e não leu nem alterou o clipboard.
+
+#### Bases e procedência
+
+- O relato separa duas execuções: pacote manual da [run 40680774165](https://github.com/devkappiushon/clipsync/actions/runs/40680774165), em **e40849c**, para a parte CLI/app com perfil `t1`; AppImage do **release v0.2.0**, para a parte de tela com perfil `ui1`. `gh run view` confirmou a base e os dois builds aprovados do pacote manual, com publicação pulada.
+- A tag remota anotada `v0.2.0` resolve para **`d7a4d796067143c8393edb176d9cf526fe126a87`**, confirmado pela API GitHub e por `git rev-parse 'v0.2.0^{commit}'`. A [run de release 40691106646](https://github.com/devkappiushon/clipsync/actions/runs/40691106646) usa essa mesma base: Linux, Windows e publicação com `conclusion=success`.
+- O AppImage instalado em `~/.local/bin/clipsync-app.AppImage` tem **86.010.360 bytes**, modo **0755** e SHA-256 **`9133d717ff5f719c7b2cf7557182363467b1837bc02b2a910d042afa760049d8`**. Coincide com o AppImage do cache do release, o `SHA256SUMS` e o digest do asset publicado.
+- A CLI em `~/.cache/csrt/clipsync` responde **`clipsync 0.2.0`** a `--version`, mas **não é byte a byte a CLI do release final**. SHA-256 da CLI dos testes: `065a5c0f1f7e8b031501da591c9961a21a6a4efce3a06def7d2d16760bf57cde`; da CLI contida no tar.gz final: `a402f4e3b9b9627a7650dfd9582770637bbab16b8b6582bf398be22f838fc6ec`. Isso é coerente com a origem anterior declarada no relato; não se apresenta a sessão como teste de dois binários do release final. O item 6 exige outro perfil com CLI e adaptador fake, sem exigir o mesmo build.
+- Evidência desta auditoria em **`~/.cache/argus-s6-v020/`**: `profiles.json`, `evidence-files.json`, `release.json`, `tag.json`, `manual-run.json`, `release-run.json`, `asset-checks.json`, `sha256sum-check.txt`, `desktop-validation.txt` e uma cópia de `SHA256SUMS` baixada novamente do release. Os scripts `~/.cache/csrt/ui.py` e `parear.py` foram lidos, sem importá-los ou executá-los; arquivos de conteúdo do clipboard não foram examinados.
+
+#### Critério 6, item por item
+
+**“Passa” nesta tabela aceita a execução relatada pelo Maestro em `docs/teste-app-real.md`; a coluna de limites identifica exatamente o que Argus não observou ao vivo.** Arquivos de perfil corroboram o estado persistido, mas não provam sozinhos um clique, uma leitura de clipboard, a apresentação de uma tela ou a ordem de fechar e abrir.
+
+| Item da §12.9.6 | Veredito | Evidência conferida por Argus | O que permanece pela execução do Maestro |
+| --- | --- | --- | --- |
+| AppImage do CI roda nesta máquina | **Passa** | Binário instalado idêntico ao asset do release; empacotamento final aprovado. `app.log` e `app2.log` do ensaio anterior registram `agent up`, escuta em `0.0.0.0:47812` e conexão com o ID de `t2`. `ui1-app.log` e `ui1-app2.log` registram processos distintos da sessão final. Há avisos, detalhados abaixo. | A janela em execução no release final, o agente dentro dela e a navegação por AT-SPI (`teste-app-real.md:26`). O log final não tem a mesma verbosidade de `agent up` do ensaio anterior. |
+| Onboarding cria o perfil | **Passa** | `ui1/identity.cert.pem` produz o ID curto **6425-6da5-90b5-1d27**, igual ao relatado antes da criação. Certificado e chave correspondem. `ui1/config.toml` tem `clipboard=true`, `input=false` e escuta `0.0.0.0:47800`. | Perfil inicialmente vazio, impressão digital mostrada antes de gravar e ação Criar perfil e continuar pela tela (`:30`). Argus confirmou o resultado persistido, não o estado anterior. |
+| Pareamento pela tela com CLI/fake, mesmo código nos dois lados | **Passa** | `t2/config.toml`: `adapter="fake"`. `ui1/peers.toml` contém o ID de `t2`, e `t2/peers.toml` contém o ID de `ui1`; horários de pareamento em ambos: **13:34:16 UTC**. `parear.py:18–25` extrai o código da CLI e da tela e cancela se faltar ou divergir, antes de clicar São iguais e confirmar. | Código bem-sucedido **954 136**, cliques, permissões e conclusão nos dois lados (`:32`). Não há transcrição salva dessa execução bem-sucedida no diretório: o script prova o procedimento, não que foi executado com sucesso. `join-ui.log` é de outra tentativa, **965 504**, encerrada com `PairFailed` e `rc=3`; não foi usado como prova de sucesso. |
+| `send --stdin` chega à caixa em modo manual | **Passa** | Tanto `t1/config.toml` quanto `ui1/config.toml` têm `mode="manual"`; o emissor `t2` usa clipboard fake. Os pares recíprocos e permissões de saída estão persistidos. | Envio, chegada do item e estado “na caixa de recebidos” (`:16`, `:34–35`). A caixa é volátil; não foi reconstruída a partir de arquivos nem consultada por um novo comando ao agente. |
+| Aplicar/Copiar põe o texto no clipboard real | **Passa** | Perfil `ui1` usa `adapter="auto"`, não fake; `input=false` e clipboard habilitado. O relato identifica Mostrar e **Copiar** como a ação da UI que aplica o item. | Conteúdo exibido na prévia, clique e igualdade verificada por `wl-paste` (`:35`). Argus não repetiu leitura nem escrita do clipboard. |
+| Cópia no sistema chega ao inbox do outro perfil | **Passa** | Configuração de `t1`/`t2` e concessões recíprocas compatíveis com a direção app → CLI; `t2` recebe em modo automático com adaptador fake. | `wl-copy`, chegada a `t2`, estado aplicado e tempo de 4 s (`:17`), no pacote anterior e40849c. Não se atribui essa execução ao AppImage final nem se repete a afirmação de restauração do clipboard como garantia da sessão inteira. |
+| Diagnóstico lista os bloqueios | **Passa** | `ui1/peers.toml` conserva **`clipboard_in=false`**, `clipboard_out=true`, `input_in=false` para `t2`, coerente com a revogação de entrada feita para provocar o bloqueio. | Envio recusado por falta de permissão e linha de Últimos bloqueios com hora/módulo/motivo na tela (`:36`). O estado da permissão não prova a renderização do diagnóstico; não há dump AT-SPI dessa linha entre os arquivos fornecidos. |
+| Preferências sobrevivem a fechar e abrir | **Passa** | `ui1/ui.toml`: **`appearance.theme="dark"`**, `reduce_motion=false`; `config.toml` continua manual. Há logs de dois processos do app final, com início do segundo às **10:35:40 locais**. | Sair pela bandeja, reabrir, Escuro ainda marcado, modo manual exibido e reconexão (`:37`). A existência do TOML e dos logs corrobora, mas não substitui a observação da releitura pela tela. |
+| Ícone na bandeja com menu e ClipSync nas aplicações | **Passa** | `desktop-file-validate ~/.local/share/applications/clipsync.desktop`: **exit 0**, sem saída. Entrada `Type=Application`, `Name=ClipSync`, `Exec` apontando ao AppImage conferido, `Icon=clipsync`, `Categories=Utility;`, `StartupWMClass=clipsync-app`. Ícone em `~/.local/share/icons/hicolor/256x256/apps/clipsync.png` é PNG **256×256**. | Item da bandeja e menu Abrir/Pausar/Sair via D-Bus, alternância de pausa, encerramento e reconexão (`:18–22`). A entrada válida e o ícone comprovam a instalação; Argus não abriu o menu de aplicações nem observou a bandeja ao vivo. |
+
+**Identidades verificadas.** Foi calculado SHA-256 do SubjectPublicKeyInfo em DER do certificado, conforme `clipsync-proto/src/ids.rs:14` e `clipsync-core/src/tls.rs:30`, e comparada a chave pública derivada da chave privada com a do certificado. Os três pares certificado/chave correspondem; nenhum material privado foi impresso ou copiado para a evidência. Os diretórios dos três perfis são **0700**, e certificados, chaves e TOML são **0600**.
+
+| Perfil | ID curto calculado | Relação persistida |
+| --- | --- | --- |
+| `t1` | `2294-1e2a-d20f-b806` | Concede entrada/saída de clipboard a `t2`; input negado. |
+| `t2` | `5c0b-51e8-036c-f85c` | Reconhece `t1` e `ui1`, com entrada/saída de clipboard e input negado. |
+| `ui1` | `6425-6da5-90b5-1d27` | Reconhece `t2`; entrada de clipboard negada ao fim do teste, saída permitida e input negado. |
+
+**Limitações e incidentes registrados, sem atribuição especulativa de causa:**
+
+1. **Restauração do clipboard ao fim da sessão: Falha, conforme o próprio relato** (`docs/teste-app-real.md:40`): os 8 bytes anteriores não foram recuperados e o clipboard foi limpo. As afirmações anteriores de conteúdo devolvido/restaurado (`:17`, `:31`) não permitem declarar a sessão inteira sem perda. Isso não reprova os fluxos de receber/aplicar/enviar exigidos pelo item 6, mas permanece um incidente; a auditoria de arquivos não determina se a origem foi o teste, o autoteste ou outro componente.
+2. **Logs não estão livres de avisos.** Há depreciação de libayatana-appindicator e ausência de `canberra-gtk-module`; `ui1-app.log` também contém duas mensagens `Gtk-CRITICAL` de `gtk_widget_get_scale_factor` às 10:32:21 e timeouts do arboard ao entregar conteúdo ao gerenciador de clipboard às 10:34:38 e 10:35:38. Não há base aqui para atribuir a perda do conteúdo a esses timeouts, nem para chamar esses logs de limpos.
+3. **Mensagem duplicada após recusa:** defeito de texto relatado em `teste-app-real.md:39`, não reproduzido por Argus. Não impede os itens listados na §12.9.6. O autoteste de clipboard validado em 2 ms e a classificação de input desligado também permanecem somente pela execução relatada (`:31`); não são nova validação do input real.
+4. O teste manual de captura de entrada do **critério 3** continua separado, conforme `teste-app-real.md:44`. Este veredito de 6 e 7 não o fecha nem declara a S6 inteira concluída.
+
+#### Critério 7, item por item
+
+[Release v0.2.0](https://github.com/devkappiushon/clipsync/releases/tag/v0.2.0), publicado em **2026-10-28 13:26:16 UTC**, `draft=false`, `prerelease=false`. Conferido nesta rodada por `gh release view v0.2.0` e pela API do release. Os sete assets estão publicados: seis pacotes e `SHA256SUMS`.
+
+| Item / arquivo exigido pela §12.8 | Veredito | Evidência direta |
+| --- | --- | --- |
+| `clipsync-app-v0.2.0-linux-x86_64.AppImage` | **Passa** | Asset publicado; tamanho/digest da API coincidem com o cache; `sha256sum -c`: OK; instalado também coincide. |
+| `clipsync-app-v0.2.0-linux-amd64.deb` | **Passa** | Asset publicado; tamanho/digest coincidem; `sha256sum -c`: OK. |
+| `clipsync-app-v0.2.0-windows-x86_64-setup.exe` | **Passa** | Asset publicado; tamanho/digest coincidem; `sha256sum -c`: OK. |
+| `clipsync-app-v0.2.0-windows-x86_64.msi` | **Passa** | Asset publicado; tamanho/digest coincidem; `sha256sum -c`: OK. |
+| `clipsync-v0.2.0-linux-x86_64.tar.gz` | **Passa** | Asset publicado; tamanho/digest coincidem; `sha256sum -c`: OK. |
+| `clipsync-v0.2.0-windows-x86_64.zip` | **Passa** | Asset publicado; tamanho/digest coincidem; `sha256sum -c`: OK. |
+| `SHA256SUMS` publicado e correspondente ao cache | **Passa** | Baixado de novo com `gh release download v0.2.0 --pattern SHA256SUMS` para a pasta da auditoria; `cmp` com o cache original: exit 0. Digest do próprio manifesto também coincide com a API. |
+| Verificação completa dos seis pacotes | **Passa** | `sha256sum -c SHA256SUMS`, executado em `~/.cache/clipsync-release-v0.2.0`: **exit 0, seis OK, nenhuma falha**. |
+
+O SHA-256 do manifesto conferido é **`963e88ab830928e624c04a10eb48c5316f061c946611117d3e59c7e67a988a5e`**. Os hashes completos de cada asset, seus tamanhos e os digests retornados pelo GitHub estão em `asset-checks.json`. Essa prova verifica publicação e integridade dos pacotes; não representa execução dos instaladores Windows.
+
+**Resultado:** §12.9.6 **Passa com a evidência de execução do Maestro e a corroboração documental acima**; §12.9.7 **Passa por verificação direta de Argus**. Nenhum fluxo do app ou do clipboard foi reexecutado nesta auditoria.
+
