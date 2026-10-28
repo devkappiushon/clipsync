@@ -4,6 +4,7 @@ pub mod adapter;
 mod capture;
 pub mod config;
 mod diag;
+pub mod keymap;
 pub mod layout;
 mod module;
 pub mod msg;
@@ -15,7 +16,7 @@ use std::path::Path;
 
 pub use adapter::{
     BarrierSpec, CaptureAdapter, CaptureEvent, EmulateAdapter, FakeCapture, FakeCaptureHandle,
-    FakeEmulate, FakeEmulateHandle, InputError, TokenStore, Zone, ZoneRef,
+    FakeEmulate, FakeEmulateHandle, Hotkey, InputError, TokenStore, Zone, ZoneRef,
 };
 #[cfg(target_os = "linux")]
 pub use adapter::{PortalCapture, PortalEmulate};
@@ -30,17 +31,28 @@ pub use self_test::{SelfTestOutcome, self_test};
 
 pub const LAYOUT_FILE: &str = "layout.toml";
 
-/// Builds the module with the adapters picked by `cfg`. `auto` means the Wayland portals.
+/// Whether this build has an input backend (the portals on Linux, the Win32 adapters on Windows).
+/// The one source for the CLI and the UI (contract §13.6).
+pub const SUPPORTED: bool = cfg!(any(target_os = "linux", windows));
+
+/// Builds the module with the adapters picked by `cfg`. `auto` means the Wayland portals on Linux
+/// and the Win32 adapters on Windows.
 /// Reads `DIR/layout.toml`: links there and manual `[[input.barrier]]` together are a
 /// `ModuleError::Config` (contract §12.6 item 3).
 pub fn build(cfg: InputConfig, profile_dir: &Path) -> Result<Box<dyn Module>, ModuleError> {
     let cap: Box<dyn CaptureAdapter> = match cfg.capture {
         AdapterChoice::Fake => Box::new(FakeCapture::new(vec![fake_zone()]).0),
-        AdapterChoice::Auto | AdapterChoice::Portal => portal_capture()?,
+        AdapterChoice::Portal => portal_capture()?,
+        AdapterChoice::Windows => windows_capture()?,
+        AdapterChoice::Auto if cfg!(windows) => windows_capture()?,
+        AdapterChoice::Auto => portal_capture()?,
     };
     let emu: Box<dyn EmulateAdapter> = match cfg.emulate {
         AdapterChoice::Fake => Box::new(FakeEmulate::new().0),
-        AdapterChoice::Auto | AdapterChoice::Portal => portal_emulate(profile_dir)?,
+        AdapterChoice::Portal => portal_emulate(profile_dir)?,
+        AdapterChoice::Windows => windows_emulate()?,
+        AdapterChoice::Auto if cfg!(windows) => windows_emulate()?,
+        AdapterChoice::Auto => portal_emulate(profile_dir)?,
     };
     build_with_layout(cfg, cap, emu, profile_dir)
 }
@@ -72,5 +84,14 @@ fn portal_capture() -> Result<Box<dyn CaptureAdapter>, ModuleError> {
 }
 #[cfg(not(target_os = "linux"))]
 fn portal_emulate(_: &Path) -> Result<Box<dyn EmulateAdapter>, ModuleError> {
+    Err(ModuleError::Adapter(msg::UNAVAILABLE_ON_PLATFORM.into()))
+}
+
+// The Win32 adapters land with `adapter/win/` (Flux, §13.6); until then every target answers
+// "unavailable" and `WinCapture`/`WinEmulate` replace these two bodies.
+fn windows_capture() -> Result<Box<dyn CaptureAdapter>, ModuleError> {
+    Err(ModuleError::Adapter(msg::UNAVAILABLE_ON_PLATFORM.into()))
+}
+fn windows_emulate() -> Result<Box<dyn EmulateAdapter>, ModuleError> {
     Err(ModuleError::Adapter(msg::UNAVAILABLE_ON_PLATFORM.into()))
 }

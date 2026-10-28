@@ -387,6 +387,10 @@ impl Loop {
                 self.notes(Note::Block(msg::adapter_failed(&e)));
                 self.end_session(true).await;
             }
+            // The S7 module work (§13.6 items 5 to 7) takes these over; for now they are ignored.
+            CaptureEvent::Hotkey(_)
+            | CaptureEvent::ZonesChanged(_)
+            | CaptureEvent::SessionLocked(_) => {}
         }
     }
 

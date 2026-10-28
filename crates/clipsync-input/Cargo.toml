@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 clipsync-proto = { path = "../clipsync-proto" }
+clipsync-win = { path = "../clipsync-win" }
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

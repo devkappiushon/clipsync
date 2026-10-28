@@ -1,5 +1,5 @@
 //! In-memory adapters for tests and for `capture = "fake"` / `emulate = "fake"`.
-use super::{BarrierSpec, CaptureAdapter, CaptureEvent, EmulateAdapter, InputError, Zone};
+use super::{BarrierSpec, CaptureAdapter, CaptureEvent, EmulateAdapter, Hotkey, InputError, Zone};
 use async_trait::async_trait;
 use clipsync_proto::{InputEvent, mono_us};
 use std::collections::HashSet;
@@ -13,7 +13,8 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 pub struct FakeCapture {
-    zones: Vec<Zone>,
+    zones: Arc<Mutex<Vec<Zone>>>,
+    barriers: Arc<Mutex<Vec<BarrierSpec>>>,
     src: Arc<AsyncMutex<mpsc::UnboundedReceiver<CaptureEvent>>>,
     forwarder: Option<JoinHandle<()>>,
     released: Arc<AtomicUsize>,
@@ -22,6 +23,8 @@ pub struct FakeCapture {
 #[derive(Clone)]
 pub struct FakeCaptureHandle {
     tx: mpsc::UnboundedSender<CaptureEvent>,
+    zones: Arc<Mutex<Vec<Zone>>>,
+    barriers: Arc<Mutex<Vec<BarrierSpec>>>,
     released: Arc<AtomicUsize>,
 }
 
@@ -29,14 +32,22 @@ impl FakeCapture {
     pub fn new(zones: Vec<Zone>) -> (Self, FakeCaptureHandle) {
         let (tx, rx) = mpsc::unbounded_channel();
         let released = Arc::new(AtomicUsize::new(0));
+        let zones = Arc::new(Mutex::new(zones));
+        let barriers = Arc::new(Mutex::new(Vec::new()));
         (
             Self {
-                zones,
+                zones: zones.clone(),
+                barriers: barriers.clone(),
                 src: Arc::new(AsyncMutex::new(rx)),
                 forwarder: None,
                 released: released.clone(),
             },
-            FakeCaptureHandle { tx, released },
+            FakeCaptureHandle {
+                tx,
+                zones,
+                barriers,
+                released,
+            },
         )
     }
 }
@@ -58,9 +69,26 @@ impl FakeCaptureHandle {
     pub fn deactivate(&self) {
         let _ = self.tx.send(CaptureEvent::Deactivated);
     }
-    /// How many times the module called `release()`.
+    /// How many times the module called `release()` or `release_at()`.
     pub fn released(&self) -> usize {
         self.released.load(Ordering::SeqCst)
+    }
+    /// A recognized shortcut, as the real adapters report it.
+    pub fn hotkey(&self, h: Hotkey) {
+        let _ = self.tx.send(CaptureEvent::Hotkey(h));
+    }
+    /// The monitors changed: `known_zones()` answers with `z` from now on and the module is told.
+    pub fn set_zones(&self, z: Vec<Zone>) {
+        *lock(&self.zones) = z.clone();
+        let _ = self.tx.send(CaptureEvent::ZonesChanged(z));
+    }
+    /// This machine's screen locked (`true`) or came back.
+    pub fn session_locked(&self, on: bool) {
+        let _ = self.tx.send(CaptureEvent::SessionLocked(on));
+    }
+    /// The barriers the module installed last, by `start` or `set_barriers`.
+    pub fn barriers(&self) -> Vec<BarrierSpec> {
+        lock(&self.barriers).clone()
     }
 }
 
@@ -70,15 +98,16 @@ impl CaptureAdapter for FakeCapture {
         "fake"
     }
     async fn zones(&mut self) -> Result<Vec<Zone>, InputError> {
-        Ok(self.zones.clone())
+        Ok(lock(&self.zones).clone())
     }
     fn known_zones(&self) -> Vec<Zone> {
-        self.zones.clone()
+        lock(&self.zones).clone()
     }
     async fn start(
         &mut self,
-        _barriers: &[BarrierSpec],
+        barriers: &[BarrierSpec],
     ) -> Result<mpsc::Receiver<CaptureEvent>, InputError> {
+        *lock(&self.barriers) = barriers.to_vec();
         if let Some(h) = self.forwarder.take() {
             h.abort();
         }
@@ -98,6 +127,10 @@ impl CaptureAdapter for FakeCapture {
         self.released.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
+    async fn set_barriers(&mut self, barriers: &[BarrierSpec]) -> Result<(), InputError> {
+        *lock(&self.barriers) = barriers.to_vec();
+        Ok(())
+    }
     async fn stop(&mut self) -> Result<(), InputError> {
         if let Some(h) = self.forwarder.take() {
             h.abort();
@@ -113,6 +146,8 @@ struct EmuState {
     /// (is_button, code)
     pressed: HashSet<(bool, u32)>,
     release_calls: usize,
+    locked: bool,
+    events: Vec<InputEvent>,
 }
 
 pub struct FakeEmulate {
@@ -145,6 +180,15 @@ impl FakeEmulateHandle {
     pub fn release_calls(&self) -> usize {
         lock(&self.st).release_calls
     }
+    /// While on, `emit` and `enter` answer `InputError::Locked` and apply nothing (screen locked
+    /// or secure desktop on the destination).
+    pub fn set_locked(&self, on: bool) {
+        lock(&self.st).locked = on;
+    }
+    /// Every event applied so far, in order.
+    pub fn events(&self) -> Vec<InputEvent> {
+        lock(&self.st).events.clone()
+    }
 }
 
 #[async_trait]
@@ -161,8 +205,12 @@ impl EmulateAdapter for FakeEmulate {
         if !s.started {
             return Err(InputError::Other("emulator not started".into()));
         }
+        if s.locked {
+            return Err(InputError::Locked);
+        }
         for ev in events {
             s.emitted += 1;
+            s.events.push(*ev);
             match *ev {
                 InputEvent::Key { code, pressed } => {
                     if pressed {

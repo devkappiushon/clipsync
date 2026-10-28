@@ -112,6 +112,9 @@ pub(super) async fn capture(seconds: u32) -> anyhow::Result<()> {
                 println!("erro do adaptador: {e}");
                 break;
             }
+            CaptureEvent::Hotkey(_)
+            | CaptureEvent::ZonesChanged(_)
+            | CaptureEvent::SessionLocked(_) => {}
         }
     }
     let released = cap.release().await;

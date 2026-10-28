@@ -1,16 +1,19 @@
 //! Capture and emulation adapters (contract §8).
 mod barrier;
+mod entry;
 mod fake;
 pub(crate) mod outputs;
 #[cfg(target_os = "linux")]
 mod portal;
 mod tokens;
+pub mod winmath;
 
 use async_trait::async_trait;
 use clipsync_proto::{Edge, InputEvent};
 use tokio::sync::mpsc;
 
 pub use barrier::{Segment, barrier_segment, edge_position};
+pub(crate) use entry::{entry_events, entry_events_at};
 pub use fake::{FakeCapture, FakeCaptureHandle, FakeEmulate, FakeEmulateHandle};
 #[cfg(target_os = "linux")]
 pub use portal::{PortalCapture, PortalEmulate};
@@ -41,6 +44,15 @@ pub struct BarrierSpec {
     pub to: f32,
 }
 
+/// A shortcut the capture side recognized (contract §13.6). The keys of a shortcut go nowhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hotkey {
+    /// Go to the device whose `hotkey` is this number (1 to 9).
+    GoTo(u8),
+    ToggleLock,
+    TogglePause,
+}
+
 /// `Debug` is safe: `InputEvent` redacts key and button codes.
 #[derive(Debug)]
 pub enum CaptureEvent {
@@ -55,6 +67,12 @@ pub enum CaptureEvent {
     },
     Deactivated,
     Error(String),
+    /// A shortcut was recognized.
+    Hotkey(Hotkey),
+    /// The monitors changed (§13.8).
+    ZonesChanged(Vec<Zone>),
+    /// This machine's screen locked (`true`) or came back; the secure desktop counts as locked.
+    SessionLocked(bool),
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -67,6 +85,9 @@ pub enum InputError {
     ZoneNotFound(String),
     #[error("eis: {0}")]
     Eis(String),
+    /// Screen locked or secure desktop: nothing was emulated.
+    #[error("locked")]
+    Locked,
     #[error("{0}")]
     Other(String),
 }
@@ -89,6 +110,16 @@ pub trait CaptureAdapter: Send + 'static {
     ) -> Result<mpsc::Receiver<CaptureEvent>, InputError>;
     /// Gives the cursor back to the local desktop.
     async fn release(&mut self) -> Result<(), InputError>;
+    /// Swaps the barriers without recreating the session (on the portal, no new dialog).
+    async fn set_barriers(&mut self, barriers: &[BarrierSpec]) -> Result<(), InputError> {
+        let _ = barriers;
+        Err(InputError::Other("unsupported".into()))
+    }
+    /// Gives the cursor back at barrier `barrier`, at `pos` (0 to 1), one pixel inside the zone.
+    async fn release_at(&mut self, barrier: usize, pos: f32) -> Result<(), InputError> {
+        let _ = (barrier, pos);
+        self.release().await
+    }
     async fn stop(&mut self) -> Result<(), InputError>;
 }
 
@@ -101,5 +132,19 @@ pub trait EmulateAdapter: Send + 'static {
     async fn emit(&mut self, events: &[InputEvent]) -> Result<(), InputError>;
     /// Releases every pressed key and button.
     async fn release_all(&mut self) -> Result<(), InputError>;
+    /// Puts the cursor at the entry. Default: the relative burst of §8 rule 8.
+    async fn enter(
+        &mut self,
+        zone: &Zone,
+        zones: &[Zone],
+        edge: Edge,
+        pos: f32,
+    ) -> Result<(), InputError> {
+        self.emit(&entry_events_at(edge, pos, zone, zones)).await
+    }
+    /// Real cursor position when the platform says (Windows). Portal: `None`.
+    fn cursor(&self) -> Option<(i32, i32)> {
+        None
+    }
     async fn stop(&mut self) -> Result<(), InputError>;
 }

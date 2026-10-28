@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub enum AdapterChoice {
     Auto,
     Portal,
+    Windows,
     Fake,
 }
 

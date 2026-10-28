@@ -3,6 +3,7 @@
 //! capture derived from `layout.toml` (§12.6 item 2, in `capture.rs`).
 use crate::adapter::{
     BarrierSpec, CaptureAdapter, CaptureEvent, EmulateAdapter, InputError, Zone, ZoneRef,
+    entry_events,
 };
 use crate::capture::{self, Ctl, Engine, Note, Target, new_session};
 use crate::config::{InputConfig, map_pos, zone_ref};
@@ -10,11 +11,11 @@ use crate::layout::{Endpoint, Layout, trim_dead_corner};
 use crate::msg;
 use async_trait::async_trait;
 use clipsync_proto::{
-    Edge, InputDatagram, InputEvent, InputMsg, InputState, LayoutOffer, LoopbackStats,
-    MAX_EVENTS_PER_DATAGRAM, MAX_INPUT_DATAGRAMS_PER_SEC, Module, ModuleCommand, ModuleError,
-    ModuleHost, ModuleInput, ModuleKind, ModuleMsg, ModuleReply, ModuleStatus, OfferDevice,
-    OfferEndpoint, OfferLink, OfferOutcome, OfferState, PeerId, PeerInfo, PeerZones, PendingOffer,
-    RejectReason, SendError, ZoneInfo, mono_us,
+    Edge, InputDatagram, InputMsg, InputState, LayoutOffer, LoopbackStats, MAX_EVENTS_PER_DATAGRAM,
+    MAX_INPUT_DATAGRAMS_PER_SEC, Module, ModuleCommand, ModuleError, ModuleHost, ModuleInput,
+    ModuleKind, ModuleMsg, ModuleReply, ModuleStatus, OfferDevice, OfferEndpoint, OfferLink,
+    OfferOutcome, OfferState, PeerId, PeerInfo, PeerZones, PendingOffer, RejectReason, SendError,
+    ZoneInfo, mono_us,
 };
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -27,10 +28,6 @@ use tokio::time::Instant;
 
 const STATS_WAIT: Duration = Duration::from_secs(3);
 const MAX_LATENCY_SAMPLES: usize = 100_000;
-/// Reference length of the entry edge (no destination size is known): 1080p.
-const ENTRY_REF_LEN_PX: f32 = 1080.0;
-/// Saturating burst toward an edge/corner.
-const SATURATE_PX: f32 = 4000.0;
 
 pub struct InputModule {
     cfg: InputConfig,
@@ -845,6 +842,19 @@ impl State {
                 self.on_enter(from, session, edge, monitor.as_deref(), pos)
                     .await
             }
+            // Protocol 3. The way back (`back_from..back_to`) and the replies come with the S7
+            // module work (§13.6 items 1 to 3); until then an `EnterSpan` enters like an `EnterAt`.
+            InputMsg::EnterSpan {
+                session,
+                edge,
+                monitor,
+                pos,
+                ..
+            } => {
+                self.on_enter(from, session, edge, monitor.as_deref(), pos)
+                    .await
+            }
+            InputMsg::Returned { .. } | InputMsg::Refused { .. } => self.ignored += 1,
             InputMsg::Zones { zones } => {
                 self.peer_zones.insert(from, zones);
                 let name = self.peer_name(from);
@@ -944,11 +954,11 @@ impl State {
         }
         self.incoming.insert(from, Incoming::new(session));
         let zone = monitor.and_then(|m| find_zone(&self.local_zones, m));
-        let entry = match zone {
-            Some(z) => entry_events_at(edge, pos, z, &self.local_zones),
-            None => entry_events(edge, pos),
+        let placed = match zone {
+            Some(z) => self.emu.enter(z, &self.local_zones, edge, pos).await,
+            None => self.emu.emit(&entry_events(edge, pos)).await,
         };
-        if let Err(e) = self.emu.emit(&entry).await {
+        if let Err(e) = placed {
             tracing::warn!("entry positioning failed: {e}");
         }
         let name = self.peer_name(from);
@@ -998,28 +1008,6 @@ impl State {
     }
 }
 
-/// Relative-only positioning (the EIS has no absolute motion): saturate into the entry corner,
-/// then walk along the edge to `pos`.
-fn entry_events(edge: Edge, pos: f32) -> Vec<InputEvent> {
-    let toward_edge = match edge {
-        Edge::Left => (-SATURATE_PX, 0.0),
-        Edge::Right => (SATURATE_PX, 0.0),
-        Edge::Top => (0.0, -SATURATE_PX),
-        Edge::Bottom => (0.0, SATURATE_PX),
-    };
-    let toward_start = match edge {
-        Edge::Left | Edge::Right => (0.0, -SATURATE_PX),
-        Edge::Top | Edge::Bottom => (-SATURATE_PX, 0.0),
-    };
-    let walk = pos.clamp(0.0, 1.0) * ENTRY_REF_LEN_PX;
-    let along = match edge {
-        Edge::Left | Edge::Right => (0.0, walk),
-        Edge::Top | Edge::Bottom => (walk, 0.0),
-    };
-    let mk = |(dx, dy): (f32, f32)| InputEvent::Motion { dx, dy };
-    vec![mk(toward_edge), mk(toward_start), mk(along)]
-}
-
 struct LoopJob {
     host: Arc<dyn ModuleHost>,
     cap: Box<dyn CaptureAdapter>,
@@ -1037,55 +1025,6 @@ fn find_zone<'a>(zones: &'a [Zone], monitor: &str) -> Option<&'a Zone> {
         ZoneRef::Index(i) => zones.iter().find(|z| z.index == i),
         ZoneRef::Name(n) => zones.iter().find(|z| z.name.as_deref() == Some(n.as_str())),
     }
-}
-
-/// `EnterAt` with a known monitor: saturate into the desktop corner on the entry side, walk to
-/// the start of that monitor's edge, then along it to `pos` (relative motion only, §8 rule 8).
-fn entry_events_at(edge: Edge, pos: f32, zone: &Zone, zones: &[Zone]) -> Vec<InputEvent> {
-    let min_x = zones.iter().map(|z| z.x).min().unwrap_or(zone.x) as f32;
-    let min_y = zones.iter().map(|z| z.y).min().unwrap_or(zone.y) as f32;
-    let max_x = zones
-        .iter()
-        .map(|z| z.x + z.width as i32)
-        .max()
-        .unwrap_or(zone.x + zone.width as i32) as f32;
-    let max_y = zones
-        .iter()
-        .map(|z| z.y + z.height as i32)
-        .max()
-        .unwrap_or(zone.y + zone.height as i32) as f32;
-    let (zx, zy) = (zone.x as f32, zone.y as f32);
-    let (zw, zh) = (zone.width as f32, zone.height as f32);
-    // after the two saturating bursts the cursor sits in this desktop corner
-    let (corner_x, corner_y) = match edge {
-        Edge::Left => (min_x, min_y),
-        Edge::Right => (max_x, min_y),
-        Edge::Top => (min_x, min_y),
-        Edge::Bottom => (min_x, max_y),
-    };
-    // start of the target edge
-    let (start_x, start_y) = match edge {
-        Edge::Left => (zx, zy),
-        Edge::Right => (zx + zw, zy),
-        Edge::Top => (zx, zy),
-        Edge::Bottom => (zx, zy + zh),
-    };
-    let walk = pos.clamp(0.0, 1.0);
-    let along = match edge {
-        Edge::Left | Edge::Right => (0.0, walk * zh),
-        Edge::Top | Edge::Bottom => (walk * zw, 0.0),
-    };
-    let mut events = entry_events(edge, 0.0);
-    events.truncate(2);
-    events.push(InputEvent::Motion {
-        dx: start_x - corner_x,
-        dy: start_y - corner_y,
-    });
-    events.push(InputEvent::Motion {
-        dx: along.0,
-        dy: along.1,
-    });
-    events
 }
 
 fn zone_info(z: &Zone) -> ZoneInfo {
@@ -1252,6 +1191,10 @@ async fn drive(
                 failure = Some(msg::adapter_failed(&e));
                 break;
             }
+            // The loopback test does not follow shortcuts, zones or the session lock.
+            CaptureEvent::Hotkey(_)
+            | CaptureEvent::ZonesChanged(_)
+            | CaptureEvent::SessionLocked(_) => {}
         }
     }
 
