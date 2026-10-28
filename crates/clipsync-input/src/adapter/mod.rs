@@ -6,6 +6,7 @@ pub(crate) mod outputs;
 #[cfg(target_os = "linux")]
 mod portal;
 mod tokens;
+pub mod wincore;
 pub mod winmath;
 mod zones;
 
