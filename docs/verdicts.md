@@ -4082,3 +4082,129 @@ O SHA-256 do manifesto conferido é **`963e88ab830928e624c04a10eb48c5316f061c946
 
 **Resultado:** §12.9.6 **Passa com a evidência de execução do Maestro e a corroboração documental acima**; §12.9.7 **Passa por verificação direta de Argus**. Nenhum fluxo do app ou do clipboard foi reexecutado nesta auditoria.
 
+### S7 · critérios 1 a 5 · 8cc14c4
+
+**Resultado: 1 Passa; 2 Passa; 3 Falha; 4 Falha; 5 Passa.** Revisão de Argus em **2026-10-28**, contrato **v1.32**, exclusivamente sobre **`8cc14c41458c9ca1c36f17b5c817b7e7d501b4b4`**. O critério 3 falha no encerramento do trabalhador Windows após saturação da fila, identificado por leitura; o 4 falha também por execução no CI Windows, no diagnóstico de atalhos. Os testes listados abaixo passaram, salvo a falha explicitada. Os critérios 6 a 8 não são encerrados por esta revisão.
+
+#### Base, comandos e CI
+
+Fontes extraídas com `git archive 8cc14c4`, em **`~/.cache/argus-s7-8cc14c4-5i4sqoxm/src/`**. SHA-256 do tar: **`539be51c7bfb97e7c297731417c11caa39a49bc72cb7378a49abd30fa70a4917`**. Os 310 arquivos têm manifesto em `source-sha256.json`. Foi criado apenas um índice Git descartável nessa extração, sem commit, para os scripts que enumeram fontes com `git ls-files`. Compilação com `export PATH=$HOME/.cargo/bin:$PATH`, Rust/Cargo **1.99.1**, `--locked` e cache de compilação compartilhado por `CARGO_TARGET_DIR`; não foi uma compilação sem cache. Nenhum fonte foi editado por Argus.
+
+| Execução local, dentro do arquivo extraído | Resultado |
+| --- | --- |
+| `cargo test --locked -p clipsync-proto -p clipsync-core` | **Passa**: 114 testes, zero falhas/ignorados. |
+| `cargo test --locked -p clipsync-input --test s7_module` | **Passa**: 21 testes, zero falhas/ignorados. |
+| `cargo test --locked -p clipsync-input --lib span::` | **Passa**: 7 testes, zero falhas, 40 filtrados. |
+| `cargo test --locked -p clipsync-input --test keymap --test winmath --test wincore` | **Passa**: respectivamente 10, 27 e 21 testes. |
+| `cargo test --locked -p clipsync-input` | **Passa**: 157 testes; `portal_loopback` e `portal_loopback_from_layout` ignorados por exigirem sessão gráfica. Não contam como prova manual. |
+| `cargo test --locked -p clipsync-ui` | **Passa no Linux**: 99 testes, incluindo 14 de `tests/layout.rs`. `layout_windows.rs` executa zero testes aqui. |
+| `cargo test --locked -p clipsync-win` | **Passa nos tipos portáveis**: 2 testes de redação de `Debug`; zero testes Win32 neste host Linux. |
+
+Os logs estão na pasta da auditoria: `proto-core.log`, `s7-module.log`, `span.log`, `windows-pure.log`, `input-full.log`, `ui.log` e `win-types.log`. As execuções dirigidas repetem parte das suítes completas; seus totais não devem ser somados como testes distintos.
+
+**O [CI 40757283200](https://github.com/devkappiushon/clipsync/actions/runs/40757283200) terminou; não estava mais rodando ao concluir o veredito.** `headSha` coincide com a base acima. Conferência por `gh run view ... --json status,conclusion,headSha,url,jobs` e `gh run view ... --log`, salvos em `ci-status.json` e `ci.log`.
+
+| Job / etapa | Veredito | Evidência |
+| --- | --- | --- |
+| Linux, `fmt + clippy + test` | **Passa** | Job concluído com `success`; fmt, clippy, os dois scripts e `cargo test --workspace --locked` verdes. |
+| Windows, clippy | **Passa** | `cargo clippy --workspace --all-targets --locked -- -D warnings`, incluindo os caminhos `cfg(windows)`. |
+| Windows, build | **Passa** | `cargo build --release -p clipsync-cli --locked`; é build de release da CLI, não validação de instalador. |
+| Windows, testes | **Falha** | `cargo test --workspace --locked --no-fail-fast`: uma falha em `clipsync-ui/tests/diag.rs:136`. A opção `--no-fail-fast` permitiu executar também Layout, onboarding e `clipsync-win` depois dela. |
+| Windows, testes específicos de S7 | **Passa nos alvos indicados** | 21 de `s7_module`, 7 de span, 10 de keymap, 21 de wincore, 27 de winmath, 2 de `layout_windows`, 8 unitários de `clipsync-win` e 6 de `clipsync-win/tests/windows.rs`. Isso não torna o job inteiro verde. |
+
+#### Achados que impedem aprovação
+
+1. **ALTO · Encerramento do trabalhador depende de uma mensagem descartável na mesma fila que satura.** Em `crates/clipsync-input/src/adapter/win/capture.rs:347`, o trabalhador recebe uma mensagem e trata `overflow` antes de examinar se ela é `Msg::Stop`. O ramo de overflow também drena indiscriminadamente as mensagens restantes (`:350`) e continua. `stop()` envia `Msg::Stop` por essa fila e espera `worker.join()` (`:648`, `:651`). Portanto, se o overflow já estiver marcado, a parada pode ser a própria mensagem recebida e ignorada, ou uma das removidas pela drenagem. A thread fica esperando `inbox.recv()` para sempre porque conserva seu próprio `SyncSender` (`Worker.queue`, `:325`), e `stop()` não termina. Há ainda outra espera sem cancelamento em `out.blocking_send()` (`:336`): o laço do módulo deixa de consumir seu receptor antes de aguardar `cap.stop()` (`crates/clipsync-input/src/capture.rs:254`, `:278`), permitindo bloqueio com o canal de saída cheio. Isso compromete a parada após sobrecarga, a pausa e o reload; **reprova o critério 3, R4/encerramento sob saturação**. Evidência por leitura e ordem das operações, **sem reprodução nativa Windows nesta auditoria**. O `Drop` também pode perder seu `try_send(Msg::Stop)` (`:668`), conforme S7-07 do Sentinel; o cenário aqui descrito alcança também o `stop()` normal. A correção posterior `6880b7f` apareceu na main durante a auditoria, mas está fora de 8cc14c4 e não recebe aprovação retroativa.
+2. **MÉDIO · Diagnóstico Windows mistura a descrição fixa dos atalhos com seu estado efetivo.** `crates/clipsync-input/src/diag.rs:101` produz um item `input/atalhos` com `status=ok` incondicionalmente. `clipsync-ui/src/diag.rs:142` incorpora esses itens e, em `:227`, acrescenta outro item com o mesmo nome, calculado pelo estado do agente e pelas ligações locais. No CI, `diagnostics_show_the_keyboard_layout_and_on_windows_the_shortcuts` encontra primeiro o item fixo, embora não exista ligação local. Em `clipsync-ui/tests/diag.rs:136`, o esperado era `status=warn`, `detail="inativos: nenhuma ligação desta máquina no layout"`; o obtido foi `status=ok`, `detail="Win+Alt+1 a 9 (ir para o dispositivo), Win+Alt+L (travar), Win+Alt+P (pausar); Win+Alt+C e Win+Alt+V: indisponível nesta versão"`. Falha registrada às **19:53:58 UTC**, detalhes em `ci.log:1142`. **Reprova o critério 4**, que exige `clipsync-ui` inteiro verde nos dois CIs. Não é uma hipótese de flutuação ou timeout: a asserção e a duplicação têm evidência direta.
+
+#### Critério 1 · Rivet, proto e core
+
+**Passa.** Os testes abaixo passaram localmente e constam como `ok` nos logs dos dois runners. As linhas são da extração de 8cc14c4.
+
+| Item | Veredito | Evidência |
+| --- | --- | --- |
+| (a) Round-trip das três variantes | **Passa** | `clipsync-proto/tests/s7.rs:64`, `enter_span_returned_and_refused_roundtrip_through_postcard`; tags novas verificadas em `:115`. |
+| (b) Validação de posição, trecho e monitor | **Passa** | `s7.rs:128`, `validate_refuses_pos_out_of_range_nan_empty_way_back_and_a_bad_monitor_name`: 1.5, NaN, trecho vazio/invertido e nomes vazio, com controle ou longo. |
+| (c) Permissões e pausa | **Passa** | `s7.rs:187`, `enter_span_needs_input_in_and_no_pause_returned_and_refused_need_neither`. |
+| (d) Par v2 recebe `RemoteTooOld`, nada sai | **Passa** | `s7.rs:241`, `memhub_refuses_the_v3_messages_to_a_version_2_peer_and_nothing_leaves`: três recusas, contador de envio zero e receptor vazio; `EnterAt` continua permitido. É a prova com `MemHub`, não uma sessão de rede real v2 nesta máquina. |
+| (e) Hello v3, mínimo 1 | **Passa** | `clipsync-core/tests/mesh.rs:801`, `hello_v3_passes_the_0_1_0_and_0_2_x_compatibility_rules`. |
+| (f) Pausa por pedido do módulo e evento da UI | **Passa** | `mesh.rs:771`, `request_pause_pauses_both_modules_like_the_control`: ambos os módulos recebem a pausa; status e `state.toml` a conservam e voltam ao retomar. `clipsync-ui/tests/agent.rs:100`, `:157`, `:218` verificam `pause_changed` para pausa, retomada e agente externo; `ui/src/events.rs:312` emite pelo mesmo delta de status. O teste do core não observa sozinho o evento da UI: a evidência é a composição desses testes e do caminho comum de estado. |
+
+#### Critério 2 · Vector
+
+**Passa nos testes com adaptadores falsos pedidos pelo contrato.** A suíte completa de input passou localmente e nos dois runners; Layout passou com 14 casos no Linux e 2 específicos no Windows. `tests/layout.rs` tem zero casos no Windows por `cfg`, por isso a prova Windows é explicitamente a alínea (h). Isso não cobre o trabalhador Win32 real do achado 1.
+
+Todos os nomes desta tabela estão em `crates/clipsync-input/tests/s7_module.rs`, exceto quando indicado.
+
+| Item | Veredito | Testes e asserções conferidos |
+| --- | --- | --- |
+| (a) Recusa por bloqueio e pausa do destino | **Passa** | `a_locked_destination_refuses_the_span_and_the_source_says_why` (`:263`) e `a_paused_destination_refuses_with_the_paused_text` (`:284`): motivo da recusa, ausência de emulação e encerramento na origem. |
+| (b) Trecho de volta, posição e sessão correta | **Passa** | `pushing_out_through_the_span_returns_at_the_mapped_position` (`:304`), `the_destination_returns_only_through_the_way_back` (`:343`), `a_returned_of_another_session_is_ignored` (`:377`), `with_the_lock_on_a_returned_is_ignored` (`:395`). Conferem retorno mapeado, outras bordas/fora do trecho sem retorno, sessão errada e trava. Mais os **7 unitários de `src/span.rs`**, incluindo margem, parede e união com monitor vizinho. |
+| (c) Botão seguro após posicionamento | **Passa** | `a_held_button_arrives_after_the_positioning_and_is_gone_after_the_return` (`:467`): posicionamento precede o pressionar; `pressed_now()==0` depois da volta. |
+| (d) Atalhos, trava e pausa | **Passa** | `shortcuts_switch_lock_and_pause` (`:498`): troca, retorno ao próprio dispositivo, alternância da trava e pedidos de pausa contados no `MemHub`. |
+| (e) Resolução sem mudar quantidade de monitores | **Passa** | `a_new_resolution_republishes_zones_and_moves_the_barriers` (`:534`): `Zones` novo para v2 em até 3 s, barreira atualizada e ausência de republicação sem mudança. |
+| (f) Bloqueio da origem | **Passa** | `a_locked_source_closes_the_session_and_blocks_activation` (`:584`): `Leave`/`ReleaseAll`, recusa de nova ativação até desbloquear. |
+| (g) Compatibilidade v2 | **Passa** | `a_v2_peer_gets_enter_at_and_the_source_decides_the_way_back` (`:629`): `EnterAt` e decisão de retorno na origem. |
+| (h) Tela Layout no Windows | **Passa** | **Executado no CI Windows**: `clipsync-ui/tests/layout_windows.rs:21`, `with_the_input_module_on_the_commands_of_the_screen_work`, e `:74`, `input_off_only_when_the_module_is_off`. Ambos `ok`, às 19:54:00 UTC. |
+| (i) Pausa, retomada e recusa do registro | **Passa** | `pausing_removes_the_hook_and_the_resume_hotkey_brings_it_back` (`:701`), `when_the_system_refuses_the_resume_hotkey_the_tray_stays_as_the_way_back` (`:736`), `an_adapter_without_hooks_keeps_its_session_while_paused` (`:767`). Incluem `stop/watch_resume/unwatch_resume`, preservação da sessão sem hooks e flag de recusa voltando a false. |
+| (j) Última ligação, revogação e desligamento | **Passa** | `the_capture_stops_when_the_last_local_link_leaves_layout_toml` (`:663`), `the_capture_stops_when_the_peer_is_revoked` (`:831`), `the_capture_stops_when_the_module_shuts_down` (`:685`). |
+| (k) `begin` só após troca bem-sucedida | **Passa** | `a_switch_begins_the_capture_once_and_a_crossing_never_does` (`:789`) e `a_failed_open_does_not_begin_the_capture` (`:850`): uma chamada na troca, nenhuma no cruzamento ou na abertura recusada. |
+| (l) Plataforma sem `can_begin` | **Passa** | `a_switch_is_refused_where_the_platform_cannot_begin_a_capture` (`:813`) e `switch_supported_follows_can_begin_and_the_shortcut_is_refused_too` (`:874`): botão/comando e atalho recusados, nenhum `begin`, flag false; true no fake padrão. |
+
+#### Critério 3 · Flux
+
+**Falha pelo achado 1.** Os resultados verdes abaixo continuam válidos; não demonstram ausência de defeitos na ligação entre o trabalhador, a fila e o módulo.
+
+| Item | Veredito | Evidência e limite |
+| --- | --- | --- |
+| Keymap ABNT2/US, teclas especiais e botões | **Passa** | 10 testes de `tests/keymap.rs`, local e nos dois CIs. Incluem ç/acentos/aspas, extras ABNT2, AltGr e descarte do LCtrl falso, Pause/NumLock/PrintScreen e ida/volta dos botões. |
+| Nomes, geometria, DPI, atalhos e toque neutro | **Passa** | 27 testes de `tests/winmath.rs`, local e nos dois CIs: nomes estáveis/repetidos, origem negativa, quatro cantos, DPI 96/120/144/192, último pixel, borda entre monitores, Win+Alt+N/L/P e toque neutro. |
+| Núcleo da captura | **Passa nos 21 testes puros** | `tests/wincore.rs`: ativação, posicionamento, deltas, trava, atalhos, repetição, debug redigido, resolução de barreiras, `begin` e política de reinício. |
+| Clippy do Windows | **Passa** | Workspace e todos os alvos, avisos tratados como erro, run concluída sobre a HEAD pedida. |
+| Isolamento de unsafe / scripts | **Passa no controle de código** | `scripts/conferir-unsafe.sh` exit 0 local e verde nos dois CIs. Busca por construções unsafe em Rust: 62 correspondências, todas em `crates/clipsync-win/src/ffi.rs`. O grep textual amplo de `allow(unsafe_code)` tem uma ressalva literal abaixo. |
+| R3, estado fixo e seguros | **Passa na representação e seleção testadas** | `Held`/`HotkeyTracker`/`RestartPolicy` com tamanho fixo; teste `the_tracker_is_copy_and_holds_no_allocation`, e seleção de modificadores/botões nos testes do núcleo. Isso não resolve por si o valor antigo em `Shared.held`, já descrito pelo Sentinel como S7-05. |
+| R5, ausência de códigos no debug/log | **Passa** | `scripts/conferir-privacidade.sh`: exit 0, 8 arquivos, e verde nos dois CIs. Testes `debug_never_prints_key_or_button_codes`, `debug_never_shows_a_key_a_button_or_what_is_held` e debug do tracker verdes. |
+| R4, saturação e encerramento | **Falha** | Fila limitada existe (`sync_channel(8000)` e `try_send`), mas o ramo de descarte pode apagar a parada, e a saída bloqueante não observa cancelamento. Achado 1, fonte de 8cc14c4. Não existe teste dessa interleaving nos 21 testes de `wincore`. |
+| C4, handles | **Passa no teste adotado em a9d0b00** | `ten_thousand_desktop_checks_do_not_leak_handles` passou no Windows: 200 chamadas de aquecimento e 10.000 medidas. A asserção real é `after <= before + 2`, não igualdade estrita; ciclos de Hooks/Watcher/CursorPark toleram +4. O log de sucesso não publica os valores antes/depois, portanto não se afirma crescimento observado de zero. |
+| `INPUT_SUPPORTED` removido | **Passa** | `grep -rn INPUT_SUPPORTED crates/`: exit 1, stdout/stderr vazios. |
+| HooksLost, política de três reinícios | **Passa na lógica pura, sob a decisão v1.32** | `wincore.rs:476`, `:488`, `:506`: três `Restart::Recreate`, quarta `GiveUp`, janela de 10 s, nenhuma retomada espontânea e estado fixo. Os testes de pânico dos callbacks também passaram no CI Windows. A sequência integrada fica com o limite explicitado abaixo. |
+
+**Duas diferenças entre o texto do contrato e o alcance da prova:**
+
+- O grep literal `grep -rn 'allow(unsafe_code)' crates/` retorna **duas linhas**, não uma: atributo em `clipsync-win/src/ffi.rs:12` e comentário explicativo em `clipsync-win/Cargo.toml:16`. A contagem literal da §13.3.5 **falha**; não há uma segunda autorização de unsafe. O script aprovado distingue código de comentário e passa. Não se apresenta o grep amplo como resultado de uma ocorrência.
+- A última frase da §13.11.3 ainda descreve uma prova integrada de `HooksLost` com FFI falso. A decisão posterior e explícita da **v1.32, §13.6 e §13.13.21**, aceita que o trabalhador não tenha essa abstração. Por isso a ausência do teste integrado não é usada isoladamente como reprovação. Porém `three_losses_in_ten_seconds_are_recreated_and_the_fourth_gives_up_for_good` testa só `RestartPolicy`: não cria Hooks, não observa `Leave`/`ReleaseAll` e não executa `InputReload`. Os seis testes reais de `clipsync-win/tests/windows.rs` também não dirigem esse trabalhador. O caminho existe por leitura em `adapter/win/capture.rs:451` e `module.rs:530`; a integração completa continua sem execução observada por Argus e dependente do roteiro §13.12. A aceitação desse risco de cobertura não apaga o defeito concreto do achado 1.
+
+#### Critério 4 · Rivet, UI
+
+**Falha: `clipsync-ui` não está inteiro verde no Windows.** No Linux local foram 99 aprovados; no Windows, 80 aprovados e 1 falha. A falha e o impacto no diagnóstico estão no achado 2.
+
+| Requisito específico | Veredito | Evidência |
+| --- | --- | --- |
+| Suíte inteira verde nos dois CIs | **Falha** | `diagnostics_show_the_keyboard_layout_and_on_windows_the_shortcuts`, `tests/diag.rs:136`, run 40757283200. |
+| `global_shortcuts` no Windows com input ligado | **Passa** | `tests/agent.rs:259`, `global_shortcuts_need_windows_and_the_input_module`, passou também no Windows. |
+| Autoteste chama input, diferente de `not_tested` | **Passa** | `tests/onboarding.rs:175`, `self_test_calls_the_input_module_when_it_is_on`, passou no Windows e no Linux. |
+| Defaults do `InputState` antigo | **Passa** | `clipsync-proto/tests/s7.rs:353`, `input_state_without_the_s7_fields_decodes_with_their_defaults`: recusa false, switch true. |
+| Flag de recusa copiada, false sem agente | **Passa** | `clipsync-ui/src/status.rs:303`, `resume_hotkey_refused_comes_from_the_input_state`. |
+| Capacidade de troca copiada, false sem agente | **Passa** | `status.rs:312`, `switch_device_comes_from_the_input_state`. |
+
+#### Critério 5 · Pixel, portal e greps
+
+**Passa no escopo de estados, texto, controles e estrutura observados pelo DOM.** Criado portal próprio **“S7 · Argus”**, usando exclusivamente o servidor já existente em `http://127.0.0.1:5174`. Foram usados `navigate`, `resize`, `evaluate`, `snapshot`, `logs-start` e `logs`; cada coleta tabulada foi ajustada e medida em **1280×800**. Os registros ficam nos JSON, snapshots e logs com os nomes abaixo, na pasta da auditoria.
+
+| Cenário / tela | Veredito | Evidência observada |
+| --- | --- | --- |
+| `windows`, Layout | **Passa** | `windows-layout`: máquina `desktop-win`, **DELL U2723QE, 3840×2160 · 150%**, e **LG 24GL600F, 1920×1080**. Escala 100% omitida conforme §13.9. Canvas e painel de ligações permanecem lado a lado; monitores e nomes no SVG/DOM. Os dois botões da faixa Ir para dispositivo estão habilitados. |
+| `windows`, Preferências | **Passa** | `windows-preferencias`: grupo Atalhos com **“ativos nesta máquina”**, Win+Alt+P/L/1/2/3 listados; C e V explicitamente indisponíveis conforme o contrato. |
+| `windows-recusa`, Preferências | **Passa** | `windows-recusa-preferencias`: na mesma linha de **Win+Alt+P**, **“O Windows não liberou Win+Alt+P para retomar: use a bandeja ou Pausar tudo.”** |
+| `padrao` Linux, Layout | **Passa** | `padrao-layout`: dois botões de troca com `disabled=true` e texto **“indisponível nesta versão neste sistema”** na faixa. |
+| `padrao` Linux, Preferências | **Passa** | `padrao-preferencias`: atalhos com **“indisponível nesta versão”**, sem o selo de ativos. |
+| `windows`, onboarding | **Passa para a liberação de input** | `windows-onboarding1` e `windows-onboarding2`: nome da máquina no passo 1; no passo 2, **Teclado e mouse marcado e habilitado** (`checked=true`, `disabled=false`), ao lado do módulo Clipboard. Criar perfil e continuar habilitado. Não foi executado autoteste real de input pelo mock. |
+| Recusa lida de campo, não do texto de bloqueio | **Passa** | `ui/js/telas/preferencias.js:93`, `:122`, `:213` leem `features.resume_hotkey_refused`. Experimento adicional somente no mock em memória: flag true com `bloqueioRecusa=false` mantém o aviso; flag false com `bloqueioRecusa=true` retira o aviso da linha de Win+Alt+P, após `atualizarApp()` e a atualização assíncrona da tela. Evidência `refusal-flag-true-block-false.json` e `refusal-flag-false-block-true.json`. Nenhum JS das telas procura o texto do bloqueio para decidir essa recusa. |
+| Troca lida de capacidade | **Passa** | `ui/js/telas/layout.js:683`, `:744`, `:920`, `:945` usam `features.switch_device`; corresponde aos estados Windows/Linux observados. |
+| Greps da §12.9.5 | **Passa** | `grep -rnE 'innerHTML\|style=' crates/clipsync-app/ui` e `grep -rn '—' crates/clipsync-app/ui`: exit 1, nenhuma saída. Parse dos HTML e `document.scripts`: dois scripts, ambos com `src` e conteúdo inline vazio (`js/tema-inicial.js`, `js/app.js`). |
+| Fontes e origem | **Passa nas coletas** | `document.fonts`: **Inter Variable**, **Geist**, **Geist Mono**, todas `loaded`. Recursos observados pela Performance API: **38 URLs distintas**, todas na origem `http://127.0.0.1:5174`; lista de externas vazia. As 38 respostas foram comparadas byte a byte com os arquivos de 8cc14c4: **38 iguais**, em `served-files.json`. Logs de console vazios nas coletas; não são uma captura de pacotes. |
+
+**Limite do portal:** `screenshot` retornou timeout de renderização e `click` por referência informou que a janela poderia estar minimizada. `maestri debug` confirmou conexão normal. `evaluate` e `snapshot` continuaram funcionando; o avanço do onboarding foi feito por `button.click()` dentro de `maestri portal evaluate`. Assim, esta rodada comprova DOM, estados e medidas, **não fornece captura raster nova nem prova clique físico/foco**. Não foi usado outro navegador. A revisão visual completa dos pares Figma da S6 permanece na seção anterior, sem ser apresentada como reexecutada aqui. Nota de texto: o onboarding Windows ainda menciona InputCapture/X11 na explicação dos módulos; isso não impede a liberação de input exigida neste item, mas não descreve as APIs nativas Windows.
+
+**Fechamento desta base: critérios 1 e 2 Passa; 3 Falha; 4 Falha; 5 Passa com o limite do portal declarado.** O CI já terminou e o job Windows está vermelho. Alterações posteriores da main e correções em andamento de outros agentes não mudam este resultado sobre 8cc14c4.
+
