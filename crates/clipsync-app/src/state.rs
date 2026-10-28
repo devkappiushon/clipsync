@@ -1,10 +1,12 @@
 //! Estado compartilhado da casca. O Tauri já compartilha o estado gerenciado: sem `Arc` aqui.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use tokio::sync::watch;
 
 use crate::msg;
+use crate::notify_prefs::NotifyPrefs;
 use crate::ui::{Ui, UiError};
 
 /// Fase da `Ui::start`, que roda depois que a janela existe.
@@ -19,6 +21,7 @@ pub struct AppState {
     startup: watch::Sender<Startup>,
     paused: AtomicBool,
     quitting: AtomicBool,
+    notify: Mutex<NotifyPrefs>,
 }
 
 impl AppState {
@@ -29,6 +32,7 @@ impl AppState {
             startup,
             paused: AtomicBool::new(false),
             quitting: AtomicBool::new(false),
+            notify: Mutex::new(NotifyPrefs::default()),
         }
     }
 
@@ -78,6 +82,15 @@ impl AppState {
 
     pub fn set_paused(&self, paused: bool) {
         self.paused.store(paused, Ordering::Relaxed);
+    }
+
+    /// Quais notificações do sistema o usuário quer. Tudo desligado até a casca ler as preferências.
+    pub fn notify_prefs(&self) -> NotifyPrefs {
+        *self.notify.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn set_notify_prefs(&self, prefs: NotifyPrefs) {
+        *self.notify.lock().unwrap_or_else(PoisonError::into_inner) = prefs;
     }
 
     /// Verdade só para o primeiro chamador: o encerramento roda uma vez.
@@ -133,6 +146,19 @@ mod tests {
         assert_eq!(code.as_deref(), Some("config"));
         assert!(state.ui_now().is_none());
         assert!(state.hidden());
+    }
+
+    #[test]
+    fn notifications_start_off_and_follow_what_is_set() {
+        let state = AppState::new(false);
+        assert!(!state.notify_prefs().allows("block"));
+        state.set_notify_prefs(NotifyPrefs {
+            item_received: true,
+            device_connected: false,
+            block: false,
+        });
+        assert!(state.notify_prefs().allows("item_received"));
+        assert!(!state.notify_prefs().allows("block"));
     }
 
     #[test]

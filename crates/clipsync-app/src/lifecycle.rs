@@ -19,6 +19,8 @@ pub async fn boot(app: AppHandle, options: UiOptions) {
     match Ui::start(options).await {
         Ok(ui) => {
             events::spawn(app.clone(), ui.clone());
+            // Antes do `set_ready`: o front só chama depois, então nada muda no meio.
+            events::load_notify_prefs(&app, &ui).await;
             app.state::<AppState>().set_ready(ui.clone());
             tray::sync_paused(&app, &ui).await;
         }

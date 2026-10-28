@@ -7,6 +7,7 @@ mod commands;
 mod events;
 mod lifecycle;
 mod msg;
+mod notify_prefs;
 mod signals;
 mod state;
 mod tray;

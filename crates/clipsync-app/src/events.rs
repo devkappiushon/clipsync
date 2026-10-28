@@ -3,19 +3,39 @@
 //! lê o evento pela forma JSON da §12.5 (`{event, data}`), não pelas variantes do crate.
 
 use serde_json::{Value, json};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::broadcast::error::RecvError;
 
+use crate::notify_prefs::NotifyPrefs;
+use crate::state::AppState;
 use crate::ui::Ui;
 use crate::{msg, tray, window};
 
 /// Nome único de evento no front (§12.4). O Tauri aceita `:` e `/` em nomes de evento.
 pub const EVENT: &str = "clipsync://event";
 
+/// Lê as preferências de notificação (`prefs_get`) para a casca. Sem elas nenhuma notificação do
+/// sistema sai (falha fechada). Roda antes de a `Ui` ser liberada ao front, então nenhuma
+/// preferência muda no meio.
+pub async fn load_notify_prefs(app: &AppHandle, ui: &Ui) {
+    match ui.call(json!({ "cmd": "prefs_get" })).await {
+        Ok(prefs) => match NotifyPrefs::from_prefs(&prefs) {
+            Some(prefs) => app.state::<AppState>().set_notify_prefs(prefs),
+            None => {
+                tracing::warn!("prefs_get without notifications; system notifications stay off")
+            }
+        },
+        Err(error) => {
+            tracing::warn!(code = %error.code, "prefs_get failed; system notifications stay off");
+        }
+    }
+}
+
+/// Assina na hora (antes do `await`), para não perder evento entre a subida e o primeiro laço.
 pub fn spawn(app: AppHandle, ui: Ui) {
+    let mut events = ui.subscribe();
     tauri::async_runtime::spawn(async move {
-        let mut events = ui.subscribe();
         loop {
             match events.recv().await {
                 Ok(event) => match serde_json::to_value(&event) {
@@ -36,6 +56,14 @@ pub fn spawn(app: AppHandle, ui: Ui) {
 fn forward(app: &AppHandle, event: Value) {
     match event_name(&event) {
         Some("notification") => notify(app, &event),
+        Some("prefs_changed") => {
+            if let Some(prefs) = event
+                .pointer("/data/prefs")
+                .and_then(NotifyPrefs::from_prefs)
+            {
+                app.state::<AppState>().set_notify_prefs(prefs);
+            }
+        }
         Some("pause_changed") => {
             if let Some(paused) = paused_of(&event) {
                 tray::set_paused(app, paused);
@@ -69,9 +97,21 @@ fn notification_text(event: &Value) -> (&str, &str) {
     (title, body)
 }
 
-/// Notificação do sistema. O crate já filtrou pelas preferências e nunca manda conteúdo de
-/// clipboard (§12.2 regra 7).
+/// O `kind` de um evento `notification` (`item_received`, `device_connected` ou `block`).
+fn notification_kind(event: &Value) -> Option<&str> {
+    event.pointer("/data/kind").and_then(Value::as_str)
+}
+
+/// Notificação do sistema, só se o usuário ligou aquele tipo. O crate já filtra e nunca manda
+/// conteúdo de clipboard (§12.2 regra 7); a casca confere de novo porque é ela que fala com o
+/// sistema (S6-13).
 fn notify(app: &AppHandle, event: &Value) {
+    let wanted = notification_kind(event)
+        .is_some_and(|kind| app.state::<AppState>().notify_prefs().allows(kind));
+    if !wanted {
+        tracing::debug!("system notification skipped by the preferences");
+        return;
+    }
     let (title, body) = notification_text(event);
     if let Err(error) = app.notification().builder().title(title).body(body).show() {
         tracing::warn!(error = %error, "system notification failed");
@@ -89,6 +129,13 @@ mod tests {
         assert_eq!(event_name(&on), Some("pause_changed"));
         assert_eq!(paused_of(&on), Some(true));
         assert_eq!(paused_of(&other), None);
+    }
+
+    #[test]
+    fn notification_kind_is_read_from_the_contract_shape() {
+        let event = json!({ "event": "notification", "data": { "kind": "block", "title": "t", "body": "b" } });
+        assert_eq!(notification_kind(&event), Some("block"));
+        assert_eq!(notification_kind(&json!({ "event": "notification" })), None);
     }
 
     #[test]
