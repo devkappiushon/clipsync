@@ -20,7 +20,7 @@ estado.prefs = {
   appearance: { theme: temaInicial, reduce_motion: false },
   language: "pt-BR",
   version: "0.2.0",
-  license: "a definir",
+  license: "Todos os direitos reservados",
 };
 
 const CAMPOS = new Set(["autostart", "notifications", "appearance"]);
