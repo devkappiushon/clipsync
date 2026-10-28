@@ -760,6 +760,7 @@ dependencies = [
  "async-trait",
  "clap",
  "clipsync-proto",
+ "clipsync-win",
  "futures-util",
  "humantime",
  "reis",
