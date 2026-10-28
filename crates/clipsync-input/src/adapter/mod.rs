@@ -162,5 +162,10 @@ pub trait EmulateAdapter: Send + 'static {
     fn cursor(&self) -> Option<(i32, i32)> {
         None
     }
+    /// The keyboard layout this machine types with, for the diagnostics only: the `xkb_symbols`
+    /// name the EIS announces (Linux) or the KLID (Windows). `None` until known.
+    fn keyboard_layout(&self) -> Option<String> {
+        None
+    }
     async fn stop(&mut self) -> Result<(), InputError>;
 }

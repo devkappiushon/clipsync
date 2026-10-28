@@ -254,6 +254,8 @@ struct State {
     retry_on_zones: bool,
     /// The targets the engine runs with, to retarget only on a real change.
     targets_key: String,
+    /// The system refused Win+Alt+P as the way to resume: only the tray and the button are left.
+    resume_refused: bool,
 }
 
 #[async_trait]
@@ -305,6 +307,7 @@ impl Module for InputModule {
             suspended: false,
             retry_on_zones: false,
             targets_key: String::new(),
+            resume_refused: false,
         };
         st.cap_hooks = st.cap.as_ref().is_some_and(|c| c.holds_hooks());
         st.local_zones = st.cap.as_ref().map(|c| c.known_zones()).unwrap_or_default();
@@ -476,16 +479,21 @@ impl State {
     async fn arm_resume(&mut self) {
         let Some(cap) = self.cap.as_mut() else { return };
         match cap.watch_resume().await {
-            Ok(rx) => self.resume_rx = rx,
+            Ok(rx) => {
+                self.resume_rx = rx;
+                self.resume_refused = false;
+            }
             Err(e) => {
                 tracing::warn!("resume hotkey refused: {e}");
                 self.last_block = Some(msg::RESUME_HOTKEY_REFUSED.to_owned());
+                self.resume_refused = true;
             }
         }
     }
 
     async fn disarm_resume(&mut self) {
         self.resume_rx = None;
+        self.resume_refused = false;
         if let Some(cap) = self.cap.as_mut() {
             cap.unwatch_resume().await;
         }
@@ -507,8 +515,8 @@ impl State {
             screen_locked: self.locked,
             active_peer: self.active_peer,
             pending_offer: self.pending_offer.clone(),
-            keyboard_layout: None,
-            resume_hotkey_refused: false,
+            keyboard_layout: self.emu.keyboard_layout(),
+            resume_hotkey_refused: self.resume_refused,
         }
     }
 

@@ -160,6 +160,13 @@ async fn status(run: &Run) -> ModuleStatus {
     s
 }
 
+async fn input_state(run: &Run) -> InputState {
+    match command(&run.tx, ModuleCommand::InputState).await {
+        ModuleReply::InputState(s) => s,
+        other => panic!("{other:?}"),
+    }
+}
+
 async fn until(what: &str, cond: impl Fn() -> bool) {
     let end = Instant::now() + Duration::from_secs(3);
     while !cond() {
@@ -704,6 +711,10 @@ async fn pausing_removes_the_hook_and_the_resume_hotkey_brings_it_back() {
         a.cap.resume_watching()
     })
     .await;
+    assert!(
+        !input_state(&a).await.resume_hotkey_refused,
+        "the system took the combination"
+    );
     let starts = a.cap.starts();
     a.cap.resume_hotkey();
     until("resumed by the hotkey", || hub.pause_requests(a.id) == 1).await;
@@ -738,9 +749,12 @@ async fn when_the_system_refuses_the_resume_hotkey_the_tray_stays_as_the_way_bac
             .is_some_and(|t| t.contains("Win+Alt+P")),
         "{s:?}"
     );
+    // the refusal is data, not just text
+    assert!(input_state(&a).await.resume_hotkey_refused);
     // the tray or the button resumes
     hub.set_paused(a.id, false);
     until("hook back", || a.cap.started()).await;
+    assert!(!input_state(&a).await.resume_hotkey_refused);
 }
 
 #[tokio::test]
