@@ -11,7 +11,7 @@
 //! - no key, scan code or character reaches a log: nothing here logs at all (§13.2 rule 2e).
 #![allow(unsafe_code)]
 
-use crate::{Monitor, Notice, RawEvent, Synth, Verdict, WinButton, WinError, WinKey};
+use crate::{Modifier, Monitor, Notice, RawEvent, Synth, Verdict, WinButton, WinError, WinKey};
 use std::cell::{Cell, RefCell};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -141,10 +141,35 @@ pub(crate) fn keyboard_layout() -> Option<String> {
     Some(utf16_until_nul(&buffer))
 }
 
-pub(crate) fn async_key_down(vk: u16) -> bool {
+/// Whether a virtual key is physically down right now. Private on purpose: the public API only
+/// reads modifiers and mouse buttons (Sentinel S7-01), never a letter.
+fn async_down(vk: i32) -> bool {
     // SAFETY: GetAsyncKeyState takes a virtual-key code and no pointer.
-    let state = unsafe { GetAsyncKeyState(i32::from(vk)) };
+    let state = unsafe { GetAsyncKeyState(vk) };
     state < 0
+}
+
+pub(crate) fn modifier_down(modifier: Modifier) -> bool {
+    async_down(match modifier {
+        Modifier::LeftShift => 0xA0,
+        Modifier::RightShift => 0xA1,
+        Modifier::LeftCtrl => 0xA2,
+        Modifier::RightCtrl => 0xA3,
+        Modifier::LeftAlt => 0xA4,
+        Modifier::RightAlt => 0xA5,
+        Modifier::LeftWin => 0x5B,
+        Modifier::RightWin => 0x5C,
+    })
+}
+
+pub(crate) fn button_down(button: WinButton) -> bool {
+    async_down(match button {
+        WinButton::Left => 0x01,
+        WinButton::Right => 0x02,
+        WinButton::Middle => 0x04,
+        WinButton::X1 => 0x05,
+        WinButton::X2 => 0x06,
+    })
 }
 
 pub(crate) fn process_handle_count() -> Result<u32, WinError> {
@@ -256,8 +281,9 @@ fn display_names() -> Vec<(String, String, String)> {
         source.header.size = std::mem::size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>() as u32;
         source.header.adapterId = path.sourceInfo.adapterId;
         source.header.id = path.sourceInfo.id;
-        // SAFETY: `source.header` is the first field of a live, writable request whose `size` was set.
-        if unsafe { DisplayConfigGetDeviceInfo(&mut source.header) } != 0 {
+        // SAFETY: the API writes the whole request, not only the header: the pointer is to the whole live
+        // struct, whose header (its first field, `repr(C)`) says its `size`.
+        if unsafe { DisplayConfigGetDeviceInfo(std::ptr::from_mut(&mut source).cast()) } != 0 {
             continue;
         }
         let mut target = DISPLAYCONFIG_TARGET_DEVICE_NAME::default();
@@ -266,7 +292,7 @@ fn display_names() -> Vec<(String, String, String)> {
         target.header.adapterId = path.targetInfo.adapterId;
         target.header.id = path.targetInfo.id;
         // SAFETY: as above, for the target request.
-        if unsafe { DisplayConfigGetDeviceInfo(&mut target.header) } != 0 {
+        if unsafe { DisplayConfigGetDeviceInfo(std::ptr::from_mut(&mut target).cast()) } != 0 {
             continue;
         }
         names.push((
@@ -429,13 +455,15 @@ pub(crate) fn send(inputs: &[Synth]) -> Result<usize, WinError> {
     // SAFETY: `built` is a live slice of fully initialized INPUT structs, and the size argument is
     // the size of one INPUT, as the API requires.
     let sent = unsafe { SendInput(&built, std::mem::size_of::<INPUT>() as i32) };
-    if sent == 0 {
+    // Fewer inputs than asked is a failure too (a blocked input, for instance): the caller must not
+    // believe a half batch went through.
+    if sent as usize != built.len() {
         return Err(WinError {
             call: "SendInput",
             code: last_error(),
         });
     }
-    Ok(sent as usize)
+    Ok(built.len())
 }
 
 fn last_error() -> u32 {
@@ -1142,3 +1170,144 @@ pub(crate) fn start_hotkey(
 }
 
 pub(crate) const RESUME_VK: u32 = VK_P;
+
+/// The callbacks are called here with structs built by hand, on the test's own thread (the state is
+/// thread-local, so every test has a clean slate). Runs on Windows only, with the rest of the file.
+#[cfg(test)]
+#[allow(clippy::panic)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+    use windows::Win32::UI::WindowsAndMessaging::KBDLLHOOKSTRUCT_FLAGS;
+
+    struct Probe {
+        input_calls: Arc<AtomicUsize>,
+        lost: Arc<AtomicUsize>,
+    }
+
+    fn install(on_input: impl FnMut(&RawEvent) -> Verdict + Send + 'static) -> Probe {
+        let lost = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&lost);
+        let input_calls = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::clone(&input_calls);
+        let mut on_input = on_input;
+        CALLBACKS.with(|cell| {
+            *cell.borrow_mut() = Some(Callbacks {
+                on_input: Some(Box::new(move |event| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    on_input(event)
+                })),
+                on_notice: Box::new(move |n| {
+                    if n == Notice::HooksLost {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                    }
+                }),
+                lost: false,
+            });
+        });
+        Probe { input_calls, lost }
+    }
+
+    fn key(flags: u32) -> LRESULT {
+        let info = KBDLLHOOKSTRUCT {
+            vkCode: 0x41,
+            scanCode: 0x1E,
+            flags: KBDLLHOOKSTRUCT_FLAGS(flags),
+            time: 0,
+            dwExtraInfo: 0,
+        };
+        // SAFETY: `info` lives for the whole call, as the system's struct does for a hook callback; the
+        // code 0 (HC_ACTION) says `lparam` points to it.
+        unsafe {
+            keyboard_proc(
+                0,
+                WPARAM(WM_KEYDOWN as usize),
+                LPARAM(std::ptr::from_ref(&info) as isize),
+            )
+        }
+    }
+
+    fn mouse() -> LRESULT {
+        let info = MSLLHOOKSTRUCT {
+            pt: POINT { x: 5, y: 6 },
+            mouseData: 0,
+            flags: 0,
+            time: 0,
+            dwExtraInfo: 0,
+        };
+        // SAFETY: as in `key`, for the mouse struct.
+        unsafe {
+            mouse_proc(
+                0,
+                WPARAM(WM_MOUSEMOVE as usize),
+                LPARAM(std::ptr::from_ref(&info) as isize),
+            )
+        }
+    }
+
+    #[test]
+    fn a_panic_in_the_keyboard_callback_passes_the_event_and_reports_the_loss_once() {
+        let probe = install(|_| panic!("boom"));
+        assert_ne!(key(0).0, 1, "the event has to pass");
+        assert_eq!(probe.lost.load(Ordering::SeqCst), 1);
+        // the hook is dead: it passes everything and never calls the closure again
+        assert_ne!(key(0).0, 1);
+        assert_ne!(mouse().0, 1);
+        assert_eq!(probe.input_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(probe.lost.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_panic_in_the_mouse_callback_is_the_same() {
+        let probe = install(|_| panic!("boom"));
+        assert_ne!(mouse().0, 1);
+        assert_eq!(probe.lost.load(Ordering::SeqCst), 1);
+        assert_ne!(key(0).0, 1);
+        assert_eq!(probe.input_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn block_stops_the_event_and_pass_lets_it_through() {
+        let probe = install(|_| Verdict::Block);
+        assert_eq!(key(0).0, 1);
+        assert_eq!(mouse().0, 1);
+        assert_eq!(probe.input_calls.load(Ordering::SeqCst), 2);
+        let probe = install(|_| Verdict::Pass);
+        assert_ne!(key(0).0, 1);
+        assert_eq!(probe.lost.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn injected_events_are_never_read() {
+        let probe = install(|_| Verdict::Block);
+        for flags in [
+            LLKHF_INJECTED.0,
+            LLKHF_LOWER_IL_INJECTED.0,
+            LLKHF_INJECTED.0 | LLKHF_UP.0,
+        ] {
+            assert_ne!(key(flags).0, 1);
+        }
+        assert_eq!(probe.input_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_callback_that_runs_while_the_state_is_borrowed_passes() {
+        let probe = install(|_| Verdict::Block);
+        let held = CALLBACKS.with(|cell| {
+            let _guard = cell.borrow_mut();
+            key(0).0
+        });
+        assert_ne!(held, 1);
+        assert_eq!(probe.input_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_negative_code_passes_without_reading_the_struct() {
+        let probe = install(|_| Verdict::Block);
+        // SAFETY: a negative code means the system sent no struct; the pointer is never read.
+        let result = unsafe { keyboard_proc(-1, WPARAM(0), LPARAM(0)) };
+        assert_ne!(result.0, 1);
+        assert_eq!(probe.input_calls.load(Ordering::SeqCst), 0);
+    }
+}

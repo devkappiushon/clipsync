@@ -3,9 +3,9 @@
 #![cfg(windows)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use clipsync_win::{
-    Hooks, Notice, RawEvent, Synth, Verdict, Watcher, WinKey, async_key_down, cursor_pos,
-    hotkey_registrable, input_desktop_is_default, monitors, process_handle_count, send,
-    virtual_screen,
+    Hooks, Modifier, Notice, RawEvent, Synth, Verdict, Watcher, WinButton, WinKey, button_down,
+    cursor_pos, hotkey_registrable, input_desktop_is_default, modifier_down, monitors,
+    process_handle_count, send, virtual_screen,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -82,7 +82,11 @@ fn the_desktop_and_the_monitors_can_be_read() {
     let (_, _, width, height) = virtual_screen();
     assert!(width > 0 && height > 0);
     assert!(cursor_pos().is_ok());
-    assert!(!async_key_down(0xE8));
+    // the physical state is whatever it is; the calls just have to work
+    let _ = (
+        modifier_down(Modifier::LeftShift),
+        button_down(WinButton::Left),
+    );
 }
 
 /// I-S7-2: does the system accept Win+Alt+digit and Win+Alt+P as hotkeys? This records the answer in

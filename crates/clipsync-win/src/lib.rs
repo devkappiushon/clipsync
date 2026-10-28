@@ -21,6 +21,20 @@ pub enum WinButton {
     X2,
 }
 
+/// The keys that are safe to carry across a switch of machine (never a letter) and that the adapter
+/// may ask the system about (Sentinel S7-01).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Modifier {
+    LeftShift,
+    RightShift,
+    LeftCtrl,
+    RightCtrl,
+    LeftAlt,
+    RightAlt,
+    LeftWin,
+    RightWin,
+}
+
 /// A key as the system names it. `Debug` is manual: the code is never printed.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum WinKey {
@@ -124,7 +138,7 @@ pub struct WinError {
 
 #[cfg(windows)]
 mod api {
-    use super::{Monitor, Notice, RawEvent, Synth, Verdict, WinError, ffi};
+    use super::{Modifier, Monitor, Notice, RawEvent, Synth, Verdict, WinButton, WinError, ffi};
 
     /// The two low-level hooks, on a thread of their own with a hidden window (contract §13.5).
     /// Dropping it removes the hooks, closes the window and ends the thread.
@@ -216,9 +230,15 @@ mod api {
         ffi::keyboard_layout()
     }
 
-    /// Whether the key is physically down right now (`GetAsyncKeyState`), to reconcile on activation.
-    pub fn async_key_down(vk: u16) -> bool {
-        ffi::async_key_down(vk)
+    /// Whether this modifier is physically down right now (`GetAsyncKeyState`), to reconcile on
+    /// activation. Closed on modifiers and mouse buttons: no other key can be read this way.
+    pub fn modifier_down(modifier: Modifier) -> bool {
+        ffi::modifier_down(modifier)
+    }
+
+    /// Whether this mouse button is physically down right now.
+    pub fn button_down(button: WinButton) -> bool {
+        ffi::button_down(button)
     }
 
     /// Handles open in this process, for the test that proves nothing leaks.
@@ -229,8 +249,8 @@ mod api {
 
 #[cfg(windows)]
 pub use api::{
-    CursorPark, Hooks, ResumeHotkey, Watcher, async_key_down, cursor_pos, hotkey_registrable,
-    input_desktop_is_default, keyboard_layout, monitors, process_handle_count, send,
+    CursorPark, Hooks, ResumeHotkey, Watcher, button_down, cursor_pos, hotkey_registrable,
+    input_desktop_is_default, keyboard_layout, modifier_down, monitors, process_handle_count, send,
     virtual_screen,
 };
 
