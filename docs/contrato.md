@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.16, Keel, 2026-10-28)
+# Contrato · ClipSync MVP de hoje (v1.17, Keel, 2026-10-28)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -21,6 +21,7 @@ v1.13 (fechamento da S5):
 v1.14 (fatia S6 · interface visual, decisões do Maestro + Keel): nova §12. Crates novos `clipsync-ui` (lógica das telas, sem Tauri) e `clipsync-app` (casca Tauri 2, só compila no CI). Proto: `PROTOCOL_VERSION = 2` com mínimo 1, variantes novas no fim (`Zones`, `LayoutOffer`, `EnterAt`, comandos `Clip*` e `Input*`). Com ligação no `layout.toml`, o agente de input captura sozinho (§8 regra 1). Permissão inicial do pareamento: tudo desligado.
 v1.15 (registro do Flux, casca em 367def0): §12.7 item 3. O Tauri 2.12.5 exige permissão explícita para comando declarado no `app_manifest`, então a capability do app leva `core:default`, `notification:default` e `allow-clipsync`.
 v1.16 (decisões do Maestro, 2026-10-28): §12.6 e §12.9 item 2 (2). Revogação avisada ao par: `CloseCode::Revoked = 8` no fim do enum; no `device_revoke`, A manda `Bye{Revoked}` ao par v2 antes de fechar, e B tira A do próprio `peers.toml` (dono: Rivet). A §12.5 ganha a notificação `device_removed`. Assinatura comum do `self_test` (L7) no clipboard e no input: `self_test() -> SelfTestOutcome`.
+v1.17 (decisões do Maestro, 2026-10-28, rodada de correções da S6): §12.7 capabilities mínimas (`allow-clipsync`, `core:event:allow-listen`, `core:event:allow-unlisten` e só o que o front usar), a partir do informativo I-S6-1 do Sentinel (7a722ca); o mock e a galeria saem do pacote para `crates/clipsync-app/ui-dev/`, o `api.js` falha fechado, e o portal usa `scripts/servir-ui-dev.py`. §12.1: `prefs.rs` e `diag.rs` do `clipsync-ui` passam ao Flux. §12.5: códigos do Vector (`input_off`, `no_layout`, `no_offer`, `link_not_found` depois do `stale_rev`, `denied` e `offline` do `switch_to_device`) e `window_secs` do `pair_host_start` até `PAIR_WINDOW_SECS` (120). Sair da tela 3 cancela a tentativa, menos em `waiting_peer`.
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -898,16 +899,18 @@ Meta do usuário: a interface visual completa. App desktop Tauri 2 (`clipsync-ap
 ### 12.1 Posse e ordem
 ```
 crates/clipsync-ui/   lógica das telas, sem Tauri; cargo test no Linux sem sessão gráfica
-  src/{lib,api,agent,status,onboarding,devices,pairing,clipboard,diag,prefs,events,msg}.rs   [Rivet]
+  src/{lib,api,agent,status,onboarding,devices,pairing,clipboard,events,msg}.rs             [Rivet]
   src/{layout,input}.rs                                                                     [Vector]
-  src/autostart.rs                                                                          [Flux]
+  src/{autostart,prefs,diag}.rs                                                             [Flux]
   tests/fixtures/*.json   um exemplo JSON de cada resposta e evento                         [Rivet]
   tests/                  cada dono, os testes dos próprios arquivos
 crates/clipsync-app/      Cargo.toml, build.rs, tauri.conf.json, capabilities/, icons/, assets/, src/**   [Flux]
-crates/clipsync-app/ui/   frontend estático (HTML, CSS, JS puros), mock.js, fonts/                       [Pixel]
+crates/clipsync-app/ui/       frontend estático (HTML, CSS, JS puros), fonts/; é o frontendDist          [Pixel]
+crates/clipsync-app/ui-dev/   mock.js, mock/ e a galeria (componentes.html, js/galeria.js), fora do frontendDist (v1.17)   [Pixel]
 ```
+v1.17: nesta rodada de correções da S6, `prefs.rs` e `diag.rs` do `clipsync-ui` passam do Rivet ao Flux, com os testes deles (`tests/prefs.rs` e `tests/diag.rs`).
 Grafo: ui -> core + clipboard + input; app -> ui + tauri. O grafo da cli não muda.
-Fora dos crates novos: Rivet `clipsync-proto/**` e `clipsync-core/**`; Flux `clipsync-clipboard/**` e `clipsync-cli/**`; Vector `clipsync-input/**`; Maestro `Cargo.toml` raiz, `Cargo.lock`, `.github/workflows/**`, `README.md`, release e instalação local; Keel `docs/contrato.md`, `docs/workboard.md`, `docs/telas.md`, `docs/decisoes/**`. Argus dá o veredito por tela e pelo artefato. Sentinel revisa a webview e a superfície de comandos. Git: igual à §11 regra 12.
+Fora dos crates novos: Rivet `clipsync-proto/**` e `clipsync-core/**`; Flux `clipsync-clipboard/**` e `clipsync-cli/**`; Vector `clipsync-input/**`; Maestro `Cargo.toml` raiz, `Cargo.lock`, `.github/workflows/**`, `README.md`, release, instalação local e `scripts/servir-ui-dev.py` (servidor de dev, v1.17); Keel `docs/contrato.md`, `docs/workboard.md`, `docs/telas.md`, `docs/decisoes/**`. Argus dá o veredito por tela e pelo artefato. Sentinel revisa a webview e a superfície de comandos. Git: igual à §11 regra 12.
 
 Ordem: (1) o Rivet entrega o proto da §12.6 primeiro (até 30 min) e marca "proto S6 pronto" no workboard; (2) o resto anda em paralelo. O Pixel não espera ninguém: trabalha com o mock e os tipos da §12.5.
 
@@ -916,7 +919,7 @@ Ordem: (1) o Rivet entrega o proto da §12.6 primeiro (até 30 min) e marca "pro
 2. O agente sobe sozinho quando o app abre e o perfil existe. `agent_start` segue explícito.
 3. Texto vindo do par (nome, motivo, preview) passa pelo `clean` da CLI dentro do crate. O front escreve dado só com `textContent`; `innerHTML` com dado é proibido.
 4. Comando recebe id, nunca nome: par = `peer_id` (64 hex), com `short` só para exibir; item da caixa = `id` (32 hex) + `short`. Hora sempre em `*_unix_ms`; o front formata no fuso local. Campo sem valor sai como `null`, nunca omitido.
-5. Arquivos novos no perfil, gravados por tmp + rename: `ui.toml` (preferências, Rivet) e `layout.toml` (layout de telas, Vector). O `config.toml` não ganha chave nova.
+5. Arquivos novos no perfil, gravados por tmp + rename: `ui.toml` (preferências, `prefs.rs`) e `layout.toml` (layout de telas, Vector). O `config.toml` não ganha chave nova.
 6. Escopo visível: o que não tem backend nesta versão aparece na tela desabilitado, com o texto "indisponível nesta versão", nunca escondido. A fonte é `app_state.features`. Comando de recurso desligado responde `unavailable`.
 7. Notificação nunca leva conteúdo de clipboard. É o único modo.
 8. Permissão inicial no pareamento: tudo desligado, o usuário liga (prompt-mestre §2.1, §3 deste contrato). `input_in` exige `acknowledge_full_trust: true`.
@@ -978,24 +981,26 @@ Formato: `cmd {args} -> retorno · erros próprios`.
 - Reparear não é comando: o front abre a tela 3.
 
 **3 · Pareamento** (uma tentativa por vez; no core, o código e o pedido de decisão chegam no mesmo momento)
-- `pair_host_start {port: 0, window_secs: 120} -> {attempt_id, port, addresses: ["192.168.0.10:53122"], expires_unix_ms} · pair_busy, bind`
+- `pair_host_start {port: 0, window_secs: 120} -> {attempt_id, port, addresses: ["192.168.0.10:53122"], expires_unix_ms} · pair_busy, bind`. `window_secs` vai de 1 a `PAIR_WINDOW_SECS` (120, v1.17); fora disso dá `bad_request` com `field: "window_secs"`.
 - `pair_join_start {addr: "IP:PORTA"} -> {attempt_id} · bad_addr, pair_busy`
 - `pair_code_matches {attempt_id} -> {step: "permissions", available: {clipboard, input}, defaults: Perms} · no_attempt, wrong_step` (defaults tudo false)
 - `pair_finish {attempt_id, grants: Perms, acknowledge_full_trust: false} -> {step: "waiting_peer"} · no_attempt, wrong_step`
 - `pair_cancel {attempt_id} -> {cancelled: true} · no_attempt`
 - `pair_state -> {step: "idle"|"listening"|"connecting"|"code"|"permissions"|"waiting_peer", attempt_id, port, addresses, expires_unix_ms, code, peer}`
 - Fluxo: evento `pair_code_ready`, depois "São iguais" chama `pair_code_matches`, e "Concluir" chama `pair_finish`. "São diferentes, cancelar" chama `pair_cancel`. O fim vem sempre pelo evento `pair_result`. Sem decisão em 120 s = recusa. Pareou: o crate manda `ReloadPeers`.
+- Sair da tela (v1.17, decisão do Pixel aceita pelo Maestro): com a tentativa em `listening`, `connecting`, `code` ou `permissions`, o front chama `pair_cancel`. Em `waiting_peer` não cancela: a decisão local já foi enviada, e o fim fica com a outra máquina e chega pelo `pair_result`.
 
 **4 · Layout de telas** (Vector). Toda escrita grava `layout.toml` e manda `InputReload` ao agente de pé (in_app ou external). Vale na hora, sem reiniciar.
+- `input_off` (v1.17) vale para todo comando desta tela, inclusive `lock_to_screen`, `switch_to_device` e `input_test`: módulo de input desligado no `config.toml`, plataforma sem input ou o agente respondendo que o módulo está desligado.
 - `layout_get -> Layout · input_off`
-- `layout_set_link {id: null|"l2", a: Endpoint, b: Endpoint, base_rev} -> {link: Link, layout_rev, warnings: [{code: "trimmed_by_dead_corner", side: "a"|"b"}]} · same_device, internal_edge_locked, empty_segment, segment_out_of_range, segment_overlap, stale_rev` (validados nesta ordem; `id: null` cria)
+- `layout_set_link {id: null|"l2", a: Endpoint, b: Endpoint, base_rev} -> {link: Link, layout_rev, warnings: [{code: "trimmed_by_dead_corner", side: "a"|"b"}]} · same_device, internal_edge_locked, empty_segment, segment_out_of_range, segment_overlap, stale_rev, link_not_found` (validados nesta ordem; `id: null` cria; `link_not_found`, na v1.17, é o `id` que não existe, conferido depois do `stale_rev`)
 - `layout_remove_link {id, base_rev} -> {layout_rev} · link_not_found, stale_rev`
 - `layout_set_device {peer_id, x, y, hotkey: null|1..9, base_rev} -> {device: LayoutDevice, layout_rev} · hotkey_taken, stale_rev` (o crate encaixa x e y em `snap_px`)
 - `layout_set_options {dead_corner_px: 0..32, base_rev} -> {options, layout_rev} · out_of_range, empty_segment, stale_rev` (`empty_segment` lista as ligações em `details.links` e não aplica nada)
-- `layout_copy_to_peers {peer_ids: null|[...]} -> {rev, results: [{peer_id, name, status: "offered"|"offline"|"denied"|"unsupported", reason}]}`
+- `layout_copy_to_peers {peer_ids: null|[...]} -> {rev, results: [{peer_id, name, status: "offered"|"offline"|"denied"|"unsupported", reason}]} · no_layout` (v1.17: `layout.toml` ainda não gravado)
 - `layout_offer_answer {accept} -> {layout_rev} · no_offer` (aceitar grava a oferta pendente no `layout.toml`)
 - `lock_to_screen {locked} -> {screen_locked}` (estado do agente, não persiste)
-- `switch_to_device {peer_id} -> {active_peer_id} · offline, not_linked, denied`
+- `switch_to_device {peer_id} -> {active_peer_id} · offline, not_linked, denied` (v1.17: tela travada, par com versão 1 ou recusa, do par ou do portal, dá `denied`; par pareado e desconectado dá `offline`)
 - `input_test {peer_id, seconds: 5..60} -> {stats: {received, lost, out_of_order, p50_us, p95_us, max_us}} · denied, offline` (loopback do §8; pode abrir o diálogo do portal)
 - Borda interna não é comando: `layout_get` calcula `locked_edges`, e uma ligação que passou a cruzar borda interna (troca de monitor) vem com `problem: "internal_edge_locked"` para o usuário remover.
 
@@ -1167,7 +1172,7 @@ A `String` é o detalhe em português, sem conteúdo do clipboard. O Rivet mapei
 **Flux:**
 1. `crates/clipsync-app/tauri.conf.json`: `productName` "ClipSync", `identifier` "dev.montesouza.clipsync", sem `version` (vem do Cargo.toml), `build.frontendDist` "./ui", `app.withGlobalTauri` true, janela `main` 1280×800, mínimo 960×640, `visible: false` até o front carregar.
 2. CSP: `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src ipc: http://ipc.localhost; base-uri 'none'; form-action 'none'`.
-3. Capabilities: só a janela `main`, com exatamente `core:default`, `notification:default` e `allow-clipsync`. Nenhuma URL remota. O comando `clipsync` vai declarado no manifesto do app (`tauri_build::Attributes::app_manifest`). Regra (v1.15): o Tauri 2.12.5 exige permissão explícita para todo comando declarado no `app_manifest`. Por isso o `allow-clipsync` (gerado pelo build) entra na capability; comando novo no manifesto só funciona com o `allow-<comando>` dele, e isso é mudança de contrato. Navegação para fora do app é bloqueada.
+3. Capabilities (v1.17, mínimas; informativo I-S6-1 do Sentinel em 7a722ca, aceito pelo Maestro): só a janela `main`, com `allow-clipsync`, `core:event:allow-listen` e `core:event:allow-unlisten`, mais só o que o front usar de fato. O Flux confere por grep no front e informa o Keel, que registra aqui a lista final. Sem `core:default` e sem `notification:default`: a notificação sai pelo Rust da casca, que não passa pela ACL. Nenhuma URL remota. O comando `clipsync` vai declarado no manifesto do app (`tauri_build::Attributes::app_manifest`). Regra (v1.15): o Tauri 2.12.5 exige permissão explícita para todo comando declarado no `app_manifest`. Por isso o `allow-clipsync` (gerado pelo build) entra na capability; comando novo no manifesto só funciona com o `allow-<comando>` dele, e isso é mudança de contrato. Navegação para fora do app é bloqueada.
 4. Sem a feature `devtools` (o build de debug já tem o inspetor). Sem plugin além do de notificação.
 5. Bandeja (`tray-icon`): menu Abrir, "Pausar tudo"/"Retomar" (o texto segue o `pause_changed`) e Sair. No Linux, o clique no ícone não gera evento: tudo vai pelo menu.
 6. Fechar a janela só esconde. Sair chama `Ui::shutdown` (Bye aos pares) e encerra. SIGINT e SIGTERM vão pelo mesmo caminho. `--hidden` (autostart) abre sem mostrar a janela.
@@ -1178,9 +1183,9 @@ A `String` é o detalhe em português, sem conteúdo do clipboard. O Rivet mapei
 **Pixel:**
 1. `crates/clipsync-app/ui/`: `index.html`, CSS e JS em arquivos próprios (a CSP bloqueia inline), ES modules. Evolui de `docs/telas/index.html` e segue o Figma: Inter no corpo, Geist nos títulos, Geist Mono em código e valores (`tabular-nums`), escala de 8 pt, raio 8 px, uma elevação, tema claro e escuro (`appearance.theme`, `reduce_motion`), textos em português, sem travessão em texto de interface, foco visível, `<meta name="author">` e "feito por montesouza.dev" em Preferências.
 2. Fontes woff2 variáveis em `ui/fonts/`, com `OFL.txt` e `FONTS.md` (URL de origem, versão, SHA-256). Sem CDN.
-3. `ui/mock.js` entra por `import()` só quando `window.__TAURI__` não existe, ou seja, nunca no app. Implementa `invoke("clipsync", {req})` e `listen` com os tipos da §12.5 (depois, com os exemplos de `crates/clipsync-ui/tests/fixtures/`) e cenários por `?cenario=` (vazio, sem perfil, erro, pareamento).
+3. Mock e galeria (v1.17, S6-03 do Sentinel): moram em `crates/clipsync-app/ui-dev/` (`mock.js`, `mock/`, `componentes.html` e `js/galeria.js`), fora do `frontendDist`, então não entram no pacote; `ui/` não tem nenhum desses arquivos. O `api.js` falha fechado: sem `window.__TAURI__`, só importa o mock em `http:` com host `127.0.0.1` ou `localhost`; em qualquer outra origem, inclusive a do app, rejeita com erro visível e não importa nada. O mock implementa `invoke("clipsync", {req})` e `listen` com os tipos da §12.5 (depois, com os exemplos de `crates/clipsync-ui/tests/fixtures/`) e cenários por `?cenario=` (vazio, sem perfil, erro, pareamento).
 4. Todo botão assíncrono tem estado de carregamento. Toda tela tem estado vazio e de erro, com o `UiError.message`. Recurso com feature false fica visível, desabilitado e com "indisponível nesta versão".
-5. Portal: `python3 -m http.server --bind 127.0.0.1 -d crates/clipsync-app/ui <porta>`. É exceção à §0 regra 1, só enquanto confere: derrube no fim.
+5. Portal (v1.17): `python3 -I scripts/servir-ui-dev.py [porta]` (Maestro, porta padrão 5174, só em 127.0.0.1, sem cache) serve `ui/` por cima de `ui-dev/`: o arquivo de `ui/` vence, e o que não existe lá vem de `ui-dev/` na mesma URL. É exceção à §0 regra 1, só enquanto confere: derrube no fim.
 
 ### 12.8 Build, CI e release (Maestro)
 1. `default-members` = todos os crates menos `clipsync-app`. Localmente, `cargo clippy --all-targets -- -D warnings` e `cargo test` SEM `--workspace`. O `-p clipsync-app` só roda no CI.
@@ -1249,3 +1254,4 @@ Comandos da raiz, com `export PATH=$HOME/.cargo/bin:$PATH`.
 11. Lacunas: L1 `init_with` (Rivet); L2 `InputState` (Vector); L5 `ClipApply`, `ClipDiscard` e `ClipSendCurrent` (Flux); L6 `recent_blocks` (Rivet); L7 `self_test` (Flux no clipboard, Vector no input).
 12. Maestro: `plan` + `build` duplicados no `clipsync-ui` por agora. É dívida registrada.
 13. Maestro (v1.16): a revogação avisa o par v2 com `Bye{Revoked}`, e o par se remove sozinho (§12.6, dono Rivet). O `self_test` tem uma assinatura só no clipboard e no input, e o Rivet faz o mapeamento.
+14. Maestro (v1.17, rodada de correções): capabilities mínimas (§12.7 item 3); mock e galeria em `ui-dev/`, fora do pacote, `api.js` falhando fechado e portal por `scripts/servir-ui-dev.py` (§12.7 Pixel itens 3 e 5); `prefs.rs` e `diag.rs` com o Flux (§12.1); códigos do Vector e teto de `window_secs` registrados na §12.5. Decisão do Pixel, aceita: sair da tela 3 em `waiting_peer` não cancela a tentativa.
