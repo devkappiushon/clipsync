@@ -1,0 +1,25 @@
+[package]
+name = "clipsync-win"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+# Lints próprios, sem `workspace = true` (contrato §13.3 item 2): o Cargo recusa os dois juntos.
+# `deny` e não `forbid`, para o `ffi.rs` poder ter o único `allow(unsafe_code)` do repositório.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "deny"
