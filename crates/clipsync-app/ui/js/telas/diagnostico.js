@@ -199,7 +199,7 @@ export default function montar({ assinar }) {
       descricao: "O que o sistema oferece, o que o ClipSync está usando e por que algo foi bloqueado.",
       acoes: [
         botao({ rotulo: "Atualizar", icone: "atualizar", aoClicar: () => regiao.recarregar() }),
-        botao({ rotulo: "Exportar pacote de suporte", variante: "primario", icone: "baixar", aoClicar: exportar }),
+        botao({ rotulo: "Exportar pacote de suporte", icone: "baixar", aoClicar: exportar }),
       ],
     }),
     avisoTopo,
