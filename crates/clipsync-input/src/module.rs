@@ -254,6 +254,8 @@ struct State {
     retry_on_zones: bool,
     /// The targets the engine runs with, to retarget only on a real change.
     targets_key: String,
+    /// The adapter can start a capture without a crossing (`can_begin`): a switch by button works.
+    cap_can_begin: bool,
     /// The system refused Win+Alt+P as the way to resume: only the tray and the button are left.
     resume_refused: bool,
 }
@@ -308,8 +310,10 @@ impl Module for InputModule {
             retry_on_zones: false,
             targets_key: String::new(),
             resume_refused: false,
+            cap_can_begin: true,
         };
         st.cap_hooks = st.cap.as_ref().is_some_and(|c| c.holds_hooks());
+        st.cap_can_begin = st.cap.as_ref().is_none_or(|c| c.can_begin());
         st.local_zones = st.cap.as_ref().map(|c| c.known_zones()).unwrap_or_default();
         st.start_continuous().await;
         let mut task: Option<JoinHandle<LoopDone>> = None;
@@ -517,6 +521,7 @@ impl State {
             pending_offer: self.pending_offer.clone(),
             keyboard_layout: self.emu.keyboard_layout(),
             resume_hotkey_refused: self.resume_refused,
+            switch_supported: self.cap_can_begin,
         }
     }
 
