@@ -388,6 +388,7 @@ impl State {
             screen_locked: self.locked,
             active_peer: self.active_peer,
             pending_offer: self.pending_offer.clone(),
+            keyboard_layout: None,
         }
     }
 
