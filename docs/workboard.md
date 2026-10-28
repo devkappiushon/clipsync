@@ -4,7 +4,7 @@
 
 **S6 (interface visual): ABERTA em 2026-10-27.** Contrato §12 (v1.14). Atribuições na seção S6 abaixo.
 
-Contrato: `docs/contrato.md` (v1.14). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Git: até a S4 só o Maestro commitava; na S5 cada builder commita os próprios arquivos na main local, sem push (contrato §11 regra 12). Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
+Contrato: `docs/contrato.md` (v1.15). Fonte de verdade são os arquivos em `docs/`, não as notas. ADRs em `docs/decisoes/`, matriz em `docs/matriz-compatibilidade.md`. Critério de pronto de cada fatia = §9 do contrato, comando por comando. Git: até a S4 só o Maestro commitava; na S5 cada builder commita os próprios arquivos na main local, sem push (contrato §11 regra 12). Ninguém sobe processo longo fora de `cargo test`. `source ~/.cargo/env` sempre. Dúvida de contrato: `maestri ask "Keel · esqueleto" "..."`.
 
 ## Ordem
 1. S0 Bolt fecha primeiro (esqueleto compila). Só então S1, S2, S3 começam a editar seus crates.
@@ -130,11 +130,17 @@ Ordem: o Rivet entrega o proto da §12.6 primeiro e marca aqui "proto S6 pronto"
 
   Pronto: §12.9 itens 1 e 2. Estado: em progresso (clipsync-ui, etapa 1) · proto S6: pronto (06815b7)
 - **Vector · layout e input.** Posse: `crates/clipsync-ui/src/{layout,input}.rs` e `crates/clipsync-input/**`. Faz: `layout.toml`, comandos da tela 4, `InputState`, `InputReload`, `InputLock`, `InputSwitch`, `InputOffer`, `Zones`, `EnterAt`, captura contínua guiada pelas ligações, `self_test` do input (L7). Pronto: §12.9 item 3. Estado: a fazer
-- **Flux · casca Tauri e clipboard.** Posse: `crates/clipsync-app/**` menos `ui/`, `crates/clipsync-ui/src/autostart.rs`, `crates/clipsync-clipboard/**` e `crates/clipsync-cli/**`. Faz: `tauri.conf.json`, capabilities, comando `clipsync`, laço de eventos, bandeja, fechar = esconder, Sair com Bye, ícones, autostart; no clipboard, `ClipApply`, `ClipDiscard`, `ClipSendCurrent` e `self_test` (L5, L7). Pronto: §12.9 item 4. Estado: a fazer
-- **Pixel · frontend.** Posse: `crates/clipsync-app/ui/**`. Faz: as 9 telas (onboarding em 3 passos mais 6), temas claro e escuro, fontes locais OFL, `mock.js` com cenários, estados de carregamento, vazio, erro e "indisponível nesta versão". Pronto: §12.9 item 5. Estado: a fazer
-- **Maestro · workspace, CI, release e instalação.** Posse: `Cargo.toml` raiz, `Cargo.lock`, `.github/workflows/**`, `README.md`. Faz: `default-members`, as 4 deps aprovadas (§12.8 item 2), apt no job Linux, `version` 0.2.0, bundles no `release.yml`, instalação local com `.desktop`. Pronto: §12.9 itens 6 e 7. Estado: a fazer
+- **Flux · casca Tauri e clipboard.** Posse: `crates/clipsync-app/**` menos `ui/`, `crates/clipsync-ui/src/autostart.rs`, `crates/clipsync-clipboard/**` e `crates/clipsync-cli/**`. Faz: `tauri.conf.json`, capabilities, comando `clipsync`, laço de eventos, bandeja, fechar = esconder, Sair com Bye, ícones, autostart; no clipboard, `ClipApply`, `ClipDiscard`, `ClipSendCurrent` e `self_test` (L5, L7). Pronto: §12.9 item 4. Estado: em progresso · casca: 367def0
+- **Pixel · frontend.** Posse: `crates/clipsync-app/ui/**`. Faz: as 9 telas (onboarding em 3 passos mais 6), temas claro e escuro, fontes locais OFL, `mock.js` com cenários, estados de carregamento, vazio, erro e "indisponível nesta versão". Pronto: §12.9 item 5. Estado: em progresso · 6 de 9 telas (Dispositivos, Pareamento, onboarding 1 a 3, Clipboard); faltam Layout, Diagnóstico e Preferências
+- **Maestro · workspace, CI, release e instalação.** Posse: `Cargo.toml` raiz, `Cargo.lock`, `.github/workflows/**`, `README.md`. Faz: `default-members`, as 4 deps aprovadas (§12.8 item 2), apt no job Linux, `version` 0.2.0, bundles no `release.yml`, instalação local com `.desktop`. Pronto: §12.9 itens 6 e 7. Estado: em progresso · workspace, deps, apt no CI e `Cargo.lock` entregues
 - **Argus:** veredito por tela no portal (critério b) e pelo artefato (critérios c e d).
 - **Sentinel:** webview e superfície `clipsync` (critério f).
+
+Commits da S6 até agora (main local, sem push, 2026-10-27):
+- **Rivet:** 06815b7 (proto v2: zonas, oferta de layout e entrada por monitor, nada novo a par 0.1.0) e 70ebd4f (proto S6 pronto no workboard).
+- **Flux:** 367def0 (casca Tauri: comando `clipsync`, eventos `clipsync://event`, bandeja, janela sem navegação externa, notificação do sistema).
+- **Pixel:** 96ea933 (esqueleto, rotas, tema), 5d080ca (fontes OFL), 2c66474 (componentes), 2c647fe (alinha ao §12: comando único, `mock.js`, roteador), 9e94320 (sprite sem `innerHTML`), e11c738 e 70a0e9b (Dispositivos), 54bf4b2 (Pareamento), 685e224 (onboarding 1 a 3) e 306e32c (Clipboard).
+- **Maestro:** 2ae0114 (`default-members` sem o app, deps fixadas), e4ca24a (apt do Tauri no CI Linux, plugin de notificação fixado) e 5757a86 (`Cargo.lock` com o app).
 
 ## Telas (Figma)
 Prontas em 2026-10-27:
@@ -213,6 +219,7 @@ Commits 0e76039, f54c995, 8daf2f5 e 3c2bad0. A implementação (Tauri) segue dep
   - (e) Keel: `Zones` só sai para par a quem concedi `input_in`; `EnterAt` e `LayoutOffer` só entram com `input_in`; com ligação no `layout.toml`, o agente captura sozinho;
   - (f) Keel: deps aprovadas `tauri =2.12.5` (tray-icon), `tauri-build =2.7.4`, `tauri-plugin-notification =2.7.0`, `if-addrs =0.15.0`. Recusados: plugins opener, dialog, global-shortcut e autostart, `toml_edit` e a feature `devtools`;
   - (g) Keel, nomes: `layout_set_options`, `layout_set_device` (junta mover e atalho), `InputState` (no lugar de `InputZones`); `lock_internal_edges` não é comando.
+- 2026-10-27 · Flux + Keel · Contrato v1.15, §12.7 item 3: o Tauri 2.12.5 exige permissão explícita para comando declarado no `app_manifest`. A capability do app leva `core:default`, `notification:default` e `allow-clipsync` (conferido em `crates/clipsync-app/capabilities/default.json`, 367def0). Comando novo no manifesto exige o `allow-<comando>` dele e mudança de contrato.
 
 ## Medições
 - P2 (Argus/Rivet, loopback, build debug, 300 RTTs): fluxo uni 1024 B p95 432 µs · datagrama 64 B p95 313 µs. Passa no critério do §9 S1 item 4 (p95 < 1 ms). Spike em release deu < 100 µs; a diferença vem do build debug.

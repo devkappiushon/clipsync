@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.14, Keel, 2026-10-27)
+# Contrato · ClipSync MVP de hoje (v1.15, Keel, 2026-10-27)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -19,6 +19,7 @@ v1.13 (fechamento da S5):
 - A regra 6 registra a escrita sem histórico e sem nuvem (S5-02, b81b08b).
 
 v1.14 (fatia S6 · interface visual, decisões do Maestro + Keel): nova §12. Crates novos `clipsync-ui` (lógica das telas, sem Tauri) e `clipsync-app` (casca Tauri 2, só compila no CI). Proto: `PROTOCOL_VERSION = 2` com mínimo 1, variantes novas no fim (`Zones`, `LayoutOffer`, `EnterAt`, comandos `Clip*` e `Input*`). Com ligação no `layout.toml`, o agente de input captura sozinho (§8 regra 1). Permissão inicial do pareamento: tudo desligado.
+v1.15 (registro do Flux, casca em 367def0): §12.7 item 3. O Tauri 2.12.5 exige permissão explícita para comando declarado no `app_manifest`, então a capability do app leva `core:default`, `notification:default` e `allow-clipsync`.
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -1148,7 +1149,7 @@ pub struct BlockRecord { pub at_unix_ms: u64, pub peer: Option<PeerId>, pub peer
 **Flux:**
 1. `crates/clipsync-app/tauri.conf.json`: `productName` "ClipSync", `identifier` "dev.montesouza.clipsync", sem `version` (vem do Cargo.toml), `build.frontendDist` "./ui", `app.withGlobalTauri` true, janela `main` 1280×800, mínimo 960×640, `visible: false` até o front carregar.
 2. CSP: `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src ipc: http://ipc.localhost; base-uri 'none'; form-action 'none'`.
-3. Capabilities: só a janela `main`, com `core:default` e `notification:default`. Nenhuma URL remota. O comando `clipsync` vai declarado no manifesto do app (`tauri_build::Attributes::app_manifest`). Navegação para fora do app é bloqueada.
+3. Capabilities: só a janela `main`, com exatamente `core:default`, `notification:default` e `allow-clipsync`. Nenhuma URL remota. O comando `clipsync` vai declarado no manifesto do app (`tauri_build::Attributes::app_manifest`). Regra (v1.15): o Tauri 2.12.5 exige permissão explícita para todo comando declarado no `app_manifest`. Por isso o `allow-clipsync` (gerado pelo build) entra na capability; comando novo no manifesto só funciona com o `allow-<comando>` dele, e isso é mudança de contrato. Navegação para fora do app é bloqueada.
 4. Sem a feature `devtools` (o build de debug já tem o inspetor). Sem plugin além do de notificação.
 5. Bandeja (`tray-icon`): menu Abrir, "Pausar tudo"/"Retomar" (o texto segue o `pause_changed`) e Sair. No Linux, o clique no ícone não gera evento: tudo vai pelo menu.
 6. Fechar a janela só esconde. Sair chama `Ui::shutdown` (Bye aos pares) e encerra. SIGINT e SIGTERM vão pelo mesmo caminho. `--hidden` (autostart) abre sem mostrar a janela.
