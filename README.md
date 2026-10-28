@@ -2,16 +2,17 @@
 
 Teclado, mouse e área de transferência entre os meus computadores, em um aplicativo só, sem servidor central. Cada módulo é opcional: dá para usar só teclado e mouse, só clipboard, ou os dois. A escolha é feita no `clipsync init` e fica em `config.toml` (`[modules]`).
 
-Estado em 2026-10-27: nível 1 (provas técnicas) concluído neste notebook; MVP de linha de comando em construção. Nada validado em outra máquina ainda. Detalhes: `docs/matriz-compatibilidade.md`.
+Estado em 2026-10-28: a v0.1.0 publicou a linha de comando; a v0.2.0 traz o app de desktop, com as telas e o agente no mesmo processo. Nada validado em outra máquina ainda. Detalhes: `docs/matriz-compatibilidade.md`.
 
 ## Baixar
 
-Cada release traz um pacote por plataforma, com o binário `clipsync` e este README:
+Cada release traz o app de desktop e a linha de comando, mais o `SHA256SUMS`:
 
-- `clipsync-v0.1.0-linux-x86_64.tar.gz`
-- `clipsync-v0.1.0-windows-x86_64.zip` (`clipsync.exe`)
+- `clipsync-app-v0.2.0-linux-x86_64.AppImage` e `clipsync-app-v0.2.0-linux-amd64.deb`: app de desktop no Linux.
+- `clipsync-app-v0.2.0-windows-x86_64-setup.exe` e `clipsync-app-v0.2.0-windows-x86_64.msi`: app de desktop no Windows.
+- `clipsync-v0.2.0-linux-x86_64.tar.gz` e `clipsync-v0.2.0-windows-x86_64.zip`: só a linha de comando (`clipsync`), com este README.
 
-O release também publica `SHA256SUMS`. Confira antes de executar (troque `v0.1.0` pela tag que você baixou):
+Confira antes de executar (troque `v0.2.0` pela tag que você baixou):
 
 ```sh
 # Linux e macOS
@@ -20,8 +21,24 @@ sha256sum -c SHA256SUMS --ignore-missing
 
 ```powershell
 # Windows (PowerShell): compare com a linha do pacote em SHA256SUMS
-Get-FileHash .\clipsync-v0.1.0-windows-x86_64.zip -Algorithm SHA256
+Get-FileHash .\clipsync-app-v0.2.0-windows-x86_64-setup.exe -Algorithm SHA256
 ```
+
+### App de desktop
+
+O app traz as telas e o agente no mesmo processo, com ícone na bandeja. Fechar a janela só esconde o app; para encerrar, use "Sair" no menu da bandeja.
+
+No Linux, sem sudo, com o AppImage:
+
+```sh
+scripts/instalar-app-linux.sh ~/Downloads/clipsync-app-v0.2.0-linux-x86_64.AppImage
+```
+
+O script copia o AppImage para `~/.local/bin/clipsync-app.AppImage` e cria o atalho "ClipSync" no menu de aplicativos. Rodar de novo com um AppImage mais novo atualiza. O app precisa do WebKitGTK 4.1; se o AppImage não abrir por falta de FUSE, instale o `libfuse2`. No GNOME, o ícone da bandeja depende da extensão AppIndicator. Com o `.deb`: `sudo apt install ./clipsync-app-v0.2.0-linux-amd64.deb`.
+
+No Windows, rode o `setup.exe` (ou o `.msi`). O instalador não é assinado, então o SmartScreen avisa: clique em "Mais informações" e depois em "Executar assim mesmo". O app usa o WebView2, que já vem no Windows 10 e 11 atualizados; se faltar, o instalador baixa.
+
+### Linha de comando
 
 Requisitos: no Linux, glibc 2.39 ou mais nova (o binário é compilado no Ubuntu 24.04). No Windows, nenhum pacote extra: o `.exe` leva a biblioteca de execução embutida. O perfil fica em `~/.config/clipsync` no Linux e em `%LOCALAPPDATA%\clipsync` no Windows; não aponte `--profile` para uma pasta compartilhada, porque a chave privada mora nela.
 
