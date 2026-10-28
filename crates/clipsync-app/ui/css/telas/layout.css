@@ -1,13 +1,61 @@
 /* Tela: layout. Só tokens de tokens.css; classes prefixadas com .layout. */
 
+/* A tela troca de duas colunas (canvas, ligações) para uma pela largura do próprio conteúdo, não da janela:
+   50rem de conteúdo (800 px) equivale a uns 1100 px de janela com a lateral aberta. */
+
 .layout {
   display: flex;
   flex-direction: column;
   gap: var(--s-4);
+  container-type: inline-size;
+}
+
+.layout__corpo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s-4);
+}
+
+/* Erro e esqueleto de carga ocupam a largura toda, não só a coluna do canvas. */
+.layout__corpo > :not(.layout__principal, .layout__lateral, .layout__oferta) {
+  grid-column: 1 / -1;
+}
+
+.layout__oferta:not(:has(.aviso)) {
+  display: none;
+}
+
+.layout__principal,
+.layout__lateral {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+@container (min-width: 50rem) {
+  .layout__corpo {
+    grid-template-columns: minmax(0, 1fr) minmax(17rem, 18rem);
+    align-items: stretch;
+  }
+
+  .layout__oferta {
+    grid-column: 1 / -1;
+  }
+
+  /* A coluna de ligações acompanha a altura do canvas: o cartão cresce até a base da barra de ações. */
+  .layout__lateral > .layout__area-ligacoes {
+    display: flex;
+    flex: 1;
+  }
+
+  .layout__lateral > .layout__area-ligacoes > .cartao {
+    flex: 1;
+  }
 }
 
 .layout__canvas {
-  min-height: 320px;
+  min-height: 440px;
   overflow: hidden;
   border-radius: var(--raio) var(--raio) 0 0;
   background: var(--bg);
@@ -35,7 +83,11 @@
 }
 
 .layout__legenda {
-  padding: var(--s-2) var(--s-4) var(--s-3);
+  padding: var(--s-2) var(--s-4);
+}
+
+.layout__palco {
+  position: relative;
 }
 
 /* Dispositivos e monitores */
@@ -183,10 +235,72 @@
   fill: var(--err);
 }
 
-/* Painel, lista e rodapé */
+/* Painel do dispositivo, popover da borda, ligações e barra de ações */
 
 .layout__painel:empty {
   display: none;
+}
+
+.layout__popover-area {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  padding: var(--s-3);
+  pointer-events: none;
+}
+
+.layout__popover-area:empty {
+  display: none;
+}
+
+.layout__popover {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  width: min(20rem, 100%);
+  max-height: 100%;
+  padding: var(--s-3);
+  overflow: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--raio);
+  background: var(--panel);
+  box-shadow: var(--elev);
+  pointer-events: auto;
+}
+
+.layout__popover--esq {
+  margin-right: auto;
+}
+
+.layout__popover--dir {
+  margin-left: auto;
+}
+
+.layout__popover--cima {
+  align-self: flex-start;
+}
+
+.layout__popover--baixo {
+  align-self: flex-end;
+}
+
+.layout__campo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.layout__campo p {
+  margin: 0;
+}
+
+.layout__borda-texto {
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.layout__popover-acoes {
+  justify-content: flex-end;
 }
 
 .layout__trecho {
@@ -215,17 +329,118 @@
   padding: var(--s-3) 0 0;
 }
 
-.layout__rodape {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: var(--s-4);
+/* Ligações: um cartão com borda por ligação */
+
+.layout__ligacoes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.layout__grupo {
+.layout__lig {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--raio);
+  background: var(--bg);
+}
+
+.layout__lig--selecionada {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.layout__lig-corpo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--raio);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.layout__lig-de {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.layout__lig-para {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.layout__lig-pe {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+/* Barra sob o canvas: travar, cantos mortos, copiar; abaixo, ir para dispositivo */
+
+.layout__rodape {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.layout__barra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--s-2);
+}
+
+.layout__acao {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  gap: var(--s-1);
+}
+
+.layout__acao--cantos {
+  position: relative;
+}
+
+.layout__cantos {
+  position: absolute;
+  bottom: calc(100% + var(--s-2));
+  left: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
   gap: var(--s-2);
+  width: min(18rem, 80vw);
+  padding: var(--s-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--raio);
+  background: var(--panel);
+  box-shadow: var(--elev);
+}
+
+.layout__cantos .nota {
+  margin: 0;
+}
+
+.layout__ir {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
 }
 
 .layout__resultados {
@@ -235,4 +450,22 @@
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.layout__lig-pe > .btn {
+  margin-left: auto;
+}
+
+/* A coluna lateral é estreita: rótulo em cima do valor, sem as duas colunas do .kv. */
+.layout__painel .kv {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s-1);
+}
+
+.layout__painel .kv dd {
+  margin-bottom: var(--s-2);
+}
+
+.layout__painel .kv .layout__atalho {
+  min-width: 0;
 }

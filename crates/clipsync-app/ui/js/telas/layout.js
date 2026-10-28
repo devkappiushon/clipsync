@@ -1,11 +1,12 @@
 // Tela 4 · Layout de telas: canvas em SVG com os monitores de cada máquina sobre uma malha de 16 px,
 // arrastar encaixa na malha, clicar numa borda seleciona um trecho (alças para encurtar) e o painel pede
-// o destino. Ligações como linhas entre bordas; bordas internas travadas. Lista de ligações, trava de tela,
-// cantos mortos, ir para dispositivo e copiar layout para os pares.
+// o destino num popover sobre o canvas. Ligações como linhas entre bordas; bordas internas travadas.
+// Duas colunas como no quadro: canvas com a barra de ações à esquerda, painel Ligações à direita.
+// Toda mudança grava na hora (layout_set_*), então não há botão "Salvar layout".
 
 import { api } from "../api.js";
 import { aviso, cabecalho, estadoErro, indisponivel } from "../areas.js";
-import { abrirDialogo, botao, cartao, esqueleto, selo, tabela } from "../componentes.js";
+import { abrirDialogo, botao, cartao, esqueleto, selo } from "../componentes.js";
 import { h, novoId, trocar } from "../dom.js";
 import { obterApp, recurso } from "../estado.js";
 import { INDISPONIVEL, mensagemDe, seloDispositivo } from "../formatar.js";
@@ -13,6 +14,9 @@ import { icone, svg } from "../icones.js";
 
 const MALHA_PX = 16;
 const MARGEM = 160; // unidades do plano em volta dos monitores
+const ALTURA_MINIMA_PX = 440; // o popover de destino cabe inteiro sobre o canvas
+const MARGEM_CIMA_PX = 32; // espaço mínimo, em px, entre o topo do canvas e o primeiro monitor
+const LARGURA_LETRA_PX = 7.5; // estimativa para o rótulo do dispositivo caber no canvas
 const PASSO_FRACAO = 1 / 16;
 const BORDAS = { left: "esquerda", right: "direita", top: "superior", bottom: "inferior" };
 const OPOSTA = { left: "right", right: "left", top: "bottom", bottom: "top" };
@@ -36,7 +40,7 @@ function descreverPonta(layout, ponta) {
 
 export default function montar({ ir, assinar }) {
   const app = obterApp();
-  const corpo = h("div", { class: "pilha" });
+  const corpo = h("div", { class: "layout__corpo" });
   const no = h("div", { class: "layout" });
 
   if (!recurso("input")) {
@@ -56,12 +60,14 @@ export default function montar({ ir, assinar }) {
   let avisoPainel = null;
   let resultadoTeste = null;
   let idMalha = novoId("layout-malha");
+  let focarPopover = false;
 
   const envoltorio = h("div", { class: "layout__canvas" });
   const painel = h("div", { class: "layout__painel" });
-  const areaLigacoes = h("div");
+  const popover = h("div", { class: "layout__popover-area" });
+  const areaLigacoes = h("div", { class: "layout__area-ligacoes" });
   const areaRodape = h("div");
-  const areaOferta = h("div");
+  const areaOferta = h("div", { class: "layout__oferta" });
   const avisoTopo = h("div");
 
   let larguraPintada = 0;
@@ -95,16 +101,19 @@ export default function montar({ ir, assinar }) {
     trocar(
       corpo,
       areaOferta,
-      cartao({
-        plano: true,
-        filhos: [
-          envoltorio,
-          h("p", { class: "nota layout__legenda" }, `Malha de ${MALHA_PX} px: ao arrastar, a máquina encaixa no ponto mais próximo. Clique numa borda para ligar um trecho dela a outra máquina.`),
-        ],
-      }),
-      painel,
-      areaLigacoes,
-      areaRodape,
+      h(
+        "div",
+        { class: "layout__principal" },
+        cartao({
+          plano: true,
+          filhos: [
+            h("div", { class: "layout__palco" }, envoltorio, popover),
+            h("p", { class: "nota layout__legenda" }, `Malha de ${MALHA_PX} px: ao arrastar, a máquina encaixa no ponto mais próximo. Clique numa borda para ligar um trecho dela a outra máquina.`),
+          ],
+        }),
+        areaRodape,
+      ),
+      h("div", { class: "layout__lateral" }, painel, areaLigacoes),
     );
     pintarOferta();
     pintarCanvas();
@@ -159,8 +168,12 @@ export default function montar({ ir, assinar }) {
     const maxY = Math.max(...rects.map((r) => r.y + r.h)) + MARGEM;
     const largura = Math.max(320, envoltorio.clientWidth || 960);
     escala = largura / (maxX - minX);
-    origem = { x: minX, y: minY };
-    return { largura, altura: Math.max(320, Math.round((maxY - minY) * escala)) };
+    // O nome da máquina fica acima do primeiro monitor: com a escala pequena de uma coluna estreita, a margem
+    // em unidades do plano vira poucos px e cortaria o rótulo. A escala só depende da largura, então dá para
+    // acrescentar altura em cima sem mudá-la.
+    const extraCima = Math.max(0, MARGEM_CIMA_PX / escala - MARGEM);
+    origem = { x: minX, y: minY - extraCima };
+    return { largura, altura: Math.max(ALTURA_MINIMA_PX, Math.round((maxY - minY + extraCima) * escala)) };
   }
 
   const tela = (vx, vy) => ({ x: (vx - origem.x) * escala, y: (vy - origem.y) * escala });
@@ -231,8 +244,11 @@ export default function montar({ ir, assinar }) {
     });
 
     const primeiro = tela(Math.min(...meus.map((r) => r.x)), Math.min(...meus.map((r) => r.y)));
-    const rotulo = svg("text", { class: "layout__nome", x: primeiro.x, y: primeiro.y - 8 });
-    rotulo.textContent = `${d.name}${d.is_self ? " · esta máquina" : ""}${d.hotkey ? ` · Win+Alt+${d.hotkey}` : ""}${ativo ? " · ativo" : ""}${d.state !== "connected" && !d.is_self ? ` · ${ESTADOS[d.state] ?? d.state}` : ""}`;
+    const texto = `${d.name}${d.is_self ? " · esta máquina" : ""}${d.hotkey ? ` · Win+Alt+${d.hotkey}` : ""}${ativo ? " · ativo" : ""}${d.state !== "connected" && !d.is_self ? ` · ${ESTADOS[d.state] ?? d.state}` : ""}`;
+    // Rótulo que passaria da borda direita do canvas encosta nela, alinhado à direita, em vez de ser cortado.
+    const passa = primeiro.x + texto.length * LARGURA_LETRA_PX > envoltorio.clientWidth;
+    const rotulo = svg("text", { class: "layout__nome", x: passa ? envoltorio.clientWidth - 8 : primeiro.x, y: primeiro.y - 8, ...(passa && { "text-anchor": "end" }) });
+    rotulo.textContent = texto;
     grupo.append(rotulo);
 
     for (const r of meus) {
@@ -348,6 +364,7 @@ export default function montar({ ir, assinar }) {
       selecao = { tipo: "borda", ponta: { ...ponta, from: trecho.from, to: trecho.to }, linkId: null, destino: destinoPadrao(ponta) };
       avisoPainel = null;
       resultadoTeste = null;
+      focarPopover = true;
       pintarCanvas();
       pintarPainel();
       pintarLigacoes();
@@ -495,6 +512,7 @@ export default function montar({ ir, assinar }) {
     selecao = { tipo: "borda", ponta: { ...l[minha] }, linkId: l.id, destino: { ...l[outra], nome: outroDispositivo?.name ?? "" } };
     avisoPainel = null;
     resultadoTeste = null;
+    focarPopover = true;
     pintarCanvas();
     pintarPainel();
     pintarLigacoes();
@@ -520,34 +538,62 @@ export default function montar({ ir, assinar }) {
   // ----- painel -----
 
   function pintarPainel() {
-    if (!selecao) {
-      trocar(painel, avisoPainel && aviso(avisoPainel.tom, h("p", null, avisoPainel.texto)));
-      return;
+    const naBorda = selecao?.tipo === "borda";
+    trocar(popover, naBorda && painelBorda());
+    trocar(painel, !naBorda && (selecao ? painelDispositivo() : avisoPainel && aviso(avisoPainel.tom, h("p", null, avisoPainel.texto))));
+    if (focarPopover) {
+      focarPopover = false;
+      popover.querySelector("select:not(:disabled), button")?.focus();
     }
-    trocar(painel, selecao.tipo === "borda" ? painelBorda() : painelDispositivo());
   }
 
+  /** Quadrante do canvas onde a borda escolhida está: o popover vai para o quadrante oposto e não a cobre. */
+  function classesDoLado(ponta) {
+    const rr = retanguloDe(ponta, retangulos());
+    const c = rr ? pontoNaBorda(rr, ponta.edge, (ponta.from + ponta.to) / 2) : { x: 0, y: 0 };
+    const horizontal = c.x > envoltorio.clientWidth / 2 ? "esq" : "dir";
+    const alto = c.y > envoltorio.clientHeight / 2 ? "cima" : "baixo";
+    return `layout__popover--${horizontal} layout__popover--${alto}`;
+  }
+
+  /** "Destino da borda": popover sobre o canvas. Dispositivo e borda de destino em dois campos, como no quadro. */
   function painelBorda() {
     const { ponta, linkId } = selecao;
     const opcoes = opcoesDestino(ponta);
     const chave = (o) => `${o.peer_id}|${o.monitor}|${o.edge}`;
-    const idDestino = novoId("layout-destino");
+    const idTitulo = novoId("layout-popover");
+    const idDispositivo = novoId("layout-dispositivo");
+    const idBordaDestino = novoId("layout-destino");
     const idDe = novoId("layout-de");
     const idAte = novoId("layout-ate");
-    const destino = selecao.destino;
+    const dispositivos = [...new Map(opcoes.map((o) => [o.peer_id, o.nome])).entries()];
 
-    const seletor = h(
+    const seletorDispositivo = h(
       "select",
-      { class: "entrada", id: idDestino, disabled: opcoes.length === 0 },
-      opcoes.length === 0 && h("option", { value: "" }, "Nenhuma outra máquina com monitores conhecidos"),
-      opcoes.map((o) => h("option", { value: chave(o), selected: destino && chave(o) === chave(destino) }, `${o.nome} · ${o.monitor} · borda ${BORDAS[o.edge]}`)),
+      { class: "entrada", id: idDispositivo, disabled: dispositivos.length === 0 },
+      dispositivos.length === 0 && h("option", { value: "" }, "Nenhuma outra máquina com monitores conhecidos"),
+      dispositivos.map(([peerId, nome]) => h("option", { value: peerId, selected: selecao.destino?.peer_id === peerId }, nome)),
     );
-    seletor.addEventListener("change", () => {
-      const o = opcoes.find((x) => chave(x) === seletor.value);
-      if (o) selecao.destino = { ...o, from: destino?.from ?? 0, to: destino?.to ?? 1 };
-    });
-    const entradaDe = h("input", { class: "entrada entrada--mono layout__pct", id: idDe, type: "number", min: 0, max: 100, step: 5, value: Math.round((destino?.from ?? 0) * 100), disabled: !destino });
-    const entradaAte = h("input", { class: "entrada entrada--mono layout__pct", id: idAte, type: "number", min: 0, max: 100, step: 5, value: Math.round((destino?.to ?? 1) * 100), disabled: !destino });
+    const seletorBorda = h("select", { class: "entrada", id: idBordaDestino, disabled: dispositivos.length === 0 });
+    const entradaDe = h("input", { class: "entrada entrada--mono layout__pct", id: idDe, type: "number", min: 0, max: 100, step: 5, value: Math.round((selecao.destino?.from ?? 0) * 100), disabled: !selecao.destino });
+    const entradaAte = h("input", { class: "entrada entrada--mono layout__pct", id: idAte, type: "number", min: 0, max: 100, step: 5, value: Math.round((selecao.destino?.to ?? 1) * 100), disabled: !selecao.destino });
+
+    /** O que o campo mostra é o que a gravação manda: se o destino antigo não está mais nas opções, vale a opção mostrada. */
+    const sincronizar = () => {
+      const o = opcoes.find((x) => chave(x) === seletorBorda.value);
+      if (o) selecao.destino = { ...o, from: selecao.destino?.from ?? 0, to: selecao.destino?.to ?? 1 };
+    };
+    const preencherBordas = () => {
+      const daMaquina = opcoes.filter((o) => o.peer_id === seletorDispositivo.value);
+      const atual = selecao.destino;
+      const preferida = daMaquina.find((o) => atual && chave(o) === chave(atual)) ?? daMaquina.find((o) => o.edge === OPOSTA[ponta.edge]) ?? daMaquina[0];
+      trocar(seletorBorda, daMaquina.map((o) => h("option", { value: chave(o), selected: preferida && chave(o) === chave(preferida) }, `${o.monitor} · ${BORDAS[o.edge]}`)));
+      sincronizar();
+    };
+    seletorDispositivo.addEventListener("change", preencherBordas);
+    seletorBorda.addEventListener("change", sincronizar);
+    preencherBordas();
+
     const lerDestino = () => {
       if (!selecao.destino) return null;
       return { peer_id: selecao.destino.peer_id, monitor: selecao.destino.monitor, edge: selecao.destino.edge, from: limitar(Number(entradaDe.value) / 100, 0, 1), to: limitar(Number(entradaAte.value) / 100, 0, 1) };
@@ -555,12 +601,12 @@ export default function montar({ ir, assinar }) {
 
     const acoes = h(
       "div",
-      { class: "linha" },
+      { class: "linha layout__popover-acoes" },
       botao({
-        rotulo: linkId ? "Salvar ligação" : "Criar ligação",
+        rotulo: linkId ? "Salvar ligação" : "Ligar",
         variante: "primario",
         icone: "verificar",
-        desabilitado: !destino || !recurso("layout_links"),
+        desabilitado: !selecao.destino || !recurso("layout_links"),
         aoClicar: async () => {
           const b = lerDestino();
           if (!b) return;
@@ -583,36 +629,33 @@ export default function montar({ ir, assinar }) {
             await carregar({ silencioso: true });
           },
         }),
-      botao({ rotulo: "Cancelar seleção", variante: "discreto", icone: "fechar", aoClicar: limparSelecao }),
+      botao({ rotulo: "Cancelar", variante: "discreto", icone: "fechar", aoClicar: limparSelecao }),
     );
 
-    return cartao({
-      titulo: linkId ? `Ligação ${linkId}` : "Nova ligação",
-      filhos: [
-        avisoPainel && aviso(avisoPainel.tom, h("p", null, avisoPainel.texto)),
-        !recurso("layout_links") && h("p", { class: "nota" }, `Ligações: ${INDISPONIVEL}.`),
-        h(
-          "dl",
-          { class: "kv" },
-          h("dt", null, "Trecho selecionado"),
-          h("dd", null, descreverPonta(layout, ponta), h("span", { class: "nota" }, " Arraste as alças no canvas para encurtar."), " "),
-          h("dt", null, h("label", { for: idDestino }, "Destino")),
-          h("dd", null, seletor),
-          h("dt", null, "Trecho de destino"),
-          h(
-            "dd",
-            { class: "layout__trecho" },
-            h("label", { for: idDe }, "de"),
-            entradaDe,
-            h("span", null, "%"),
-            h("label", { for: idAte }, "a"),
-            entradaAte,
-            h("span", null, "%"),
-          ),
-        ),
-        acoes,
-      ],
+    const no = h(
+      "section",
+      { class: `layout__popover ${classesDoLado(ponta)}`, role: "dialog", "aria-modal": "false", "aria-labelledby": idTitulo },
+      h("h2", { id: idTitulo }, linkId ? `Destino da borda (ligação ${linkId})` : "Destino da borda"),
+      avisoPainel && aviso(avisoPainel.tom, h("p", null, avisoPainel.texto)),
+      !recurso("layout_links") && h("p", { class: "nota" }, `Ligações: ${INDISPONIVEL}.`),
+      h("div", { class: "layout__campo" }, h("span", { class: "campo__rotulo" }, "Borda"), h("p", { class: "mono layout__borda-texto" }, descreverPonta(layout, ponta)), h("p", { class: "nota" }, "Arraste as alças no canvas para encurtar.")),
+      h("div", { class: "layout__campo" }, h("label", { class: "campo__rotulo", for: idDispositivo }, "Dispositivo"), seletorDispositivo),
+      h("div", { class: "layout__campo" }, h("label", { class: "campo__rotulo", for: idBordaDestino }, "Borda de destino"), seletorBorda),
+      h(
+        "div",
+        { class: "layout__campo" },
+        h("span", { class: "campo__rotulo" }, "Trecho de destino"),
+        h("div", { class: "layout__trecho" }, h("label", { for: idDe }, "de"), entradaDe, h("span", null, "%"), h("label", { for: idAte }, "a"), entradaAte, h("span", null, "%")),
+      ),
+      acoes,
+    );
+    no.addEventListener("keydown", (evento) => {
+      if (evento.key === "Escape") {
+        evento.preventDefault();
+        limparSelecao();
+      }
     });
+    return no;
   }
 
   function painelDispositivo() {
@@ -703,36 +746,66 @@ export default function montar({ ir, assinar }) {
 
   function pintarLigacoes() {
     const vazio = h("div", { class: "estado" }, h("h2", null, "Nenhuma ligação"), h("p", { class: "muted" }, layout.devices.length > 1 ? "Clique numa borda de monitor no canvas e escolha o destino em outra máquina." : "Pareie outra máquina com teclado e mouse em Dispositivos para ligar bordas."));
-    const grade = tabela({
-      legenda: "Ligações entre bordas",
-      colunas: [
-        { chave: "de", rotulo: "De", render: (l) => descreverPonta(layout, l.a) },
-        { chave: "para", rotulo: "Para", render: (l) => descreverPonta(layout, l.b) },
-        { chave: "atalho", rotulo: "Atalho", render: (l) => (atalhoDaLigacao(l) ? h("kbd", null, atalhoDaLigacao(l)) : h("span", { class: "muted" }, "sem atalho")) },
-        { chave: "estado", rotulo: "Estado", render: (l) => (l.problem === "internal_edge_locked" ? selo("erro", "cruza borda interna") : l.problem ? selo("erro", l.problem) : selo("ok", "ok")) },
-        {
-          chave: "acoes",
-          rotulo: "",
-          render: (l) =>
-            botao({
-              rotulo: "Remover",
-              variante: "discreto",
-              icone: "descartar",
-              aoClicar: async () => {
-                const r = await executar(() => api.layoutRemoveLink({ id: l.id, base_rev: layout.rev }), { depois: "nada" });
-                if (!r) return;
-                if (selecao?.linkId === l.id) selecao = null;
-                await carregar({ silencioso: true });
-              },
-            }),
-        },
-      ],
-      linhas: layout.links,
-      selecionada: selecao?.tipo === "borda" ? selecao.linkId : null,
-      aoSelecionar: (l) => selecionarLigacao(l, l.a),
-      vazio,
+    const total = layout.links.length;
+    const itens = layout.links.map((l) => {
+      const selecionada = selecao?.tipo === "borda" && selecao.linkId === l.id;
+      const atalho = atalhoDaLigacao(l);
+      const corpoLigacao = h(
+        "button",
+        { class: "layout__lig-corpo", type: "button", "aria-pressed": String(selecionada) },
+        h("span", { class: "layout__lig-de mono" }, descreverPonta(layout, l.a)),
+        h("span", { class: "layout__lig-para" }, `para ${descreverPonta(layout, l.b)}`),
+      );
+      corpoLigacao.addEventListener("click", () => selecionarLigacao(l, l.a));
+      return h(
+        "li",
+        { class: `layout__lig${selecionada ? " layout__lig--selecionada" : ""}` },
+        corpoLigacao,
+        h(
+          "div",
+          { class: "layout__lig-pe" },
+          h("div", { class: "linha" }, estadoDaLigacao(l), atalho ? h("kbd", null, atalho) : h("span", { class: "nota" }, "sem atalho")),
+          botao({
+            rotulo: "Remover",
+            variante: "discreto",
+            icone: "descartar",
+            "aria-label": `Remover a ligação ${l.id}`,
+            aoClicar: async () => {
+              const r = await executar(() => api.layoutRemoveLink({ id: l.id, base_rev: layout.rev }), { depois: "nada" });
+              if (!r) return;
+              if (selecao?.linkId === l.id) selecao = null;
+              await carregar({ silencioso: true });
+            },
+          }),
+        ),
+      );
     });
-    trocar(areaLigacoes, cartao({ titulo: "Ligações", plano: layout.links.length > 0, acoes: h("span", { class: "nota" }, `rev ${layout.rev}`), filhos: [layout.links.length > 0 ? grade : h("div", { class: "layout__vazio" }, vazio)] }));
+    trocar(
+      areaLigacoes,
+      cartao({
+        titulo: "Ligações",
+        acoes: total > 0 && selo("acento", `${total} ${total === 1 ? "configurada" : "configuradas"}`),
+        filhos:
+          total > 0
+            ? [
+                h("ul", { class: "layout__ligacoes", "aria-label": "Ligações entre bordas" }, itens),
+                h("p", { class: "nota" }, "O atalho pula para o dispositivo sem passar pela borda. Arraste as alças para encurtar o trecho da borda que atravessa."),
+                h("p", { class: "nota mono" }, `rev ${layout.rev}`),
+              ]
+            : [vazio],
+      }),
+    );
+  }
+
+  /** Estado da ligação: erro do layout, par fora do ar ou ativa. */
+  function estadoDaLigacao(l) {
+    if (l.problem === "internal_edge_locked") return selo("erro", "cruza borda interna");
+    if (l.problem) return selo("erro", l.problem);
+    const fora = [l.a, l.b].map((p) => layout.devices.find((d) => d.peer_id === p.peer_id)).find((d) => d && !d.is_self && d.state !== "connected");
+    if (!fora) return selo("ok", "Ativa");
+    if (fora.state === "connecting") return selo("acento", "Par conectando");
+    if (fora.state === "blocked") return selo("aviso", "Par bloqueado");
+    return selo("neutro", "Par offline");
   }
 
   // ----- oferta pendente -----
@@ -760,24 +833,50 @@ export default function montar({ ir, assinar }) {
     );
   }
 
-  // ----- rodapé -----
+  // ----- barra de ações (sob o canvas) -----
 
   function pintarRodape() {
     const travar = botao({
       rotulo: layout.screen_locked ? "Destravar esta tela" : "Travar nesta tela",
-      icone: layout.screen_locked ? "destravado" : "cadeado",
       atalho: "Win+Alt+L",
       desabilitado: !recurso("screen_lock"),
       "aria-pressed": String(layout.screen_locked),
       aoClicar: () => executar(() => api.lockToScreen({ locked: !layout.screen_locked })),
     });
 
+    // Cantos mortos: o botão abre um popover com o valor em px; o botão só alterna `hidden`, sem repintar.
     const idCantos = novoId("layout-cantos");
+    const idCantosPopover = novoId("layout-cantos-popover");
     const cantos = h("input", { class: "entrada entrada--mono layout__pct", id: idCantos, type: "number", min: 0, max: 32, step: 1, value: layout.options.dead_corner_px, disabled: !recurso("dead_corners") });
     const aplicarCantos = botao({
       rotulo: "Aplicar",
+      variante: "primario",
       desabilitado: !recurso("dead_corners"),
       aoClicar: () => executar(() => api.layoutSetOptions({ dead_corner_px: Number(cantos.value), base_rev: layout.rev })),
+    });
+    const popoverCantos = h(
+      "div",
+      { class: "layout__cantos", id: idCantosPopover, role: "group", "aria-label": "Cantos mortos", hidden: true },
+      h("label", { class: "campo__rotulo", for: idCantos }, "Cantos mortos"),
+      h("div", { class: "linha" }, cantos, h("span", null, "px"), aplicarCantos),
+      h("p", { class: "nota" }, "Trecho em cada canto onde o cursor não cruza, para o canto do monitor continuar servindo ao sistema."),
+    );
+    const abrirCantos = h(
+      "button",
+      { class: "btn btn--secundario", type: "button", "aria-expanded": "false", "aria-controls": idCantosPopover, disabled: !recurso("dead_corners") },
+      h("span", { class: "btn__rotulo" }, "Cantos mortos"),
+    );
+    const alternarCantos = (aberto) => {
+      popoverCantos.hidden = !aberto;
+      abrirCantos.setAttribute("aria-expanded", String(aberto));
+      if (aberto) cantos.focus();
+    };
+    abrirCantos.addEventListener("click", () => alternarCantos(popoverCantos.hidden));
+    popoverCantos.addEventListener("keydown", (evento) => {
+      if (evento.key !== "Escape") return;
+      evento.preventDefault();
+      alternarCantos(false);
+      abrirCantos.focus();
     });
 
     const outros = layout.devices.filter((d) => !d.is_self);
@@ -799,23 +898,24 @@ export default function montar({ ir, assinar }) {
 
     trocar(
       areaRodape,
-      cartao({
-        filhos: [
+      h(
+        "div",
+        { class: "layout__rodape" },
+        h(
+          "div",
+          { class: "layout__barra" },
+          h("div", { class: "layout__acao" }, travar, !recurso("screen_lock") && indisponivel()),
+          h("div", { class: "layout__acao layout__acao--cantos" }, abrirCantos, popoverCantos, !recurso("dead_corners") && indisponivel()),
           h(
             "div",
-            { class: "layout__rodape" },
-            h("div", { class: "layout__grupo" }, h("span", { class: "campo__rotulo" }, "Trava"), travar, !recurso("screen_lock") && indisponivel(), layout.screen_locked && h("p", { class: "nota" }, "Com a tela travada, o cursor não sai desta máquina.")),
-            h(
-              "div",
-              { class: "layout__grupo" },
-              h("label", { class: "campo__rotulo", for: idCantos }, "Cantos mortos"),
-              h("div", { class: "linha" }, cantos, h("span", null, "px"), aplicarCantos, !recurso("dead_corners") && indisponivel()),
-              h("p", { class: "nota" }, "Trecho em cada canto onde o cursor não cruza, para o canto do monitor continuar servindo ao sistema."),
-            ),
-            h("div", { class: "layout__grupo" }, h("span", { class: "campo__rotulo" }, "Ir para dispositivo"), irPara, !recurso("switch_device") && indisponivel()),
+            { class: "layout__acao" },
+            botao({ rotulo: "Copiar layout para os pares", desabilitado: !recurso("layout_copy"), aoClicar: copiarParaPares }),
+            !recurso("layout_copy") && indisponivel(),
           ),
-        ],
-      }),
+        ),
+        layout.screen_locked && h("p", { class: "nota" }, "Com a tela travada, o cursor não sai desta máquina."),
+        h("div", { class: "layout__ir" }, h("span", { class: "campo__rotulo" }, "Ir para dispositivo"), irPara, !recurso("switch_device") && indisponivel()),
+      ),
     );
   }
 
@@ -867,7 +967,6 @@ export default function montar({ ir, assinar }) {
     cabecalho({
       titulo: "Layout de telas",
       descricao: "Ligue um trecho de borda de um monitor à borda de um monitor de outra máquina. Bordas entre monitores da mesma máquina não cruzam.",
-      acoes: [botao({ rotulo: "Copiar layout para os pares", variante: "primario", icone: "enviar", desabilitado: !recurso("layout_copy"), aoClicar: copiarParaPares })],
     }),
     corpo,
   );
