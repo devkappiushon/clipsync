@@ -9,6 +9,9 @@
 
 use std::fmt;
 
+#[cfg(windows)]
+mod ffi;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WinButton {
     Left,
@@ -84,6 +87,9 @@ pub enum Notice {
     SessionLocked,
     SessionUnlocked,
     DesktopSwitched,
+    /// A callback panicked or the hooks stopped answering (the system removes a slow hook without
+    /// saying so): the hook now passes everything and the session has to end. Sent once.
+    HooksLost,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -115,6 +121,118 @@ pub struct WinError {
     pub call: &'static str,
     pub code: u32,
 }
+
+#[cfg(windows)]
+mod api {
+    use super::{Monitor, Notice, RawEvent, Synth, Verdict, WinError, ffi};
+
+    /// The two low-level hooks, on a thread of their own with a hidden window (contract §13.5).
+    /// Dropping it removes the hooks, closes the window and ends the thread.
+    pub struct Hooks {
+        _thread: ffi::ThreadHandle,
+    }
+
+    impl Hooks {
+        /// `on_input` runs inside the hook callback: it must not wait for anything (§13.2 rule 2f).
+        /// Injected events never reach it.
+        pub fn start(
+            on_input: Box<dyn FnMut(&RawEvent) -> Verdict + Send>,
+            on_notice: Box<dyn FnMut(Notice) + Send>,
+        ) -> Result<Hooks, WinError> {
+            ffi::start_watcher(Some(on_input), on_notice).map(|_thread| Hooks { _thread })
+        }
+    }
+
+    /// Like [`Hooks`] without any hook: only the notices (a machine that only receives).
+    pub struct Watcher {
+        _thread: ffi::ThreadHandle,
+    }
+
+    impl Watcher {
+        pub fn start(on_notice: Box<dyn FnMut(Notice) + Send>) -> Result<Watcher, WinError> {
+            ffi::start_watcher(None, on_notice).map(|_thread| Watcher { _thread })
+        }
+    }
+
+    /// While it lives, the cursor is parked at `(x, y)` and hidden (a window of its own under the
+    /// point, with an empty cursor).
+    pub struct CursorPark {
+        _thread: ffi::ThreadHandle,
+    }
+
+    impl CursorPark {
+        pub fn new(x: i32, y: i32) -> Result<CursorPark, WinError> {
+            ffi::start_park(x, y).map(|_thread| CursorPark { _thread })
+        }
+    }
+
+    /// Win+Alt+P registered with the system while the module is paused (the hooks are gone then).
+    /// The system only says that the combination was pressed; it never hands over a key.
+    pub struct ResumeHotkey {
+        _thread: ffi::ThreadHandle,
+    }
+
+    impl ResumeHotkey {
+        /// `Err` means the system refused the combination: resuming is then only by the tray.
+        pub fn register(on_press: Box<dyn FnMut() + Send>) -> Result<ResumeHotkey, WinError> {
+            ffi::start_hotkey(ffi::RESUME_VK, Some(on_press))
+                .map(|_thread| ResumeHotkey { _thread })
+        }
+    }
+
+    /// Whether the system accepts Win+Alt+`vk` as a hotkey right now (registers it and lets it go).
+    /// A probe for the CI and the diagnostic, not part of the module's behavior.
+    pub fn hotkey_registrable(vk: u32) -> Result<(), WinError> {
+        ffi::start_hotkey(vk, None).map(drop)
+    }
+
+    pub fn monitors() -> Result<Vec<Monitor>, WinError> {
+        ffi::monitors()
+    }
+
+    /// `(x, y, width, height)` of the virtual desktop, in physical px.
+    pub fn virtual_screen() -> (i32, i32, i32, i32) {
+        ffi::virtual_screen()
+    }
+
+    pub fn cursor_pos() -> Result<(i32, i32), WinError> {
+        ffi::cursor_pos()
+    }
+
+    /// `SendInput`. Returns how many inputs the system took.
+    pub fn send(inputs: &[Synth]) -> Result<usize, WinError> {
+        ffi::send(inputs)
+    }
+
+    /// Whether the desktop that receives input is the user's (`Default`). Any failure (the secure
+    /// desktop refuses the call) is `false`.
+    pub fn input_desktop_is_default() -> bool {
+        ffi::input_desktop_is_default()
+    }
+
+    /// The KLID of the current keyboard layout (`00010416` is Português (Brasil) ABNT2), for the
+    /// diagnostic only.
+    pub fn keyboard_layout() -> Option<String> {
+        ffi::keyboard_layout()
+    }
+
+    /// Whether the key is physically down right now (`GetAsyncKeyState`), to reconcile on activation.
+    pub fn async_key_down(vk: u16) -> bool {
+        ffi::async_key_down(vk)
+    }
+
+    /// Handles open in this process, for the test that proves nothing leaks.
+    pub fn process_handle_count() -> Result<u32, WinError> {
+        ffi::process_handle_count()
+    }
+}
+
+#[cfg(windows)]
+pub use api::{
+    CursorPark, Hooks, ResumeHotkey, Watcher, async_key_down, cursor_pos, hotkey_registrable,
+    input_desktop_is_default, keyboard_layout, monitors, process_handle_count, send,
+    virtual_screen,
+};
 
 struct Redacted;
 

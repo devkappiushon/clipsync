@@ -8,6 +8,10 @@ publish.workspace = true
 [dependencies]
 thiserror.workspace = true
 
+# As 10 features ficam num lugar só, na raiz (contrato §13.3 item 1): feature nova é mudança de contrato.
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
+
 # Lints próprios, sem `workspace = true` (contrato §13.3 item 2): o Cargo recusa os dois juntos.
 # `deny` e não `forbid`, para o `ffi.rs` poder ter o único `allow(unsafe_code)` do repositório.
 [lints.rust]
