@@ -8,6 +8,7 @@ use tauri_plugin_notification::NotificationExt;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::notify_prefs::NotifyPrefs;
+use crate::notify_text;
 use crate::state::AppState;
 use crate::ui::Ui;
 use crate::{msg, tray, window};
@@ -113,6 +114,11 @@ fn notify(app: &AppHandle, event: &Value) {
         return;
     }
     let (title, body) = notification_text(event);
+    // O nome do par vem de fora: no Linux o daemon lê marcação, então `&`, `<` e `>` são escapados.
+    let (title, body) = (
+        notify_text::for_system(title),
+        notify_text::for_system(body),
+    );
     if let Err(error) = app.notification().builder().title(title).body(body).show() {
         tracing::warn!(error = %error, "system notification failed");
     }

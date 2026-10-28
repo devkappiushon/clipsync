@@ -8,6 +8,7 @@ mod events;
 mod lifecycle;
 mod msg;
 mod notify_prefs;
+mod notify_text;
 mod signals;
 mod state;
 mod tray;
