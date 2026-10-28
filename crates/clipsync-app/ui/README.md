@@ -18,7 +18,6 @@ Critério de pronto da interface: §12.9 item 5 do contrato. Ele busca estilo em
 ```
 index.html            casca: barra lateral, <main>, módulo js/app.js
 componentes.html      catálogo de componentes em todos os estados (js/galeria.js)
-mock.js               entrada do mock; só carrega fora do Tauri
 css/                  fonts, tokens, app (casca), components e telas/<tela>.css
 fonts/                Inter, Geist e Geist Mono em woff2 variável (OFL.txt e FONTS.md)
 js/api.js             único ponto de acesso a dados: invoke("clipsync", { req }) e eventos
@@ -26,20 +25,23 @@ js/estado.js          AppState da barra lateral e distribuição dos eventos
 js/componentes.js     botão, selo, cartão, interruptor, campo, segmentado, tabela, diálogo
 js/areas.js           cabeçalho, região assíncrona, avisos e estados vazio e de erro
 js/telas/<tela>.js    uma tela por arquivo
-mock/<dominio>.js     um domínio do mock por arquivo
 ```
+
+O simulador do agente não mora aqui: fica em `crates/clipsync-app/ui-dev/` (`mock.js` e `mock/<dominio>.js`, um domínio por arquivo). A pasta `ui/` é a que vai no pacote do app, então nada de simulação entra nele.
 
 Telas: onboarding (3 passos), dispositivos, pareamento, layout de telas, clipboard, diagnóstico e preferências.
 
-## Rodar no navegador (com o mock)
+## Rodar no navegador (com o simulador)
 
-```sh
-python3 -m http.server --bind 127.0.0.1 -d crates/clipsync-app/ui 5173
-```
+Precisa de um servidor de dev que sirva `ui/` por cima de `ui-dev/` nas mesmas URLs: um caminho que não existe em `ui/` é procurado em `ui-dev/`. Assim `/mock.js` e `/mock/...` existem no navegador e não existem no pacote. O Maestro mantém um desses, com `Cache-Control: no-store`, em `http://127.0.0.1:5173` e `http://127.0.0.1:5174`. Um `python3 -m http.server` apontado só para `ui/` não serve: a interface falha com erro na tela, porque falta o simulador.
 
-É exceção à regra de não subir servidor, só enquanto você confere: derrube no fim. Esse servidor pode servir módulos antigos do cache. Se a tela não refletir o arquivo, use um servidor com `Cache-Control: no-store` (o Maestro mantém um em `127.0.0.1:5174`) ou recarregue sem cache.
+Servidor de dev é exceção à regra de não subir servidor, só enquanto você confere: derrube no fim.
 
-Dentro do app, `window.__TAURI__` existe e o mock nunca é importado. Fora dele, `js/api.js` importa `mock.js` sob demanda.
+Como `js/api.js` decide de onde vêm os dados:
+
+- Com `window.__TAURI__` (dentro do app), chama o comando `clipsync` e nunca toca no simulador.
+- Sem `window.__TAURI__`, só carrega o simulador em `http://127.0.0.1` ou `http://localhost`. Em qualquer outro endereço (inclusive a origem do app), falha fechado: mostra erro e não importa nada.
+- Nenhum outro arquivo de `ui/` importa o simulador.
 
 ### Cenários
 
@@ -52,7 +54,7 @@ Escolha pela URL: `/?cenario=<nome>#/<tela>`.
 | `cenario=sem-perfil` | perfil não criado: tudo cai no onboarding |
 | `cenario=erro` | agente com falha: telas mostram o erro e "Tentar de novo"; gravar preferências falha com `io` |
 | `cenario=estados` | par offline, par bloqueado por chave diferente, oferta de layout pendente, exportação do pacote falhando |
-| `cenario=pareamento` | pareamento já no passo do código, sem esperar |
+| `cenario=pareamento` | pareamento já no passo do código, sem esperar (sair da tela cancela a tentativa) |
 | `plataforma=windows` | recursos de teclado e mouse desligados |
 | `tema=claro` ou `tema=escuro` | tema inicial, para capturar as telas nos dois temas |
 
@@ -61,7 +63,7 @@ Escolha pela URL: `/?cenario=<nome>#/<tela>`.
 1. Crie `js/telas/<nome>.js` com `export default function montar({ rota, ir, assinar })`, devolvendo `{ no, desmontar? }` (ou uma promessa disso).
 2. Registre a rota em `ROTAS` de `js/app.js` e o link em `index.html`, se for da barra lateral.
 3. Crie `css/telas/<nome>.css`, ligue em `index.html`, e use só tokens e classes prefixadas pelo nome da tela.
-4. Peça dados só por `api.<comando>()`. Para um comando novo, mude antes o contrato e o `mock/<dominio>.js`.
+4. Peça dados só por `api.<comando>()`. Para um comando novo, mude antes o contrato e o `ui-dev/mock/<dominio>.js`.
 5. Escreva os estados de carregando, vazio e erro (`area()` de `js/areas.js` já cobre os três).
 
 ## Fontes

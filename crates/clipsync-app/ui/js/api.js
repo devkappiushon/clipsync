@@ -1,15 +1,31 @@
 // Único ponto de acesso a dados (contrato §12.4). Dentro do Tauri, um comando só:
-// invoke("clipsync", { req: { cmd, args } }). Fora dele, ui/mock.js responde igual.
+// invoke("clipsync", { req: { cmd, args } }). Fora dele, só em 127.0.0.1 ou localhost, o servidor de dev
+// entrega o simulador (fonte em ui-dev/, fora do pacote). Em qualquer outro caso falha fechado.
 // Erro: a promessa rejeita com { code, message, field, details }; a message já vem em português.
 
-let mock = null;
+const ORIGENS_DE_DEV = new Set(["127.0.0.1", "localhost"]);
+
+let simulador = null;
+
+/** Só o servidor de dev local pode carregar o simulador; sem __TAURI__ em outro lugar, mostra erro e não importa nada. */
+async function carregarSimulador() {
+  if (location.protocol !== "http:" || !ORIGENS_DE_DEV.has(location.hostname)) {
+    throw {
+      code: "internal",
+      message: "A interface não encontrou o ClipSync por trás dela. Feche e abra o aplicativo de novo.",
+      field: null,
+      details: null,
+    };
+  }
+  simulador ??= await import("../mock.js");
+  return simulador;
+}
 
 async function chamar(cmd, args) {
   const req = args === undefined ? { cmd } : { cmd, args };
   const tauri = window.__TAURI__;
   if (tauri) return tauri.core.invoke("clipsync", { req });
-  mock ??= await import("../mock.js");
-  return mock.invoke("clipsync", { req });
+  return (await carregarSimulador()).invoke("clipsync", { req });
 }
 
 const comando = (nome) => (args) => chamar(nome, args);
@@ -68,6 +84,5 @@ export const api = {
 export async function ouvir(fn) {
   const tauri = window.__TAURI__;
   if (tauri) return tauri.event.listen("clipsync://event", (evento) => fn(evento.payload));
-  mock ??= await import("../mock.js");
-  return mock.listen("clipsync://event", (evento) => fn(evento.payload));
+  return (await carregarSimulador()).listen("clipsync://event", (evento) => fn(evento.payload));
 }

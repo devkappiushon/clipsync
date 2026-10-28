@@ -40,6 +40,7 @@ export default function montar({ ir, assinar }) {
   let confiancaTotal = false;
   let disponiveis = { clipboard: true, input: true };
   let relogio = null;
+  let saiu = false;
 
   const corpo = h("div", { class: "pareamento__corpo" });
   const no = h(
@@ -91,6 +92,12 @@ export default function montar({ ir, assinar }) {
     };
   }
 
+  /** Sair da tela no meio do pareamento fecha a porta: a tentativa não fica aberta sem ninguém olhando. */
+  function abandonar(attemptId) {
+    if (attemptId == null) return;
+    api.pairCancel({ attempt_id: attemptId }).catch((erro) => console.warn("não foi possível cancelar o pareamento ao sair", erro));
+  }
+
   const cancelar = () =>
     chamar(async () => {
       await api.pairCancel({ attempt_id: estado.attempt_id });
@@ -137,6 +144,7 @@ export default function montar({ ir, assinar }) {
               chamar(async () => {
                 resultado = null;
                 const r = await api.pairHostStart({ port: 0, window_secs: JANELA_S });
+                if (saiu) return abandonar(r.attempt_id);
                 estado = { ...estado, step: "listening", attempt_id: r.attempt_id, port: r.port, addresses: r.addresses, expires_unix_ms: r.expires_unix_ms };
               }),
           }),
@@ -160,6 +168,7 @@ export default function montar({ ir, assinar }) {
           resultado = null;
           try {
             const r = await api.pairJoinStart({ addr: enderecoDigitado.trim() });
+            if (saiu) return abandonar(r.attempt_id);
             estado = { ...estado, step: "connecting", attempt_id: r.attempt_id, expires_unix_ms: Date.now() + JANELA_S * 1000 };
           } catch (erro) {
             if (erro?.code === "bad_addr") {
@@ -411,7 +420,10 @@ export default function montar({ ir, assinar }) {
   return {
     no,
     desmontar: () => {
+      saiu = true;
       pararRelogio();
+      // Depois de "Concluir" (waiting_peer) a decisão já é sua e fica com a outra máquina; antes disso, sair cancela.
+      if (["listening", "connecting", "code", "permissions"].includes(estado?.step)) abandonar(estado.attempt_id);
       for (const fn of cancelarEventos) fn();
     },
   };
