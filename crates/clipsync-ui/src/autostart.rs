@@ -8,6 +8,9 @@
 //! Linux: `<$XDG_CONFIG_HOME or ~/.config>/autostart/clipsync.desktop`, written by tmp + rename,
 //! with `Exec` = `$APPIMAGE` when set (the AppImage runtime sets it; the mounted executable
 //! disappears on exit), else the running executable, plus `--hidden` (§12.7 rule 6).
+//! A relative `$APPIMAGE` is ignored (the session would resolve it from another directory); a path
+//! that is not UTF-8 or holds a control character (a line break would inject a `.desktop` key) is
+//! refused, never written.
 //! Windows: value `ClipSync` in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` via `reg.exe`.
 
 use std::ffi::OsString;
@@ -19,10 +22,15 @@ pub const HIDDEN_FLAG: &str = "--hidden";
 
 // User-facing text (pt-BR); `msg.rs` is Rivet's, so the autostart texts live here.
 pub const NO_HOME: &str = "não foi possível achar a pasta de autostart: HOME não está definido";
+pub const BAD_PATH: &str = "não dá para ligar o início automático: o caminho do executável tem caractere de controle ou não é texto válido";
 fn no_exe(detail: &str) -> String {
     format!("não foi possível descobrir o executável do ClipSync: {detail}")
 }
 fn io_text(error: &io::Error) -> String {
+    // InvalidInput is `check` refusing the path: its text already says everything.
+    if error.kind() == io::ErrorKind::InvalidInput {
+        return error.to_string();
+    }
     format!("não foi possível gravar o autostart: {error}")
 }
 
@@ -45,15 +53,31 @@ impl Launcher {
         Launcher::from_env(env::var_os("APPIMAGE"), env::current_exe())
     }
 
-    /// `$APPIMAGE` (non-empty) wins over the executable.
+    /// `$APPIMAGE` (non-empty and absolute) wins over the executable. The chosen path must pass
+    /// `check`.
     pub fn from_env(
         appimage: Option<OsString>,
         exe: io::Result<PathBuf>,
     ) -> Result<Launcher, String> {
-        if let Some(appimage) = appimage.filter(|v| !v.is_empty()) {
-            return Ok(Launcher::new(appimage));
+        let launcher = match appimage
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+        {
+            Some(appimage) => Launcher::new(appimage),
+            None => exe.map(Launcher::new).map_err(|e| no_exe(&e.to_string()))?,
+        };
+        launcher.check()?;
+        Ok(launcher)
+    }
+
+    /// The program path must be UTF-8 without control characters (C0, DEL, C1): a line break
+    /// would end the `Exec=` line and let the rest become another `.desktop` key.
+    pub fn check(&self) -> Result<(), String> {
+        match self.program.to_str() {
+            Some(text) if !text.chars().any(char::is_control) => Ok(()),
+            _ => Err(BAD_PATH.to_string()),
         }
-        exe.map(Launcher::new).map_err(|e| no_exe(&e.to_string()))
     }
 
     /// The `Exec=` value: the program quoted by the Desktop Entry rules, then `--hidden`.
@@ -119,6 +143,9 @@ pub fn default_dir() -> Option<PathBuf> {
 
 /// Writes `clipsync.desktop` in `dir` (tmp + rename) and returns its path.
 pub fn enable_in(dir: &Path, launcher: &Launcher) -> io::Result<PathBuf> {
+    launcher
+        .check()
+        .map_err(|why| io::Error::new(io::ErrorKind::InvalidInput, why))?;
     fs::create_dir_all(dir)?;
     let path = dir.join(DESKTOP_FILE);
     let tmp = dir.join(format!("{DESKTOP_FILE}.tmp-{}", std::process::id()));

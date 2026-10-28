@@ -8,21 +8,75 @@ use std::path::PathBuf;
 
 use clipsync_ui::autostart::{self, DESKTOP_FILE, Launcher};
 
+/// An absolute path on the platform running the test (`/x/y` on Unix, `C:\x\y` on Windows).
+fn abs(unix: &str) -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from(format!("C:{}", unix.replace('/', "\\")))
+    } else {
+        PathBuf::from(unix)
+    }
+}
+
 fn exe() -> io::Result<PathBuf> {
-    Ok(PathBuf::from("/usr/bin/clipsync-app"))
+    Ok(abs("/usr/bin/clipsync-app"))
 }
 
 #[test]
 fn appimage_wins_over_the_executable_when_set_and_non_empty() {
     // `set_var` is unsafe in edition 2024 (forbidden here), so the choice is fed its inputs.
-    let with = Launcher::from_env(Some(OsString::from("/opt/ClipSync.AppImage")), exe()).unwrap();
-    assert_eq!(with.program, PathBuf::from("/opt/ClipSync.AppImage"));
+    let appimage = abs("/opt/ClipSync.AppImage");
+    let with = Launcher::from_env(Some(appimage.clone().into_os_string()), exe()).unwrap();
+    assert_eq!(with.program, appimage);
     let without = Launcher::from_env(None, exe()).unwrap();
-    assert_eq!(without.program, PathBuf::from("/usr/bin/clipsync-app"));
+    assert_eq!(without.program, abs("/usr/bin/clipsync-app"));
     let empty = Launcher::from_env(Some(OsString::new()), exe()).unwrap();
-    assert_eq!(empty.program, PathBuf::from("/usr/bin/clipsync-app"));
+    assert_eq!(empty.program, abs("/usr/bin/clipsync-app"));
     let neither = Launcher::from_env(None, Err(io::Error::other("sem exe")));
     assert!(neither.is_err());
+}
+
+#[test]
+fn a_relative_appimage_falls_back_to_the_executable() {
+    // the session would resolve a relative path from some other directory
+    for relative in ["app.AppImage", "./app.AppImage", "../bin/app.AppImage"] {
+        let l = Launcher::from_env(Some(OsString::from(relative)), exe()).unwrap();
+        assert_eq!(l.program, abs("/usr/bin/clipsync-app"), "{relative}");
+    }
+}
+
+#[test]
+fn a_path_with_a_control_character_is_refused() {
+    for bad in [
+        "/tmp/x\nExec=/tmp/evil\nX-Injected=1",
+        "/tmp/x\rExec=/tmp/evil",
+        "/tmp/x\0y",
+        "/tmp/x\ty",
+        "/tmp/x\u{7f}y",
+        "/tmp/x\u{85}y",
+    ] {
+        let from_env = Launcher::from_env(Some(OsString::from(abs(bad))), exe());
+        assert_eq!(from_env, Err(autostart::BAD_PATH.to_string()), "{bad:?}");
+        assert!(Launcher::new(abs(bad)).check().is_err(), "{bad:?}");
+        // the executable gets the same check when $APPIMAGE is not used
+        let from_exe = Launcher::from_env(None, Ok(abs(bad)));
+        assert_eq!(from_exe, Err(autostart::BAD_PATH.to_string()), "{bad:?}");
+    }
+    assert!(
+        Launcher::new(abs("/opt/Clip Sync/çã.AppImage"))
+            .check()
+            .is_ok()
+    );
+}
+
+#[test]
+fn enabling_with_a_bad_path_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("autostart");
+    let bad = Launcher::new(abs("/tmp/x\nExec=/tmp/evil\nX-Injected=1"));
+    let error = autostart::enable_in(&target, &bad).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    assert!(!autostart::is_enabled_in(&target));
+    assert!(!target.exists(), "not even the directory");
 }
 
 #[test]
