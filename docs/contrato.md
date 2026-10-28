@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.19, Keel, 2026-10-28)
+# Contrato · ClipSync MVP de hoje (v1.20, Keel, 2026-10-28)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -24,6 +24,7 @@ v1.16 (decisões do Maestro, 2026-10-28): §12.6 e §12.9 item 2 (2). Revogaçã
 v1.17 (decisões do Maestro, 2026-10-28, rodada de correções da S6): §12.7 capabilities mínimas (`allow-clipsync`, `core:event:allow-listen`, `core:event:allow-unlisten` e só o que o front usar), a partir do informativo I-S6-1 do Sentinel (7a722ca); o mock e a galeria saem do pacote para `crates/clipsync-app/ui-dev/`, o `api.js` falha fechado, e o portal usa `scripts/servir-ui-dev.py`. §12.1: `prefs.rs` e `diag.rs` do `clipsync-ui` passam ao Flux. §12.5: códigos do Vector (`input_off`, `no_layout`, `no_offer`, `link_not_found` depois do `stale_rev`, `denied` e `offline` do `switch_to_device`) e `window_secs` do `pair_host_start` até `PAIR_WINDOW_SECS` (120). Sair da tela 3 cancela a tentativa, menos em `waiting_peer`.
 v1.18 (Maestro, a partir do 7c770ef do Rivet): §12.6, item 6 da revogação. Com B offline, quem é recusado registra: um par conhecido que rejeita o certificado deste dispositivo deixa uma entrada em `recent_blocks` com o motivo "recusou a conexão: este dispositivo não está mais pareado lá"; quem recusa não registra. §12.7 item 3 ganha a lista final das capabilities (c68d980).
 v1.19 (decisões do Maestro, 2026-10-28, achados S6-18 e S6-19 do Sentinel em 0f0b312): §12.5, o `layout_offer_answer` recebe `from_peer_id` e `rev` da oferta exibida, e oferta trocada dá `stale_offer` (490335f do Vector). §12.6, teto de 1.000.000 em `x` e `y` no `Layout::validate` (e4e6308).
+v1.20 (decisão do Maestro, 2026-10-28): até o usuário escolher a licença, o texto exibido é "Todos os direitos reservados" no `Prefs.license` (§12.5) e no README, no lugar de "a definir" (§11 regra 9).
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -876,7 +877,7 @@ Regras:
    - **Sem cache no release:** nada de `Swatinem/rust-cache` nem `actions/cache` no `release.yml`. Um cache restaurado de execução de PR pode envenenar o binário publicado. No CI, o cache continua liberado.
    - O `release.yml` só usa actions de `actions/*`. O toolchain vem do rustup do runner, que lê o `rust-toolchain.toml` (1.99.1).
    - Artefatos: `clipsync-<tag>-linux-x86_64.tar.gz` (binário `clipsync` + README), `clipsync-<tag>-windows-x86_64.zip` (`clipsync.exe` + README) e `SHA256SUMS` dos dois.
-   - **Licença (v1.12, decisão do Maestro):** a 0.1.0 sai num repositório privado, sem LICENSE, e o README segue com "a definir". Antes do primeiro release público (repositório público ou release visível fora da conta), o usuário decide a licença. Sem essa decisão, nada vira público.
+   - **Licença (v1.12, decisão do Maestro):** a 0.1.0 sai num repositório privado, sem LICENSE, e o README segue com "a definir". Antes do primeiro release público (repositório público ou release visível fora da conta), o usuário decide a licença. Sem essa decisão, nada vira público. v1.20: até a escolha, o README (a9f69a8) e as Preferências do app dizem "Todos os direitos reservados", no lugar de "a definir".
 10. **CI (Bolt).** O job Windows (`windows-latest`) roda `cargo clippy --workspace --all-targets --locked -- -D warnings` e `cargo test --workspace --locked`.
     - Esse clippy é o único lugar onde o código `cfg(windows)` passa pelo lint.
     - O e2e `roteiro.rs` já é `cfg(unix)`.
@@ -1050,7 +1051,7 @@ Link        = {id, a: Endpoint, b: Endpoint, problem}
 Prefs       = {shortcuts: {open: "Win+Alt+C", pause_all: "Win+Alt+P", send_once: "Win+Alt+V", lock_screen: "Win+Alt+L",
                            go_to_device: ["Win+Alt+1", "Win+Alt+2", "Win+Alt+3"]},
                autostart: false, notifications: {item_received: true, device_connected: false, block: true},
-               appearance: {theme: "system"|"light"|"dark", reduce_motion: false}, language: "pt-BR", version, license: "a definir"}
+               appearance: {theme: "system"|"light"|"dark", reduce_motion: false}, language: "pt-BR", version, license: "Todos os direitos reservados"}   // v1.20: até o usuário escolher a licença
 ```
 
 **Eventos** (`{event, data}` em `clipsync://event`)
@@ -1260,3 +1261,4 @@ Comandos da raiz, com `export PATH=$HOME/.cargo/bin:$PATH`.
 14. Maestro (v1.17, rodada de correções): capabilities mínimas (§12.7 item 3); mock e galeria em `ui-dev/`, fora do pacote, `api.js` falhando fechado e portal por `scripts/servir-ui-dev.py` (§12.7 Pixel itens 3 e 5); `prefs.rs` e `diag.rs` com o Flux (§12.1); códigos do Vector e teto de `window_secs` registrados na §12.5. Decisão do Pixel, aceita: sair da tela 3 em `waiting_peer` não cancela a tentativa.
 15. Maestro (v1.18): com B offline na hora do revoke, quem é recusado registra o par em `recent_blocks`, uma vez por par, e quem recusa não registra (§12.6 revogação, item 6).
 16. Maestro (v1.19): a resposta à oferta de layout diz qual oferta o usuário viu (`from_peer_id` e `rev`), e oferta trocada dá `stale_offer` (código do Vector). O teto de posição de 1.000.000 fica no `Layout::validate`, para valer em todo caminho.
+17. Maestro (v1.20): até o usuário escolher a licença, o app e o README exibem "Todos os direitos reservados" (Flux no `prefs.rs`, Pixel no mock, Maestro no README).
