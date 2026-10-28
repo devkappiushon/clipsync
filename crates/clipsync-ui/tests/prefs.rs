@@ -28,7 +28,7 @@ async fn prefs_set_writes_ui_toml_and_a_new_ui_reads_it_back() {
     );
     assert_eq!(p["shortcuts"]["open"], json!("Win+Alt+C"));
     assert_eq!(p["language"], json!("pt-BR"));
-    assert_eq!(p["license"], json!("a definir"));
+    assert_eq!(p["license"], json!(clipsync_ui::prefs::LICENSE));
 
     let set = ok(
         &ui,

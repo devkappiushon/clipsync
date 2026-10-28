@@ -75,6 +75,10 @@ pub struct Appearance {
     pub reduce_motion: bool,
 }
 
+/// The license shown in "Sobre". Until the owner picks one the real legal state applies: all
+/// rights reserved. Changing the license later is this one line (and the three fixtures).
+pub const LICENSE: &str = "Todos os direitos reservados";
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Prefs {
@@ -97,7 +101,7 @@ impl Default for Prefs {
             appearance: Appearance::default(),
             language: "pt-BR".into(),
             version: env!("CARGO_PKG_VERSION").into(),
-            license: "a definir".into(),
+            license: LICENSE.into(),
         }
     }
 }
