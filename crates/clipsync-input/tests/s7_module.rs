@@ -86,9 +86,15 @@ struct Run {
 
 /// A node that runs the real module, with the layout in `dir`.
 fn spawn_src(hub: &MemHub, name: &str, dir: &Path, hooks: bool) -> Run {
+    spawn_src_with(hub, name, dir, hooks, true)
+}
+
+/// `can_begin` false behaves like the Wayland portal. Set before the module runs.
+fn spawn_src_with(hub: &MemHub, name: &str, dir: &Path, hooks: bool, can_begin: bool) -> Run {
     let node = hub.add_node(name, INPUT);
     let (cap_ad, cap) = FakeCapture::new(vec![zone(1920, 1080)]);
     cap.set_hooks(hooks);
+    cap.set_can_begin(can_begin);
     let (emu_ad, emu) = FakeEmulate::new();
     let module = build_with_layout(
         InputConfig::default(),
@@ -838,4 +844,62 @@ async fn the_capture_stops_when_the_peer_is_revoked() {
     // trusted again: the hook comes back (the link is still in the file)
     hub.link(a.id, b.id, PeerPerms::default(), CONTROL);
     until("hook back", || a.cap.started()).await;
+}
+
+#[tokio::test]
+async fn a_failed_open_does_not_begin_the_capture() {
+    // `b` has the input module off: the Enter cannot be sent, so nothing starts
+    let d = tempfile::tempdir().unwrap();
+    write_layout(
+        d.path(),
+        &layout_ab(node_id("a"), node_id("b"), 0.0, 1.0, 0),
+    );
+    let hub = MemHub::new();
+    let a = spawn_src(&hub, "a", d.path(), false);
+    let b = hub.add_node(
+        "b",
+        ModuleSet {
+            clipboard: true,
+            input: false,
+        },
+    );
+    hub.link(a.id, b.id, PeerPerms::default(), CONTROL);
+    status(&a).await;
+    let reply = command(&a.tx, ModuleCommand::InputSwitch { to: b.id }).await;
+    assert!(matches!(reply, ModuleReply::Error(_)), "{reply:?}");
+    assert!(a.cap.begins().is_empty());
+}
+
+#[tokio::test]
+async fn switch_supported_follows_can_begin_and_the_shortcut_is_refused_too() {
+    let d = tempfile::tempdir().unwrap();
+    write_layout(
+        d.path(),
+        &layout_ab(node_id("a"), node_id("b"), 0.0, 1.0, 0),
+    );
+    let hub = MemHub::new();
+    let a = spawn_src_with(&hub, "a", d.path(), false, false);
+    let b = spawn_dest(&hub, "b");
+    hub.link(a.id, b.id, PeerPerms::default(), CONTROL);
+    status(&a).await;
+    assert!(!input_state(&a).await.switch_supported);
+    // the shortcut goes the same way as the button: refused, with the text, without `begin`
+    a.cap.hotkey(Hotkey::GoTo(2));
+    let end = Instant::now() + Duration::from_secs(3);
+    loop {
+        let s = status(&a).await;
+        if s.last_block
+            .as_deref()
+            .is_some_and(|t| t.contains("indisponível nesta versão"))
+        {
+            break;
+        }
+        assert!(Instant::now() < end, "the shortcut was not refused: {s:?}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(a.cap.begins().is_empty());
+    assert!(!b.emu.started());
+    // the default adapter can begin
+    let (_hub2, _d2, a2, _b2) = pair(0.0, 1.0).await;
+    assert!(input_state(&a2).await.switch_supported);
 }
