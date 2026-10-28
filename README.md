@@ -2,17 +2,17 @@
 
 Teclado, mouse e área de transferência entre os meus computadores, em um aplicativo só, sem servidor central. Cada módulo é opcional: dá para usar só teclado e mouse, só clipboard, ou os dois. A escolha é feita no `clipsync init` e fica em `config.toml` (`[modules]`).
 
-Estado em 2026-10-28: a v0.1.0 publicou a linha de comando; a v0.2.0 traz o app de desktop, com as telas e o agente no mesmo processo. Nada validado em outra máquina ainda. Detalhes: `docs/matriz-compatibilidade.md`.
+Estado em 2026-10-28: a v0.1.0 publicou a linha de comando; a v0.2.0 trouxe o app de desktop, com as telas e o agente no mesmo processo; a v0.3.0 traz teclado e mouse no Windows e o layout de telas entre Windows e Linux, por borda de monitor. O teclado e o mouse entre máquinas reais ainda não foram validados: o roteiro de teste está em `docs/contrato.md` §13.12. Detalhes: `docs/matriz-compatibilidade.md`.
 
 ## Baixar
 
 Cada release traz o app de desktop e a linha de comando, mais o `SHA256SUMS`:
 
-- `clipsync-app-v0.2.1-linux-x86_64.AppImage` e `clipsync-app-v0.2.1-linux-amd64.deb`: app de desktop no Linux.
-- `clipsync-app-v0.2.1-windows-x86_64-setup.exe` e `clipsync-app-v0.2.1-windows-x86_64.msi`: app de desktop no Windows.
-- `clipsync-v0.2.1-linux-x86_64.tar.gz` e `clipsync-v0.2.1-windows-x86_64.zip`: só a linha de comando (`clipsync`), com este README.
+- `clipsync-app-v0.3.0-linux-x86_64.AppImage` e `clipsync-app-v0.3.0-linux-amd64.deb`: app de desktop no Linux.
+- `clipsync-app-v0.3.0-windows-x86_64-setup.exe` e `clipsync-app-v0.3.0-windows-x86_64.msi`: app de desktop no Windows.
+- `clipsync-v0.3.0-linux-x86_64.tar.gz` e `clipsync-v0.3.0-windows-x86_64.zip`: só a linha de comando (`clipsync`), com este README.
 
-Confira antes de executar (troque `v0.2.1` pela tag que você baixou):
+Confira antes de executar (troque `v0.3.0` pela tag que você baixou):
 
 ```sh
 # Linux e macOS
@@ -21,7 +21,7 @@ sha256sum -c SHA256SUMS --ignore-missing
 
 ```powershell
 # Windows (PowerShell): compare com a linha do pacote em SHA256SUMS
-Get-FileHash .\clipsync-app-v0.2.1-windows-x86_64-setup.exe -Algorithm SHA256
+Get-FileHash .\clipsync-app-v0.3.0-windows-x86_64-setup.exe -Algorithm SHA256
 ```
 
 ### App de desktop
@@ -31,10 +31,10 @@ O app traz as telas e o agente no mesmo processo, com ícone na bandeja. Fechar 
 No Linux, sem sudo, com o AppImage:
 
 ```sh
-scripts/instalar-app-linux.sh ~/Downloads/clipsync-app-v0.2.1-linux-x86_64.AppImage
+scripts/instalar-app-linux.sh ~/Downloads/clipsync-app-v0.3.0-linux-x86_64.AppImage
 ```
 
-O script copia o AppImage para `~/.local/bin/clipsync-app.AppImage` e cria o atalho "ClipSync" no menu de aplicativos. Rodar de novo com um AppImage mais novo atualiza. O app precisa do WebKitGTK 4.1; se o AppImage não abrir por falta de FUSE, instale o `libfuse2`. No GNOME, o ícone da bandeja depende da extensão AppIndicator. Com o `.deb`: `sudo apt install ./clipsync-app-v0.2.1-linux-amd64.deb`.
+O script copia o AppImage para `~/.local/bin/clipsync-app.AppImage` e cria o atalho "ClipSync" no menu de aplicativos. Rodar de novo com um AppImage mais novo atualiza. O app precisa do WebKitGTK 4.1; se o AppImage não abrir por falta de FUSE, instale o `libfuse2`. No GNOME, o ícone da bandeja depende da extensão AppIndicator. Com o `.deb`: `sudo apt install ./clipsync-app-v0.3.0-linux-amd64.deb`.
 
 No Windows, rode o `setup.exe` (ou o `.msi`). O instalador não é assinado, então o SmartScreen avisa: clique em "Mais informações" e depois em "Executar assim mesmo". O app usa o WebView2, que já vem no Windows 10 e 11 atualizados; se faltar, o instalador baixa.
 
@@ -50,6 +50,7 @@ Avisos para Windows (revisão de segurança S5, em `docs/seguranca.md`):
 4. O clipboard do Windows lê tudo o que é copiado, inclusive o que gerenciadores de senha marcam como sensível. Use `clipsync pause` ao copiar senhas.
 5. O texto recebido de outro dispositivo é gravado com os marcadores que pedem ao Windows para não guardar no histórico (Win+V) nem na nuvem. Isso depende de o Windows respeitar o marcador.
 6. O clipboard do Windows é experimental: polling de 250 ms, só texto, ainda não testado em máquina real.
+7. Teclado e mouse no Windows usam ganchos de baixo nível do sistema. O ClipSync só os instala com o módulo ligado e uma ligação desta máquina no layout, tira os ganchos ao pausar, não registra tecla nenhuma e não injeta nada na tela do UAC nem com a tela bloqueada. Programas abertos como administrador não recebem o teclado e o mouse de outra máquina.
 
 O que funciona em cada plataforma nesta versão:
 
@@ -57,7 +58,7 @@ O que funciona em cada plataforma nesta versão:
 |---|---|---|
 | Malha QUIC e pareamento | sim | sim |
 | Clipboard de texto | sim | sim (só texto) |
-| Teclado e mouse | experimental | ainda não disponível |
+| Teclado e mouse (layout de telas por borda de monitor) | experimental (GNOME Wayland) | experimental (atalhos Win+Alt+1 a 9, L e P) |
 
 ## Documentos
 

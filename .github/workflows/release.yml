@@ -178,8 +178,9 @@ jobs:
           App de desktop (Tauri) e linha de comando para Linux e Windows.
 
           - App: as nove telas (dispositivos, pareamento, clipboard, layout de telas, diagnóstico, preferências e primeira execução), com o agente dentro do app e ícone na bandeja.
+          - Layout de telas: o cursor e o teclado cruzam entre Windows e Linux pelo trecho de borda de monitor ligado na tela Layout, nos dois sentidos, com volta pelo mesmo trecho.
           - Linux: AppImage e .deb. Malha QUIC, pareamento, clipboard e teclado e mouse experimentais (X11 e XWayland).
-          - Windows: instalador .exe e .msi, sem assinatura (o SmartScreen avisa). Malha, pareamento e clipboard de texto experimentais, ainda não testados em máquina real. Teclado e mouse aparecem como indisponíveis nesta versão.
+          - Windows: instalador .exe e .msi, sem assinatura (o SmartScreen avisa). Malha, pareamento, clipboard de texto e, desde a v0.3.0, teclado e mouse com o layout de telas por borda de monitor (atalhos Win+Alt+1 a 9, L e P), tudo experimental.
           - CLI: os mesmos pacotes da v0.1.0.
 
           Confira o SHA-256 em SHA256SUMS antes de executar.
