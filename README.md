@@ -126,6 +126,6 @@ Enquanto o módulo de entrada não estiver validado entre máquinas reais, o Inp
 
 ## Licença
 
-A definir pelo autor antes do primeiro release (sugestão: MIT).
+Todos os direitos reservados, até o autor escolher uma licença aberta. Sem licença, o código pode ser lido, mas não pode ser copiado, alterado nem redistribuído.
 
 feito por montesouza.dev
