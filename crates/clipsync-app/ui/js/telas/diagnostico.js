@@ -1,5 +1,5 @@
-// Tela 6 · Diagnóstico: blocos Sistema, Adaptadores, Rede, Conflitos e Últimos bloqueios (sem conteúdo),
-// com "Exportar pacote de suporte" que mostra a prévia redigida antes de gravar em Downloads.
+// Tela 6 · Diagnóstico em duas colunas: Sistema, Rede e Pacote de suporte à esquerda; Adaptadores, Conflitos e
+// Últimos bloqueios (sem conteúdo) à direita. "Exportar pacote de suporte" mostra a prévia redigida antes de gravar em Downloads.
 
 import { api } from "../api.js";
 import { area, aviso, cabecalho, estadoVazio, indisponivel } from "../areas.js";
@@ -8,11 +8,11 @@ import { h, trocar } from "../dom.js";
 import { recurso } from "../estado.js";
 import { formatarBytes, formatarMomento, mensagemDe, seloDiagnostico, seloDispositivo } from "../formatar.js";
 
-const AREAS = [
-  { chave: "sistema", titulo: "Sistema", descricao: "Sistema operacional, sessão gráfica, protocolos e portais." },
-  { chave: "adaptadores", titulo: "Adaptadores", descricao: "Caminho usado pelo clipboard e pela entrada, com a classificação da plataforma." },
-  { chave: "conflitos", titulo: "Conflitos", descricao: "Outros programas que disputam teclado, mouse ou clipboard." },
-];
+const AREAS = {
+  sistema: { chave: "sistema", titulo: "Sistema" },
+  adaptadores: { chave: "adaptadores", titulo: "Adaptadores" },
+  conflitos: { chave: "conflitos", titulo: "Conflitos" },
+};
 
 const MODULOS = { clipboard: "clipboard", input: "teclado e mouse" };
 const REDACOES = {
@@ -38,15 +38,20 @@ export default function montar({ assinar }) {
       h(
         "div",
         { class: "diagnostico__blocos" },
-        AREAS.map((a) => blocoItens(a, dados.items)),
-        blocoRede(dados.network, dados.items.filter((i) => i.area === "rede")),
-        blocoBloqueios(dados.blocks),
+        h(
+          "div",
+          { class: "diagnostico__coluna" },
+          blocoItens(AREAS.sistema, dados.items),
+          blocoRede(dados.network, dados.items.filter((i) => i.area === "rede")),
+          blocoSuporte(),
+        ),
+        h("div", { class: "diagnostico__coluna" }, blocoItens(AREAS.adaptadores, dados.items), blocoItens(AREAS.conflitos, dados.items), blocoBloqueios(dados.blocks)),
       ),
   });
 
   function blocoItens(areaDef, items) {
     const meus = items.filter((i) => i.area === areaDef.chave);
-    const outros = areaDef.chave === "conflitos" ? items.filter((i) => !AREAS.some((a) => a.chave === i.area) && i.area !== "rede") : [];
+    const outros = areaDef.chave === "conflitos" ? items.filter((i) => !Object.hasOwn(AREAS, i.area) && i.area !== "rede") : [];
     const lista = [...meus, ...outros];
     return cartao({
       titulo: areaDef.titulo,
@@ -82,18 +87,38 @@ export default function montar({ assinar }) {
         ),
         pares.length === 0
           ? estadoVazio({ titulo: "Nenhum par", texto: "Pareie uma máquina em Dispositivos para ver estado, endereço e latência aqui." })
-          : tabela({
-              legenda: "Pares e rede",
-              colunas: [
-                { chave: "name", rotulo: "Par", render: (p) => h("strong", null, p.name) },
-                { chave: "state", rotulo: "Estado", render: (p) => seloDispositivo(p.state) },
-                { chave: "addr", rotulo: "Endereço", tipo: "mono", render: (p) => p.addr ?? h("span", { class: "muted" }, "sem endereço") },
-                { chave: "rtt", rotulo: "RTT", tipo: "num", render: () => (recurso("peer_rtt") ? "" : indisponivel()) },
-                { chave: "p95", rotulo: "Entrada p50 / p95", tipo: "num", render: () => (recurso("peer_rtt") ? "" : indisponivel()) },
-              ],
-              linhas: pares,
-              chaveLinha: (p) => p.peer_id,
-            }),
+          : [
+              tabela({
+                legenda: "Pares e rede",
+                colunas: [
+                  { chave: "name", rotulo: "Par", render: (p) => h("strong", null, p.name) },
+                  { chave: "state", rotulo: "Estado", render: (p) => seloDispositivo(p.state) },
+                  { chave: "addr", rotulo: "Endereço", tipo: "mono", render: (p) => p.addr ?? h("span", { class: "muted" }, "sem endereço") },
+                  ...(recurso("peer_rtt")
+                    ? [
+                        { chave: "rtt", rotulo: "RTT", tipo: "num", render: () => "" },
+                        { chave: "p95", rotulo: "Entrada p50 / p95", tipo: "num", render: () => "" },
+                      ]
+                    : []),
+                ],
+                linhas: pares,
+                chaveLinha: (p) => p.peer_id,
+              }),
+              !recurso("peer_rtt") && h("p", { class: "nota" }, "RTT e latência de entrada por par: ", indisponivel(), "."),
+            ],
+      ],
+    });
+  }
+
+  function blocoSuporte() {
+    return cartao({
+      titulo: "Pacote de suporte",
+      filhos: [
+        h(
+          "p",
+          { class: "nota" },
+          "Você vê a prévia antes de gravar em Downloads. Identificadores já saem removidos; conteúdo de clipboard, teclas e chaves nunca entram.",
+        ),
       ],
     });
   }
