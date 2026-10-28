@@ -4,9 +4,6 @@ use crate::{msg, text};
 use clipsync_core::{CoreError, Profile, agent};
 use clipsync_proto::{Module, ModuleSet};
 
-/// Input capture/emulation only has an adapter on Linux in this version.
-pub const INPUT_SUPPORTED: bool = cfg!(target_os = "linux");
-
 /// What `run` builds: the configured modules minus what the platform cannot provide.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Plan {
@@ -36,7 +33,7 @@ fn module_err(e: clipsync_proto::ModuleError) -> Fail {
 
 pub async fn run(profile: &Profile) -> Result<(), Fail> {
     let cfg = profile.load_config()?;
-    let plan = plan(cfg.modules, INPUT_SUPPORTED)?;
+    let plan = plan(cfg.modules, clipsync_input::SUPPORTED)?;
     // a disabled module is not built: no adapter loaded, no permission asked, not announced
     let mut modules: Vec<Box<dyn Module>> = Vec::new();
     if plan.input_skipped {
@@ -116,8 +113,8 @@ mod tests {
     #[test]
     fn plan_for_this_platform_matches_its_support() {
         assert_eq!(
-            plan(set(false, true), INPUT_SUPPORTED).is_ok(),
-            INPUT_SUPPORTED
+            plan(set(false, true), clipsync_input::SUPPORTED).is_ok(),
+            clipsync_input::SUPPORTED
         );
     }
 }

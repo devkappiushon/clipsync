@@ -1,5 +1,4 @@
 //! `clipsync init`.
-use crate::agent::INPUT_SUPPORTED;
 use crate::fail::Fail;
 use crate::msg;
 use crate::prompt::Prompter;
@@ -75,11 +74,11 @@ pub fn run<R: BufRead, W: Write>(
         Some(m) => m,
         // input is on by default where an adapter exists (Linux); the clipboard question defaults to NO
         None => ModuleSet {
-            input: INPUT_SUPPORTED,
+            input: clipsync_input::SUPPORTED,
             clipboard: ui.yes_no(msg::ASK_CLIPBOARD, false)?,
         },
     };
-    check_usable(modules, INPUT_SUPPORTED)?;
+    check_usable(modules, clipsync_input::SUPPORTED)?;
     let listen = SocketAddr::from((Ipv4Addr::UNSPECIFIED, args.port.unwrap_or(DEFAULT_PORT)));
     let identity = profile.init(InitOptions {
         device_name: name.clone(),
