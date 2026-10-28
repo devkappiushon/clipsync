@@ -1,4 +1,4 @@
-# Contrato · ClipSync MVP de hoje (v1.21, Keel, 2026-10-28)
+# Contrato · ClipSync MVP de hoje (v1.22, Keel, 2026-10-28)
 
 v1.1: identidade passa de Ed25519 para ECDSA P-256 (§3 e §5 regra 1; motivo na ADR 0003).
 v1.2: seis ajustes do Rivet no proto aceitos (§4: sha2, IdError, SendError com #[error], ordem de autorização, MemHub, validate); consequência no §8 regra 2 (módulo input confere dono da sessão).
@@ -26,6 +26,7 @@ v1.18 (Maestro, a partir do 7c770ef do Rivet): §12.6, item 6 da revogação. Co
 v1.19 (decisões do Maestro, 2026-10-28, achados S6-18 e S6-19 do Sentinel em 0f0b312): §12.5, o `layout_offer_answer` recebe `from_peer_id` e `rev` da oferta exibida, e oferta trocada dá `stale_offer` (490335f do Vector). §12.6, teto de 1.000.000 em `x` e `y` no `Layout::validate` (e4e6308).
 v1.20 (decisão do Maestro, 2026-10-28): até o usuário escolher a licença, o texto exibido é "Todos os direitos reservados" no `Prefs.license` (§12.5) e no README, no lugar de "a definir" (§11 regra 9).
 v1.21 (Keel, a partir do d43a13b do Rivet, S6-21 do Sentinel): §12.6, item 6 da revogação. O registro "recusou a conexão" só vale quando o par provou a identidade; um texto de fechamento sem essa prova não registra nada.
+v1.22 (decisão do Maestro, 2026-10-28, rodada de fidelidade ao Figma): §12.1, as telas Clipboard, Diagnóstico e Preferências do front passam ao Flux, e a tela Layout ao Vector; o Pixel fica com o resto de `ui/` e de `ui-dev/`, inclusive os arquivos compartilhados. §12.9 item 5 ganha o tamanho da comparação (1280×800) e a regra das colunas.
 
 Fonte: docs/prompt-mestre.md v4 (§1, §2, §5, §6, §13, §14). Este contrato vence qualquer suposição de builder. Dúvida: `maestri ask "Keel · esqueleto" "..."`. Mudança de contrato: Keel edita AQUI primeiro, depois avisa.
 
@@ -913,6 +914,15 @@ crates/clipsync-app/ui/       frontend estático (HTML, CSS, JS puros), fonts/; 
 crates/clipsync-app/ui-dev/   mock.js, mock/ e a galeria (componentes.html, js/galeria.js), fora do frontendDist (v1.17)   [Pixel]
 ```
 v1.17: nesta rodada de correções da S6, `prefs.rs` e `diag.rs` do `clipsync-ui` passam do Rivet ao Flux, com os testes deles (`tests/prefs.rs` e `tests/diag.rs`).
+v1.22: na rodada de fidelidade ao Figma (§12.9 item 5), o front fica assim:
+```
+crates/clipsync-app/ui/js/telas/{clipboard,diagnostico,preferencias}.js     [Flux]
+crates/clipsync-app/ui/css/telas/{clipboard,diagnostico,preferencias}.css  [Flux]
+crates/clipsync-app/ui/js/telas/layout.js e ui/css/telas/layout.css         [Vector]
+crates/clipsync-app/ui/   todo o resto, inclusive os compartilhados: index.html, css/{tokens,app,components,fonts}.css, js/*.js fora de telas/, fonts/   [Pixel]
+crates/clipsync-app/ui-dev/**                                                [Pixel]
+```
+Quem precisa mudar um arquivo compartilhado (token, componente, `app.js`, mock) pede ao Pixel e não edita. As regras da §12.2 e da §12.7 (Pixel) valem para os três donos.
 Grafo: ui -> core + clipboard + input; app -> ui + tauri. O grafo da cli não muda.
 Fora dos crates novos: Rivet `clipsync-proto/**` e `clipsync-core/**`; Flux `clipsync-clipboard/**` e `clipsync-cli/**`; Vector `clipsync-input/**`; Maestro `Cargo.toml` raiz, `Cargo.lock`, `.github/workflows/**`, `README.md`, release, instalação local e `scripts/servir-ui-dev.py` (servidor de dev, v1.17); Keel `docs/contrato.md`, `docs/workboard.md`, `docs/telas.md`, `docs/decisoes/**`. Argus dá o veredito por tela e pelo artefato. Sentinel revisa a webview e a superfície de comandos. Git: igual à §11 regra 12.
 
@@ -1232,6 +1242,7 @@ Comandos da raiz, com `export PATH=$HOME/.cargo/bin:$PATH`.
    - CI: `cargo clippy -p clipsync-app --all-targets --locked -- -D warnings` verde nos dois runners.
 5. **Pixel (critério b):**
    - as 9 telas (3 passos do onboarding mais 6), nos temas claro e escuro, no portal com o mock, cada uma capturada ao lado do quadro do Figma, com veredito do Argus;
+   - (v1.22) a captura é em 1280×800, o tamanho da janela (§12.7 Flux item 1), e a disposição segue o quadro: o que o Figma põe em duas colunas ou numa faixa lado a lado não sai empilhado numa coluna só. Referências do Maestro, app e Figma lado a lado: `~/.cache/clipsync-telas-ref/pares/<tela>-<tema>.png` (fora do repositório). Cada tela responde ao dono dela na §12.1;
    - `grep -rnE 'innerHTML|style=' crates/clipsync-app/ui` não acha nada, e todo `<script>` tem `src`;
    - `grep -rn '—' crates/clipsync-app/ui` não acha nada em texto de interface;
    - nenhuma requisição fora da origem no log do portal; `document.fonts` mostra Inter, Geist e Geist Mono carregadas;
@@ -1264,3 +1275,4 @@ Comandos da raiz, com `export PATH=$HOME/.cargo/bin:$PATH`.
 16. Maestro (v1.19): a resposta à oferta de layout diz qual oferta o usuário viu (`from_peer_id` e `rev`), e oferta trocada dá `stale_offer` (código do Vector). O teto de posição de 1.000.000 fica no `Layout::validate`, para valer em todo caminho.
 17. Maestro (v1.20): até o usuário escolher a licença, o app e o README exibem "Todos os direitos reservados" (Flux no `prefs.rs`, Pixel no mock, Maestro no README).
 18. Keel (v1.21): o registro do lado recusado (decisão 15) exige par com identidade provada, pino e assinatura do handshake (S6-21, d43a13b).
+19. Maestro (v1.22): rodada de fidelidade ao Figma. O Maestro comparou as 9 telas em 1280×800 com os quadros, e o app empilha numa coluna o que o Figma põe em duas. A posse do front se divide por tela (§12.1): Flux com Clipboard, Diagnóstico e Preferências; Vector com Layout; Pixel com o resto e os compartilhados. Keel: §12.9 item 5 ganha o tamanho da captura e a regra das colunas.
