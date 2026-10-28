@@ -129,6 +129,16 @@ async fn diagnostics_show_the_keyboard_layout_and_on_windows_the_shortcuts() {
     })
     .await;
     let d = ok(&ui, json!({ "cmd": "diagnostics_get" })).await;
+    // One item per name: the input crate names them too on Windows (CI 40757283200).
+    for name in ["layout do teclado", "atalhos"] {
+        let n = d["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["area"] == json!("input") && i["name"] == json!(name))
+            .count();
+        assert!(n <= 1, "{name} shows {n} times");
+    }
     let keyboard = item(&d, "layout do teclado").expect("keyboard layout item");
     assert_ne!(keyboard["detail"], json!("agente parado"), "{keyboard}");
     let shortcuts = item(&d, "atalhos");

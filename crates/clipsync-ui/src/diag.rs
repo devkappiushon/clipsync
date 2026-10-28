@@ -196,6 +196,15 @@ fn shortcuts_item(agent_running: bool, input_on: bool, local_link: bool) -> Diag
     input_item(msg::DIAG_SHORTCUTS, status, detail.to_string())
 }
 
+/// `clipsync_input::diagnose()` names "layout do teclado" and "atalhos" too on Windows, without
+/// the agent: its "atalhos" is always ok. Ours carry the agent's state (§13.9), so they replace
+/// the input items of the same name, and each name shows once.
+fn with_agent_state(mut items: Vec<DiagItem>, ours: Vec<DiagItem>) -> Vec<DiagItem> {
+    items.retain(|i| !ours.iter().any(|o| o.area == i.area && o.name == i.name));
+    items.extend(ours);
+    items
+}
+
 /// Whether `layout.toml` links a monitor of this machine. An unreadable file links nothing.
 fn has_local_link(ctx: &Ctx) -> bool {
     let me: Option<PeerId> = ctx.profile.load_identity().ok().map(|i| i.id());
@@ -215,22 +224,22 @@ struct Gathered {
 }
 
 async fn gather(ctx: &Ctx) -> Gathered {
-    let mut items = checks().await;
     let observed = status::observe(ctx).await;
     let status = observed.status;
-    items.push(keyboard_item(status.is_some(), observed.input.as_ref()));
+    let mut ours = vec![keyboard_item(status.is_some(), observed.input.as_ref())];
     if cfg!(windows) {
         let input_on = status.as_ref().is_some_and(|s| {
             s.modules
                 .iter()
                 .any(|m| m.kind == ModuleKind::Input && m.enabled)
         });
-        items.push(shortcuts_item(
+        ours.push(shortcuts_item(
             status.is_some(),
             input_on,
             has_local_link(ctx),
         ));
     }
+    let items = with_agent_state(checks().await, ours);
     let cfg = ctx.profile.load_config().ok();
     let peers = ctx.profile.load_peers().unwrap_or_default();
     let devices: Vec<Device> = peers
@@ -733,6 +742,42 @@ mod tests {
         assert_eq!(ok("00000409").detail, "00000409 · EUA");
         assert_eq!(ok("br(abnt2)").detail, "br(abnt2)");
         assert_eq!(ok("br(abnt2)").status, ItemStatus::Ok);
+    }
+
+    /// CI 40757283200 (8cc14c4, Windows): the input crate's own "atalhos" (always ok) came first,
+    /// so the screen showed the shortcuts active without a local link.
+    #[test]
+    fn the_agent_state_items_replace_the_input_crate_items_of_the_same_name() {
+        let theirs = |name: &str| input_item(name, ItemStatus::Ok, "do crate de input".into());
+        let checks = vec![
+            input_item("captura", ItemStatus::Ok, "win-hooks".into()),
+            theirs("layout do teclado"),
+            theirs("atalhos"),
+        ];
+        let ours = vec![
+            keyboard_item(false, None),
+            shortcuts_item(true, true, false),
+        ];
+        let items = with_agent_state(checks, ours);
+        let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, ["captura", "layout do teclado", "atalhos"]);
+        assert_eq!(items[1].detail, "agente parado");
+        assert_eq!(
+            (items[2].status, items[2].detail.as_str()),
+            (
+                ItemStatus::Warn,
+                "inativos: nenhuma ligação desta máquina no layout"
+            )
+        );
+        // Another area with the same name stays.
+        let other = DiagItem {
+            area: "sistema".into(),
+            ..theirs("atalhos")
+        };
+        assert_eq!(
+            with_agent_state(vec![other], vec![shortcuts_item(true, true, true)]).len(),
+            2
+        );
     }
 
     #[test]
