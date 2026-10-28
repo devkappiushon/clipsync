@@ -4,6 +4,8 @@
 //! temporários, 127.0.0.1 e adaptadores fake: o monitor de cada lado é o `fake-0` de 1920x1080.
 //! Owned by Vector.
 
+// Input exists only on Linux in this version; `layout_windows.rs` covers the other side.
+#![cfg(target_os = "linux")]
 // Helpers outside #[test] fns are test code too; clippy.toml's allow-*-in-tests does not reach them.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
