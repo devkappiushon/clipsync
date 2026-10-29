@@ -2,25 +2,33 @@
 
 ## Estado atual · retomada S8 em 2026-10-28
 
-**Etapa posterior: preparando v0.3.1 a pedido do usuário.** Commit da S8 autorizado, versão/lockfile/notas preparados para CI Linux/Windows e empacotamento manual. A evidência abaixo é da implementação local; a publicação da tag continua sujeita à confirmação de AGENTS.md.
+**v0.3.1 publicada após autorização do usuário (“publique”).** S8 commitada em `f700caa` e enviada à main. CI Linux/Windows aprovado na run `40783057611`; empacotamento manual aprovado na run `40783058074`. A tag `v0.3.1` foi enviada para o mesmo commit. Release: https://github.com/devkappiushon/clipsync/releases/tag/v0.3.1. Os seis artefatos aprovados da run `40783058074` foram publicados pela CLI do GitHub com SHA256SUMS; os sete digests remotos conferem e o SHA256SUMS baixado confirmou 6/6 OK; a recompilação duplicada `40789025116` foi cancelada pelo Maestro, sem falha de build. A instalação e a travessia física continuam pendentes.
 
-A fonte de verdade permanece `docs/contrato.md` e este workboard. As notas atualmente conectadas no Maestri são de outro projeto e não foram alteradas. `CONTEXTO.md` de 07:54 descrevia a S6; foi anotado como histórico anterior à S7. As seções antigas abaixo preservam o registro de cada rodada.
+A fonte de verdade permanece `docs/contrato.md` e este workboard. Na retomada, o CLI herdava a identidade de outro terminal e mostrava notas de outro contexto; essa limitação foi diagnosticada após o usuário confirmar a troca de Claude para Codex. Os comandos desta sessão passaram a selecionar o próprio Maestro · scaffold já autorizado, sem alterar permissões. As notas corretas do ClipSync foram então atualizadas com o estado publicado e a fonte comum docs/contexto-equipe.md. `CONTEXTO.md` de 07:54 descrevia a S6; foi anotado como histórico anterior à S7. As seções antigas abaixo preservam o registro de cada rodada.
 
-- Base da retomada: `48f257f`; release mais recente documentado: v0.3.0. Handoff registra critérios 1 a 7 da S7 aprovados; roteiro real (§13.12, critério 8) e perguntas §13.14 continuam pendentes.
+- Base da retomada: `48f257f`; release mais recente: v0.3.1 no commit `f700caa`. Handoff registra critérios 1 a 7 da S7 aprovados; roteiro real (§13.12, critério 8) e perguntas §13.14 continuam pendentes.
 - S7-08: implementação já corrigida em `b683c56` (guarda antes da recriação e remoção dos hooks depois do join). Menções “aberto” abaixo são do histórico anterior a esse commit, não autorização para repetir a correção.
 - O usuário confirmou notebook Linux 0.2.1 e PC Windows 0.3.0 e informou que está atualizando o Linux; atualização concluída e travessia ainda não foram verificadas. A causa do mouse não atravessar no PC ainda não está confirmada. Solicitadas ao usuário as saídas de `--version`, `status`, `diagnose` e a existência de ligação no Layout do Windows. Não há acesso direto ao PC.
 
+### Alinhamento dos andares após o release
+
+O usuário conectou os quatro coordenadores ao Maestro · scaffold: SEG & COMPLIANCE (Maestro), Acess. (Maestro #2), UX & UI (Maestro #3) e DOC (Maestro #4). Todos compartilham o mesmo diretório. Fonte comum: docs/contexto-equipe.md.
+
+Criada a nota ClipSync · contexto comum e ligada aos oito colegas do térreo. As dez notas locais dos quatro andares receberam contexto, versão publicada, fonte de verdade, foco e limites, preservando seus modelos. Os coordenadores ligaram as notas às próprias equipes e confirmaram leitura. Verificação independente da topologia: Segurança 3×5=15 ligações; Acessibilidade 2×5=10; UX/UI 3×5=15; DOC 2×5=10. Total: 50 ligações de notas para 20 agentes. Evidência local: /tmp/clipsync-andar-verificacao.json.
+
+Essa etapa apenas alinhou o contexto. Não abriu implementação, auditoria ou revisão visual; novas tarefas por andar dependem dos prompts posteriores do usuário.
+
 ### S8 · diagnóstico e configuração da travessia
 
-Contrato v1.34, §14; plano: `docs/superpowers/plans/2026-10-28-travessia.md`. Escopo concluído no código e na validação local: problema do mouse e seis melhorias do handoff, com posição relativa simples como Input Leap e editor de bordas opcional em Avançado. Sem commit, push, tag, release ou instalação nesta rodada. A causa do problema no PC do usuário e a travessia física continuam sem confirmação.
+Contrato v1.34, §14; plano: `docs/superpowers/plans/2026-10-28-travessia.md`. Escopo concluído no código e na validação local: problema do mouse e seis melhorias do handoff, com posição relativa simples como Input Leap e editor de bordas opcional em Avançado. Código commitado em `f700caa`, com CI aprovado e tag enviada conforme a autorização posterior. Instalação ainda não verificada. A causa do problema no PC do usuário e a travessia física continuam sem confirmação.
 
 | Fatia | Dono | Estado e evidência |
 |---|---|---|
 | S8-A · estado de saída compartilhado | backend | Implementada e aprovada pelo warden: tabela de condições conservadora, AppState antigo em checking, histórico separado e input_in local sem bloquear saída; 10 testes dirigidos de traversal passaram (§14.7.1). |
 | S8-B · ligação simples, vazio, protocolo e teste explicado | frontend | Implementada e aprovada no código/simulador: posição persistida, ligação única atualizada, monitor externo alinhado, trechos livres sem cantos mortos, editor avançado opcional, protocolo numérico e zero eventos inconclusivo; 22 testes JS e portal (§14.7.2). |
-| S8-C · diagnose com perfil e bandeja | backend | Implementada: helper CLI/UI único, evento traversal_changed e resync da bandeja. Contexto testado no Linux; clippy cruzado Windows passou. Casca Tauri e execução Windows não verificadas (§14.7.3). |
+| S8-C · diagnose com perfil e bandeja | backend | Implementada: helper CLI/UI único, evento traversal_changed e resync da bandeja. Contexto testado no Linux; clippy cruzado Windows passou. Tauri e testes nativos Windows aprovados no CI; execução real da bandeja/atalhos permanece manual (§14.7.3). |
 | S8-D · teste de entrada encerra ao bloquear origem | input | Implementada e revisada: os dois testes com FakeCapture/FakeEmulate/MemHub passaram novamente pelo warden, liberando pressionados e descartando eventos posteriores ao lock (§14.7.4). |
-| S8-R · revisão e integração | warden/segurança/Maestro | Concluída nos alvos locais: 441 testes passaram, 0 falhas, 3 ignorados; fmt, clippy, cross Windows e scripts verdes. S8-W1/W2/W3 corrigidos. Seções novas em verdicts/seguranca; limites abaixo (§14.7.5/6). |
+| S8-R · revisão e integração | warden/segurança/Maestro | Concluída localmente e no CI: local 441/0/3; CI Linux 465/0/3 e Windows 445/0/1 (passaram/falharam/ignorados); fmt, clippy, cross Windows e scripts verdes. S8-W1/W2/W3 corrigidos. Seções novas em verdicts/seguranca; limites abaixo (§14.7.5/6). |
 | S8-M · travessia nas máquinas reais | usuário + Maestro | Pendente: saídas do Windows, atualização instalada no notebook e roteiro real; simulador não substitui esta prova (§14.7.7). |
 
 Evidência final de 2026-10-28: `cargo test --locked --workspace --exclude clipsync-app` terminou com **441 passaram, 0 falhas, 3 ignorados**; inclui clipsync-ui, ausente dos default-members. `cargo fmt --all --check` e `cargo clippy --workspace --exclude clipsync-app --all-targets --locked -- -D warnings`: código 0. A checagem cruzada `cargo clippy --target x86_64-pc-windows-gnu -p clipsync-input -p clipsync-win -p clipsync-ui -p clipsync-cli --all-targets --locked -- -D warnings`, com CC/AR definidos como true, terminou com código 0. Logs `/tmp/clipsync-s8-final-{tests,fmt,clippy,windows}.log`, conferidos pelo warden. Scripts: unsafe isolado e privacidade dos hooks ok (8 arquivos). JS: 17 casos de helpers, 2 de contrato do mock e 3 de oferta passaram; sintaxe dos 33 arquivos JS válida.
@@ -29,7 +37,7 @@ O Maestro validou no portal a ligação pelo clique, troca de posição preserva
 
 RED da S8-D informado pelo implementador: antes da correção, duas falhas e 1/4 eventos entregues apesar do lock; depois, 2/2 passam. Não há log RED persistido conferido pelo warden. O GREEN foi reexecutado independentemente, junto aos testes de traversal e diagnóstico. RED de traversal (null em vez de no_local_link) e CLI (item contextual ausente) também informado pelo backend; GREEN independente registrado em `docs/verdicts.md`.
 
-Limites: Tauri não compila localmente por falta de headers WebKitGTK; testes nativos cfg(windows), hooks/SendInput, permissões reais de portal e CI desta alteração não foram executados. O pacote instalado no notebook ainda consta 0.2.1 na evidência local; o usuário informou atualização em andamento, sem confirmação de conclusão. Não declarar mouse real corrigido até o roteiro. Observação visual menor de rótulo do terceiro PC cruzando borda no desenho está registrada no veredito.
+Limites: Tauri não compila localmente por falta de headers WebKitGTK, mas compilou/testou no CI, junto aos testes nativos cfg(windows). Interação real de hooks/SendInput com as máquinas do usuário, permissões reais de portal e travessia física continuam sem verificação. A última evidência local do pacote do notebook registra 0.2.1; o usuário informou atualização em andamento, sem confirmação de conclusão. Não declarar mouse real corrigido até o roteiro. Observação visual menor de rótulo do terceiro PC cruzando borda no desenho está registrada no veredito.
 
 Backlog S1/S5, licença, terceiro PC, centralização de `write_private` e instaladores Windows reais continuam pendentes. Esta rodada não os declara concluídos.
 

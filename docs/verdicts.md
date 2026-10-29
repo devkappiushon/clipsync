@@ -4346,3 +4346,28 @@ O warden revisou versão, lockfile, notas e workflow. Oito crates em 0.3.1, depe
 O Maestro executou `cargo test --workspace --exclude clipsync-app --locked -j 2`: 441 passaram, 0 falharam e 3 ignorados, saída 0. `node --test crates/clipsync-app/ui-dev/testes/*.test.mjs`: 22 passaram e 0 falharam. `cargo fmt --all --check`, os scripts de unsafe e privacidade e `git diff --check` passaram. `target/debug/clipsync --version` respondeu `clipsync 0.3.1`. Logs locais: `/tmp/clipsync-v031-tests.log` e `/tmp/clipsync-v031-js.log`.
 
 CI completo, empacotamento, publicação e instalação permanecem posteriores a este registro; não há alegação de travessia física validada.
+
+
+## Publicação da v0.3.1 e validação no CI
+
+O usuário autorizou a publicação com “publique”. Tag anotada `v0.3.1` aponta para `f700caacd3ff94e058bbd2e3ac62baa8ee24831f`, o mesmo commit do CI e do empacotamento manual aprovados.
+
+- CI `40783057611`: Linux e Windows concluídos com success. Logs: Linux 465 passaram, 0 falhas e 3 ignorados; Windows 445 passaram, 0 falhas e 1 ignorado. Inclui Tauri e testes nativos cfg(windows), além de fmt/clippy/scripts. Log local `/tmp/clipsync-v031-ci.log`.
+- Empacotamento manual `40783058074`: builds Linux/Windows aprovados, publicação pulada por workflow_dispatch. Seis pacotes gerados no CI e baixados. CLI Linux respondeu `clipsync 0.3.1`; metadata do .deb confirmou 0.3.1; ZIP Windows íntegro; logs Tauri confirmaram 0.3.1 nos quatro instaladores.
+- A execução duplicada por push da tag `40789025116` foi cancelada pelo Maestro durante a compilação, sem falha de build. A publicação promoveu os mesmos artefatos do empacotamento aprovado, preservando seus bytes.
+- Release criado como rascunho com `--verify-tag`, notas da própria tag, seis pacotes e SHA256SUMS. Antes de publicar, todos os sete assets tinham state uploaded, tamanho esperado e digest SHA-256 do GitHub igual ao arquivo local; tag, commit e notas conferidos.
+- Publicado como latest, sem draft ou prerelease, em 2026-10-28T23:54:49Z: https://github.com/devkappiushon/clipsync/releases/tag/v0.3.1. Metadata conferida pela API.
+- `gh release download v0.3.1 --repo devkappiushon/clipsync --pattern SHA256SUMS --dir /tmp/clipsync-v031-publicado`, seguido de `sha256sum -c /tmp/clipsync-v031-publicado/SHA256SUMS` sobre os seis arquivos enviados: **6 de 6 OK**, saída 0. Metadata local `/tmp/clipsync-v031-release-publicado.json`.
+
+As provas manuais da S8 e da S7 continuam pendentes: instalação nas máquinas do usuário, permissões reais do portal, comportamento físico de hooks/SendInput e travessia Windows/Linux. O CI não demonstra a causa do relato “o mouse não passa” nem encerra o roteiro §13.12. Nenhum perfil do usuário foi alterado, nenhum instalador foi executado e nenhum diálogo de permissão foi aceito.
+
+
+## Alinhamento do contexto entre os andares
+
+A pedido do usuário, o Maestro preparou docs/contexto-equipe.md e a nota comum do térreo, atualizou as entradas históricas de feature-spec/workboard e contextualizou dez notas dos quatro andares. Conteúdos anteriores preservados.
+
+Após a troca de Claude para Codex, o CLI herdava o identificador de outro terminal. O usuário confirmou o nome Maestro · scaffold e o modo Maestro já ativo. A metadata do próprio workspace confirmou nome, diretório, função atribuída e permissão existente; os comandos desta sessão passaram a usar apenas a identidade desse mesmo terminal. Nenhuma permissão ou identidade de outro agente foi alterada. O coordenador de Segurança confirmou a mesma correção no próprio contexto.
+
+O usuário criou as quatro ligações iniciais exigidas pelo limite de alcance do CLI. `maestri list` confirmou acesso aos quatro coordenadores e às suas notas. Cada coordenador ligou as notas à própria equipe e confirmou leitura da fonte comum. Verificação independente das conexões salvas: SEG & COMPLIANCE 15/15, Acess. 10/10, UX & UI 15/15, DOC 10/10. Total 50/50, vinte agentes. Oito colegas do térreo têm conexão com ClipSync · contexto comum.
+
+Esta prova cobre a distribuição do contexto e a leitura pelos quatro coordenadores. Não é revisão do app nem afirmação de leitura individual dos outros dezesseis agentes. Nenhum código, servidor ou auditoria foi iniciado nessa etapa.

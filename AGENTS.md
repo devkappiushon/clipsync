@@ -4,7 +4,7 @@ Instruções para agentes de código (Codex e outros) neste repositório. Leia i
 
 ## O projeto
 
-ClipSync compartilha teclado, mouse e área de transferência entre os computadores do usuário, num app só, sem servidor central, para substituir o Input Leap. Rust (workspace com 8 crates), app de desktop em Tauri 2, Linux (GNOME Wayland) e Windows. Versão publicada mais nova: **v0.3.0**.
+ClipSync compartilha teclado, mouse e área de transferência entre os computadores do usuário, num app só, sem servidor central, para substituir o Input Leap. Rust (workspace com 8 crates), app de desktop em Tauri 2, Linux (GNOME Wayland) e Windows. Versão publicada mais nova: **v0.3.1**.
 
 ## Comece por aqui
 
@@ -12,6 +12,7 @@ ClipSync compartilha teclado, mouse e área de transferência entre os computado
 2. `docs/contrato.md`: contrato vinculante por fatia (§11 S5 Windows e release, §12 S6 interface, §13 S7 layout de telas). Mudança de comportamento, API pública, protocolo ou dependência é mudança de contrato: registre na seção da fatia, no mesmo trabalho.
 3. `docs/workboard.md`: commits, critérios e pendências por fatia.
 4. `docs/seguranca.md` (revisões de segurança) e `docs/verdicts.md` (vereditos de critério): uma seção nova por rodada, nunca reescrever as antigas.
+5. `docs/contexto-equipe.md`: entrada comum dos andares, objetivo atual, fonte de verdade e limites de atuação. Todos os andares compartilham o mesmo diretório; combine posse de arquivos com o Maestro antes de editar.
 
 ## Como o usuário quer que você trabalhe
 
