@@ -7,7 +7,7 @@ use std::{
     future::Future,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 use tokio::sync::{Notify, mpsc, oneshot};
@@ -20,6 +20,7 @@ pub(crate) struct Handle {
     pub starts: AtomicUsize,
     pub joined: AtomicUsize,
     pub releasing: Notify,
+    pub release_open: AtomicBool,
     pub release: Notify,
     pub blocked: Notify,
 }
@@ -131,7 +132,9 @@ impl CaptureAdapter for Capture {
     }
     async fn release(&mut self) -> Result<(), InputError> {
         self.handle.releasing.notify_one();
-        self.handle.release.notified().await;
+        if !self.handle.release_open.load(Ordering::SeqCst) {
+            self.handle.release.notified().await;
+        }
         Ok(())
     }
     async fn stop(&mut self) -> Result<(), InputError> {

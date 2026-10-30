@@ -796,10 +796,10 @@ async fn request_pause_pauses_both_modules_like_the_control() {
 
 /// §12.9 item 1 (e) and §13.11 item 1 (e): a 0.1.0 agent accepts a Hello when
 /// `version >= 1 && 1 >= min_version` (its MIN and PROTOCOL were both 1), a 0.2.x agent when
-/// `version >= 1 && 2 >= min_version`. Ours (3, minimum 1) passes both, and we still accept a
+/// `version >= 1 && 2 >= min_version`. Ours (4, minimum 1) passes both, and we still accept a
 /// 0.1.0 and a 0.2.x Hello.
 #[test]
-fn hello_v3_passes_the_0_1_0_and_0_2_x_compatibility_rules() {
+fn hello_v4_passes_the_0_1_0_and_0_2_x_compatibility_rules() {
     let v010 = |h: &Hello| h.version >= 1 && 1 >= h.min_version;
     let v02x = |h: &Hello| h.version >= 1 && 2 >= h.min_version;
     let ours = Hello {
@@ -809,10 +809,10 @@ fn hello_v3_passes_the_0_1_0_and_0_2_x_compatibility_rules() {
         modules: ModuleSet::default(),
         listen_port: 47800,
     };
-    assert_eq!((ours.version, ours.min_version), (3, 1));
+    assert_eq!((ours.version, ours.min_version), (4, 1));
     assert!(v010(&ours) && v02x(&ours));
     assert!(clipsync_core::transport::hello_compatible(&ours));
-    for version in [1, 2] {
+    for version in [1, 2, 3] {
         let old = Hello {
             version,
             min_version: 1,
@@ -821,8 +821,8 @@ fn hello_v3_passes_the_0_1_0_and_0_2_x_compatibility_rules() {
         assert!(clipsync_core::transport::hello_compatible(&old));
     }
     let future = Hello {
-        version: 4,
-        min_version: 4,
+        version: 5,
+        min_version: 5,
         ..ours
     };
     assert!(!clipsync_core::transport::hello_compatible(&future));

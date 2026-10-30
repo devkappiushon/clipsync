@@ -25,7 +25,11 @@ pub(crate) fn connected_outputs() -> Vec<String> {
 /// single monitor; a multi-monitor desktop gets the real geometry once a capture session exists.
 #[cfg(target_os = "linux")]
 pub(crate) fn sysfs_zones() -> Vec<super::Zone> {
-    let Ok(dir) = std::fs::read_dir("/sys/class/drm") else {
+    sysfs_zones_at(std::path::Path::new("/sys/class/drm"))
+}
+
+pub(crate) fn sysfs_zones_at(root: &std::path::Path) -> Vec<super::Zone> {
+    let Ok(dir) = std::fs::read_dir(root) else {
         return Vec::new();
     };
     let mut found: Vec<(String, u32, u32)> = dir
@@ -58,7 +62,7 @@ pub(crate) fn sysfs_zones() -> Vec<super::Zone> {
                 height,
                 scale: 1.0,
             };
-            x += width as i32;
+            x = x.saturating_add(i32::try_from(width).unwrap_or(i32::MAX));
             z
         })
         .collect()

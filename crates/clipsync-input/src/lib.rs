@@ -113,3 +113,7 @@ fn windows_emulate() -> Result<Box<dyn EmulateAdapter>, ModuleError> {
 #[cfg(test)]
 #[path = "../tests/support/stop_capture.rs"]
 mod stop_capture;
+
+pub mod inventory;
+pub mod route_session;
+pub mod route_track;

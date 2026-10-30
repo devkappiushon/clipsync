@@ -1,5 +1,6 @@
 //! IPC CLI <-> agent. Unix socket DIR/agent.sock, frame = u32 BE + JSON (serde_json),
 //! max MAX_FRAME_BYTES. One request, one response, close.
+use crate::organization::*;
 
 use std::fmt;
 use std::net::SocketAddr;
@@ -169,6 +170,23 @@ pub enum ModuleCommand {
         to: Vec<PeerId>,
     },
     InputOfferClear,
+    InputPrepareInventory,
+    InputPreviewOrganization(OrganizationRequest),
+    InputApplyOrganization(OrganizationRequest),
+    InputRestoreLayoutV1 {
+        base_rev: u64,
+    },
+    InputSuspendOrganization,
+    InputOfferV4 {
+        to: Vec<PeerId>,
+    },
+    InputAnswerOfferV4 {
+        from: PeerId,
+        connection: u64,
+        rev: u64,
+        base_rev: u64,
+        accept: bool,
+    },
 }
 
 impl fmt::Debug for ModuleCommand {
@@ -204,11 +222,20 @@ impl fmt::Debug for ModuleCommand {
             ModuleCommand::InputOffer { to } => {
                 f.debug_struct("InputOffer").field("to", to).finish()
             }
+            ModuleCommand::InputPrepareInventory => f.write_str("InputPrepareInventory"),
+            ModuleCommand::InputPreviewOrganization(_) => f.write_str("InputPreviewOrganization"),
+            ModuleCommand::InputApplyOrganization(_) => f.write_str("InputApplyOrganization"),
+            ModuleCommand::InputRestoreLayoutV1 { .. } => f.write_str("InputRestoreLayoutV1"),
+            ModuleCommand::InputSuspendOrganization => f.write_str("InputSuspendOrganization"),
+            ModuleCommand::InputOfferV4 { .. } => f.write_str("InputOfferV4"),
+            ModuleCommand::InputAnswerOfferV4 { .. } => f.write_str("InputAnswerOfferV4"),
             ModuleCommand::InputOfferClear => f.write_str("InputOfferClear"),
         }
     }
 }
 
+// Preserve the existing Rust IPC reply API; boxing InputState would change its callers.
+#[allow(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ModuleReply {
     Status(ModuleStatus),
@@ -221,11 +248,20 @@ pub enum ModuleReply {
     ClipApplied(DeliveryState),
     InputState(InputState),
     InputOffered(Vec<OfferOutcome>),
+    OrganizationPreview(OrganizationPreview),
+    OrganizationApplied(OrganizationApplied),
+    OrganizationFailure(OrganizationFailure),
 }
 
 /// What the input module knows of the layout right now (answer to `InputState`).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct InputState {
+    #[serde(default)]
+    pub inventories: Vec<LiveInventory>,
+    #[serde(default)]
+    pub inventory_problem: Option<String>,
+    #[serde(default)]
+    pub pending_monitor_offer: Option<PendingMonitorOffer>,
     pub local: Vec<ZoneInfo>,
     /// Last `Zones` of each peer.
     pub peers: Vec<PeerZones>,

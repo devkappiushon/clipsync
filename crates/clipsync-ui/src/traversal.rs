@@ -276,6 +276,9 @@ mod tests {
     }
     fn input() -> InputState {
         InputState {
+            inventories: vec![],
+            inventory_problem: None,
+            pending_monitor_offer: None,
             local: vec![],
             peers: vec![],
             screen_locked: false,

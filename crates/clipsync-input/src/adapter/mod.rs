@@ -117,6 +117,14 @@ pub trait CaptureAdapter: Send + 'static {
     fn lifecycle_receiver(&self) -> Option<tokio::sync::watch::Receiver<CaptureLifecycle>> {
         None
     }
+    fn known_monitor_observation(&self) -> Result<crate::inventory::ObservedMonitors, InputError> {
+        Err(crate::inventory::unavailable())
+    }
+    async fn prepare_monitor_observation(
+        &mut self,
+    ) -> Result<crate::inventory::ObservedMonitors, InputError> {
+        Err(crate::inventory::unavailable())
+    }
     /// Installs barriers and starts delivering events. A portal dialog may appear here.
     async fn start(
         &mut self,

@@ -9,10 +9,15 @@ use crate::adapter::{
 use crate::config::{map_pos, zone_ref};
 use crate::layout::trim_dead_corner;
 use crate::msg;
+use crate::{
+    inventory::{InventoryCatalog, ObservedMonitors},
+    route_session::{RoutePlan, RouteSession},
+};
 use clipsync_proto::{
     Edge, EventId, InputDatagram, InputEvent, InputMsg, ModuleHost, ModuleMsg, PeerId,
     RejectReason, SendError, ZoneInfo,
 };
+use clipsync_proto::{InventoryStamp, ReceiveContext, ReturnedRoute};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
@@ -92,7 +97,58 @@ pub(crate) struct Target {
     pub remote: (f32, f32),
 }
 
+/// Cleanup transferred to State, which polls it only outside layout transactions.
+#[derive(Clone, Default)]
+pub(crate) struct DeferredCleanup {
+    queue: Arc<std::sync::Mutex<Vec<Sending>>>,
+    count: Arc<std::sync::atomic::AtomicUsize>,
+}
+impl DeferredCleanup {
+    fn push(&self, future: Sending) {
+        struct Count(Arc<std::sync::atomic::AtomicUsize>);
+        impl Drop for Count {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let count = Count(self.count.clone());
+        self.queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(Box::pin(async move {
+                let _count = count;
+                future.await
+            }));
+    }
+    pub fn take(&self) -> Vec<Sending> {
+        std::mem::take(&mut *self.queue.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+    fn busy(&self) -> bool {
+        self.count.load(std::sync::atomic::Ordering::SeqCst) != 0
+    }
+}
+
 pub(crate) enum Ctl {
+    KnownInventory {
+        reply: oneshot::Sender<Result<ObservedMonitors, InputError>>,
+    },
+    Quiesce {
+        reply: oneshot::Sender<Result<(), InputError>>,
+    },
+    Ready {
+        reply: oneshot::Sender<bool>,
+    },
+    PrepareInventory {
+        reply: oneshot::Sender<Result<ObservedMonitors, InputError>>,
+    },
+    InvalidateRoutes,
+    RoutePlans(HashMap<usize, RoutePlan>),
+    ReturnedRoute {
+        from: PeerId,
+        context: ReceiveContext,
+        returned: ReturnedRoute,
+    },
     Lock(bool),
     Paused(bool),
     /// The destination refused a message of the open session.
@@ -130,6 +186,8 @@ pub(crate) enum Ctl {
 
 /// What the module shows in `ModuleStatus` and `InputState`.
 pub(crate) enum Note {
+    PrepareInventory,
+    Inventory(ObservedMonitors),
     Event(String),
     Block(String),
     Active(Option<PeerId>),
@@ -145,6 +203,10 @@ pub(crate) enum Note {
 }
 
 pub(crate) struct Engine {
+    pub cleanup: DeferredCleanup,
+    pub expected_observation: Option<ObservedMonitors>,
+    pub catalog: InventoryCatalog,
+    pub route_plans: HashMap<usize, RoutePlan>,
     pub host: Arc<dyn ModuleHost>,
     pub cap: Box<dyn CaptureAdapter>,
     pub targets: Vec<Target>,
@@ -201,6 +263,7 @@ impl VirtualCursor {
 }
 
 struct Session {
+    routes: Option<RouteSession>,
     connection: u64,
     peer: PeerId,
     id: u32,
@@ -245,6 +308,10 @@ pub(crate) fn send_error_text(e: &SendError) -> String {
 /// Runs until `Ctl::Stop`; returns the adapter so the module can reuse it.
 pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
     let Engine {
+        cleanup,
+        expected_observation,
+        catalog,
+        route_plans,
         host,
         mut cap,
         targets,
@@ -275,6 +342,17 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
             }
         }
     };
+    let observed = cap.known_monitor_observation().ok();
+    if expected_observation.as_ref().is_some_and(|expected| {
+        observed
+            .as_ref()
+            .is_none_or(|actual| !crate::inventory::same_observation(expected, actual))
+    }) {
+        catalog.invalidate(host.local_id());
+    }
+    if let Some(o) = &observed {
+        let _ = notes.send(Note::Inventory(o.clone()));
+    }
     let last_zones = cap.known_zones();
     if rx.is_some() {
         let _ = notes.send(Note::Zones(last_zones.clone()));
@@ -283,6 +361,13 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
     let mut zones_tick = tokio::time::interval(ZONES_POLL);
     zones_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut st = Loop {
+        cleanup,
+        quiesce_reply: None,
+        prepare_reply: None,
+        quiesced: false,
+        catalog,
+        route_plans,
+        observed,
         host,
         cap,
         targets,
@@ -353,12 +438,23 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
             if !st.reconcile_host(&mut authority).await {
                 break;
             }
+            if let Some(reply) = st.quiesce_reply.take() {
+                let result = stopped
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(|_| crate::inventory::unavailable());
+                let _ = reply.send(result);
+            }
             st.reset_rx = false;
             if let Err(e) = stopped {
+                if let Some(reply) = st.prepare_reply.take() {
+                    let _ = reply.send(Err(crate::inventory::unavailable()));
+                }
                 st.notes(Note::Block(msg::adapter_failed(&e.to_string())));
                 st.end_session(true).await;
                 st.reset_rx = false;
-            } else if !st.paused
+            } else if st.prepare_reply.is_none()
+                && !st.paused
                 && !st.host.paused()
                 && !st.locked
                 && !st.targets.is_empty()
@@ -392,6 +488,57 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
             }
         }
         if st.reset_rx {
+            continue;
+        }
+        if let Some(mut reply) = st.prepare_reply.take() {
+            // Borrow the existing adapter in a cancellable scope; no task can outlive its owner.
+            enum Prepared {
+                Done(Result<ObservedMonitors, InputError>),
+                Control(Option<Ctl>),
+                Cancel,
+            }
+            let peers: Vec<_> = st
+                .host
+                .peers()
+                .iter()
+                .map(|p| (p.id, st.host.peer_input_context(p.id)))
+                .collect();
+            let result = {
+                let prepare = st.cap.prepare_monitor_observation();
+                tokio::pin!(prepare);
+                let mut check = tokio::time::interval(ZONES_POLL);
+                loop {
+                    tokio::select! {
+                        biased;
+                        c = ctl.recv() => break Prepared::Control(c),
+                        () = reply.closed() => break Prepared::Cancel,
+                        () = authority.changed() => break Prepared::Cancel,
+                        () = lifecycle.changed() => break Prepared::Cancel,
+                        _ = check.tick() => {
+                            if st.host.paused() || peers.iter().any(|(p,c)| st.host.peer_input_context(*p) != *c) { break Prepared::Cancel; }
+                        }
+                        r = &mut prepare => break Prepared::Done(r),
+                    }
+                }
+            };
+            match result {
+                Prepared::Done(r) => {
+                    if let Ok(o) = &r {
+                        st.observed = Some(o.clone());
+                    }
+                    let _ = reply.send(r);
+                }
+                Prepared::Control(c) => {
+                    let _ = reply.send(Err(crate::inventory::unavailable()));
+                    match c {
+                        None | Some(Ctl::Stop) => break,
+                        Some(c) => st.control(c).await,
+                    }
+                }
+                Prepared::Cancel => {
+                    let _ = reply.send(Err(crate::inventory::unavailable()));
+                }
+            }
             continue;
         }
         let switch_until = st.pending.as_ref().and_then(|p| p.until);
@@ -434,7 +581,7 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
                 if st.reset_rx { continue; }
                 if let Some(CaptureEvent::Input { t_mono_us, ev }) = st.queue.pop_front() { st.forward(t_mono_us, ev).await; }
             }
-            _ = zones_tick.tick() => st.poll_zones(),
+            _ = zones_tick.tick() => st.poll_zones().await,
             () = async { if let Some(until) = switch_until { tokio::time::sleep_until(until).await; } },
                 if switch_until.is_some() => {
                 if let Some(p) = st.pending.take() { let _ = p.reply.send(Ok(())); }
@@ -454,6 +601,13 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
 }
 
 struct Loop {
+    cleanup: DeferredCleanup,
+    quiesce_reply: Option<oneshot::Sender<Result<(), InputError>>>,
+    prepare_reply: Option<oneshot::Sender<Result<ObservedMonitors, InputError>>>,
+    quiesced: bool,
+    catalog: InventoryCatalog,
+    route_plans: HashMap<usize, RoutePlan>,
+    observed: Option<ObservedMonitors>,
     host: Arc<dyn ModuleHost>,
     cap: Box<dyn CaptureAdapter>,
     targets: Vec<Target>,
@@ -477,11 +631,74 @@ struct Loop {
 }
 
 impl Loop {
+    fn route_valid(&self, s: &RouteSession) -> bool {
+        self.catalog.matches(&[
+            InventoryStamp {
+                peer: self.host.local_id(),
+                connection: 0,
+                rev: s.inventories.source,
+            },
+            InventoryStamp {
+                peer: s.peer,
+                connection: s.connection,
+                rev: s.inventories.target,
+            },
+        ]) && self.cap.known_monitor_observation().ok().is_some_and(|o| {
+            self.observed
+                .as_ref()
+                .is_some_and(|old| crate::inventory::same_observation(old, &o))
+        })
+    }
+    async fn observe_monitors(&mut self) {
+        match self.cap.known_monitor_observation() {
+            Ok(o) => {
+                if self
+                    .observed
+                    .as_ref()
+                    .is_none_or(|old| !crate::inventory::same_observation(old, &o))
+                {
+                    if self.observed.is_some() {
+                        self.catalog.invalidate(self.host.local_id());
+                        self.end_session(true).await;
+                        self.reset_rx = true;
+                    }
+                    self.observed = Some(o.clone());
+                    self.notes(Note::Inventory(o));
+                }
+            }
+            Err(_) => {
+                self.catalog.invalidate(self.host.local_id());
+                if self.current().is_some_and(|s| s.routes.is_some()) {
+                    self.end_session(true).await;
+                    self.reset_rx = true;
+                }
+                // State releases incoming emulation before scheduling preparation on this owner.
+                if !self.quiesced
+                    && self
+                        .observed
+                        .as_ref()
+                        .is_some_and(|o| o.source == clipsync_proto::GeometrySource::Observed)
+                {
+                    self.notes(Note::PrepareInventory);
+                }
+            }
+        }
+    }
     async fn reconcile_host(&mut self, authority: &mut HostCursor) -> bool {
         let (_, invalidated) = authority.refresh();
         let state = authority.snapshot;
-        if authority.observed() && (invalidated || state.paused != self.paused || state.stopped) {
-            self.paused = state.paused || state.stopped;
+        if authority.observed()
+            && (invalidated || (state.paused || self.quiesced) != self.paused || state.stopped)
+        {
+            self.paused = state.paused || state.stopped || self.quiesced;
+            self.end_session(true).await;
+            self.reset_rx = true;
+        }
+        if self
+            .current()
+            .and_then(|s| s.routes.as_ref())
+            .is_some_and(|r| !self.route_valid(r))
+        {
             self.end_session(true).await;
             self.reset_rx = true;
         }
@@ -615,6 +832,14 @@ impl Loop {
             self.end_session(true).await;
             return;
         }
+        if self
+            .current()
+            .and_then(|s| s.routes.as_ref())
+            .is_some_and(|r| !self.route_valid(r))
+        {
+            self.end_session(true).await;
+            return;
+        }
         if self.host.paused()
             || self.opening.as_ref().is_some_and(|o| {
                 self.host
@@ -674,7 +899,8 @@ impl Loop {
     }
 
     /// Compares the adapter's zones with the last ones seen and tells the module on a change.
-    fn poll_zones(&mut self) {
+    async fn poll_zones(&mut self) {
+        self.observe_monitors().await;
         let now = self.cap.known_zones();
         if !now.is_empty() && !same_zones(&self.last_zones, &now) {
             self.last_zones = now.clone();
@@ -684,6 +910,15 @@ impl Loop {
 
     /// Opens a session on `t.peer` entering at `pos` (already in destination terms).
     async fn open(&mut self, t: &Target, pos: f32) -> Result<(), String> {
+        if self.cleanup.busy() {
+            // The adapter may already have captured physically in this new Engine.
+            // Release before external network cleanup and retire this producer generation,
+            // including queued activations; only a fresh activation may retry.
+            self.release().await;
+            self.queue.clear();
+            self.reset_rx = true;
+            return Err(msg::SESSION_CANCELLED.into());
+        }
         self.end_session(true).await;
         let id = new_session();
         let version = self
@@ -693,7 +928,28 @@ impl Loop {
             .find(|p| p.id == t.peer)
             .map_or(0, |p| p.remote_version);
         let v3 = version >= SPAN_PROTOCOL;
+        let plan = self
+            .targets
+            .iter()
+            .position(|x| same_barrier(x, t))
+            .and_then(|i| self.route_plans.get(&i))
+            .cloned();
+        if plan
+            .as_ref()
+            .is_some_and(|p| version < 4 || !self.route_valid(&p.session))
+        {
+            return Err("inventário de rota alterado".into());
+        }
         let m = ModuleMsg::Input(match (&t.peer_monitor, version >= LAYOUT_PROTOCOL) {
+            _ if plan.is_some() => {
+                let mut entry = plan
+                    .as_ref()
+                    .map(|p| p.entry.clone())
+                    .ok_or_else(|| "rota ausente".to_owned())?;
+                entry.session = id;
+                entry.pos = pos;
+                InputMsg::EnterRoutes(entry)
+            }
             // protocol 3: the way back travels with the entry and the destination decides it
             _ if v3 => {
                 let (back_from, back_to) = self.back_span(t);
@@ -729,6 +985,10 @@ impl Loop {
         let peer = t.peer;
         self.opening = Some(Opening {
             session: Session {
+                routes: plan.map(|p| RouteSession {
+                    session: id,
+                    ..p.session
+                }),
                 peer,
                 connection,
                 id,
@@ -868,8 +1128,81 @@ impl Loop {
 
     async fn control(&mut self, c: Ctl) {
         match c {
+            Ctl::KnownInventory { reply } => {
+                let _ = reply.send(self.cap.known_monitor_observation());
+            }
+            Ctl::Ready { reply } => {
+                let _ = reply.send(
+                    self.available
+                        && !self.paused
+                        && self
+                            .route_plans
+                            .values()
+                            .all(|p| self.route_valid(&p.session)),
+                );
+            }
+            Ctl::Quiesce { reply } => {
+                self.quiesced = true;
+                self.paused = true;
+                self.reset_rx = true;
+                self.queue.clear();
+                if let Some(closing) = self.closing.take() {
+                    self.cleanup.push(closing);
+                }
+                self.end_session(true).await;
+                if let Some(closing) = self.closing.take() {
+                    self.cleanup.push(closing);
+                }
+                // The outer loop closes rx before stop/join and acknowledges only afterward.
+                self.available = false;
+                self.quiesce_reply = Some(reply);
+            }
+            Ctl::PrepareInventory { reply } => {
+                self.catalog.invalidate(self.host.local_id());
+                self.quiesced = true;
+                self.paused = true;
+                if let Some(closing) = self.closing.take() {
+                    self.cleanup.push(closing);
+                }
+                self.end_session(true).await;
+                if let Some(closing) = self.closing.take() {
+                    self.cleanup.push(closing);
+                }
+                self.reset_rx = true;
+                self.prepare_reply = Some(reply);
+            }
+            Ctl::InvalidateRoutes => {
+                if self.current().is_some_and(|s| s.routes.is_some()) {
+                    self.end_session(true).await;
+                }
+                self.reset_rx = true;
+            }
+            Ctl::RoutePlans(plans) => {
+                self.end_session(true).await;
+                self.reset_rx = true;
+                self.route_plans = plans;
+            }
+            Ctl::ReturnedRoute {
+                from,
+                context,
+                returned,
+            } => {
+                let resolved = self
+                    .current()
+                    .and_then(|s| s.routes.as_ref())
+                    .filter(|s| self.route_valid(s) && !self.locked)
+                    .and_then(|s| s.resolve(from, context.connection, &returned, s.inventories));
+                if let Some((barrier, pos)) = resolved {
+                    self.close_session(true, Some((barrier, pos))).await;
+                } else {
+                    self.notes(Note::Ignored);
+                }
+            }
             Ctl::Returned { from, session, pos } => {
-                let Some(s) = self.current().filter(|s| s.peer == from && s.id == session) else {
+                let Some(s) = self
+                    .current()
+                    .filter(|s| s.peer == from && s.id == session && s.routes.is_none())
+                else {
                     self.notes(Note::Ignored);
                     return;
                 };
@@ -916,6 +1249,10 @@ impl Loop {
                 self.peer_zones.insert(peer, zones);
             }
             Ctl::Retarget(targets) => {
+                if self.current().is_some_and(|s| s.routes.is_some()) {
+                    self.end_session(true).await;
+                    self.reset_rx = true;
+                }
                 if self
                     .current()
                     .is_some_and(|s| !targets.iter().any(|t| same_barrier(t, &s.target)))
@@ -950,7 +1287,7 @@ impl Loop {
                 if self.host.lifecycle_receiver().is_some() {
                     return;
                 }
-                self.paused = on;
+                self.paused = on || self.quiesced;
                 self.reset_rx = true;
                 if on {
                     self.end_session(true).await;

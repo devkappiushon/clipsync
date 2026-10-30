@@ -122,6 +122,7 @@ impl PortalCapture {
             .map_err(map_err)?;
         self.ic = Some(ic);
         self.session = Some(session);
+        self.watch_zones().await?;
         self.refresh_zones().await
     }
 
@@ -159,22 +160,40 @@ impl PortalCapture {
 
     /// The portal's `ZonesChanged` signal only marks the zones dirty; the module's 2 s poll calls
     /// `zones()`, which asks again (§13.8 item 2).
-    fn watch_zones(&mut self) {
-        if self.zones_task.is_some() {
-            return;
+    async fn watch_zones(&mut self) -> Result<(), InputError> {
+        if self.zones_task.as_ref().is_some_and(|t| !t.is_finished()) {
+            return Ok(());
         }
         let dirty = self.zones_dirty.clone();
+        let (ready, subscribed) = oneshot::channel();
         self.zones_task = Some(tokio::spawn(async move {
-            let Ok(ic) = InputCapture::new().await else {
-                return;
+            let ic = match InputCapture::new().await {
+                Ok(ic) => ic,
+                Err(_) => {
+                    dirty.store(true, Ordering::SeqCst);
+                    let _ = ready.send(false);
+                    return;
+                }
             };
-            let Ok(mut changes) = ic.receive_zones_changed().await else {
-                return;
+            let mut changes = match ic.receive_zones_changed().await {
+                Ok(s) => s,
+                Err(_) => {
+                    dirty.store(true, Ordering::SeqCst);
+                    let _ = ready.send(false);
+                    return;
+                }
             };
+            let _ = ready.send(true);
             while changes.next().await.is_some() {
                 dirty.store(true, Ordering::SeqCst);
             }
+            dirty.store(true, Ordering::SeqCst);
         }));
+        if subscribed.await.unwrap_or(false) {
+            Ok(())
+        } else {
+            Err(crate::inventory::unavailable())
+        }
     }
 
     /// The barriers of `barriers` on the current zones, as the portal wants them.
@@ -210,14 +229,44 @@ impl PortalCapture {
 
 #[async_trait]
 impl CaptureAdapter for PortalCapture {
+    fn known_monitor_observation(&self) -> Result<crate::inventory::ObservedMonitors, InputError> {
+        if self.session.is_none() {
+            return crate::inventory::linux_estimated_observation(std::path::Path::new(
+                "/sys/class/drm",
+            ));
+        }
+        if self.zones_dirty.load(Ordering::SeqCst)
+            || self.zones_task.as_ref().is_none_or(|t| t.is_finished())
+        {
+            return Err(crate::inventory::unavailable());
+        }
+        crate::inventory::linux_observation(std::path::Path::new("/sys/class/drm"), &self.zones)
+    }
+    async fn prepare_monitor_observation(
+        &mut self,
+    ) -> Result<crate::inventory::ObservedMonitors, InputError> {
+        self.ensure_session().await?;
+        self.watch_zones().await?;
+        // Clear before GetZones; a signal during the await leaves the result invalid.
+        self.zones_dirty.store(false, Ordering::SeqCst);
+        if let Err(e) = self.refresh_zones().await {
+            self.zones_dirty.store(true, Ordering::SeqCst);
+            return Err(e);
+        }
+        self.known_monitor_observation()
+    }
+
     fn name(&self) -> &'static str {
         "portal-inputcapture"
     }
 
     async fn zones(&mut self) -> Result<Vec<Zone>, InputError> {
         self.ensure_session().await?;
-        if self.zones_dirty.swap(false, Ordering::SeqCst) {
-            self.refresh_zones().await?;
+        if self.zones_dirty.swap(false, Ordering::SeqCst)
+            && let Err(e) = self.refresh_zones().await
+        {
+            self.zones_dirty.store(true, Ordering::SeqCst);
+            return Err(e);
         }
         Ok(self.zones.clone())
     }
@@ -297,7 +346,7 @@ impl CaptureAdapter for PortalCapture {
         ic.enable(session, EnableOptions::default())
             .await
             .map_err(map_err)?;
-        self.watch_zones();
+        self.watch_zones().await?;
         Ok(rx)
     }
 
@@ -361,9 +410,7 @@ impl CaptureAdapter for PortalCapture {
     async fn stop(&mut self) -> Result<(), InputError> {
         self.stop = None;
         self.lock_watch = None;
-        if let Some(t) = self.zones_task.take() {
-            t.abort();
-        }
+
         if let Some(t) = self.thread.take() {
             let _ = tokio::task::spawn_blocking(move || t.join()).await;
         }
@@ -900,6 +947,14 @@ fn symbols_name(keymap: &str) -> Option<String> {
     let start = rest.find('"')? + 1;
     let end = start + rest[start..].find('"')?;
     Some(rest[start..end].to_owned())
+}
+
+impl Drop for PortalCapture {
+    fn drop(&mut self) {
+        if let Some(t) = self.zones_task.take() {
+            t.abort();
+        }
+    }
 }
 
 #[cfg(test)]

@@ -337,7 +337,9 @@ impl Agent {
             ModuleCommand::ClipSend { .. } | ModuleCommand::ClipSendCurrent { .. } => {
                 CLIP_SEND_TIMEOUT
             }
-            ModuleCommand::InputOffer { .. } => INPUT_OFFER_TIMEOUT,
+            ModuleCommand::InputOffer { .. } | ModuleCommand::InputOfferV4 { .. } => {
+                INPUT_OFFER_TIMEOUT
+            }
             ModuleCommand::Status
             | ModuleCommand::ClipInbox
             | ModuleCommand::ClipApply { .. }
@@ -346,7 +348,13 @@ impl Agent {
             | ModuleCommand::InputReload
             | ModuleCommand::InputLock { .. }
             | ModuleCommand::InputSwitch { .. }
-            | ModuleCommand::InputOfferClear => STATUS_TIMEOUT,
+            | ModuleCommand::InputOfferClear
+            | ModuleCommand::InputPrepareInventory
+            | ModuleCommand::InputPreviewOrganization(_)
+            | ModuleCommand::InputApplyOrganization(_)
+            | ModuleCommand::InputRestoreLayoutV1 { .. }
+            | ModuleCommand::InputSuspendOrganization
+            | ModuleCommand::InputAnswerOfferV4 { .. } => STATUS_TIMEOUT,
         };
         let (reply, rx) = oneshot::channel();
         tx.send(ModuleInput::Command { cmd, reply })

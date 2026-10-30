@@ -714,6 +714,16 @@ impl WinCapture {
 
 #[async_trait]
 impl CaptureAdapter for WinCapture {
+    fn known_monitor_observation(&self) -> Result<crate::inventory::ObservedMonitors, InputError> {
+        let monitors = clipsync_win::monitors().map_err(|e| io_err("monitors", &e))?;
+        crate::inventory::windows_observation(&monitors)
+    }
+    async fn prepare_monitor_observation(
+        &mut self,
+    ) -> Result<crate::inventory::ObservedMonitors, InputError> {
+        self.known_monitor_observation()
+    }
+
     fn lifecycle_receiver(&self) -> Option<tokio::sync::watch::Receiver<CaptureLifecycle>> {
         Some(self.shared.lifecycle.subscribe())
     }

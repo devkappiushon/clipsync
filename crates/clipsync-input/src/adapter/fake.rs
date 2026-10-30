@@ -16,6 +16,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 #[derive(Default)]
 struct CapState {
     lifecycle: Mutex<Option<tokio::sync::watch::Sender<super::CaptureLifecycle>>>,
+    observation: Mutex<Option<crate::inventory::ObservedMonitors>>,
     hooks: AtomicBool,
     started: AtomicBool,
     starts: AtomicUsize,
@@ -97,6 +98,11 @@ impl FakeCapture {
 }
 
 impl FakeCaptureHandle {
+    /// Explicit regression harness input; configured fake mode never supplies this.
+    pub fn set_monitor_observation(&self, value: Option<crate::inventory::ObservedMonitors>) {
+        *lock(&self.cap.observation) = value;
+    }
+
     /// Seleciona o canal independente antes de iniciar o módulo.
     pub fn enable_lifecycle(&self, snapshot: super::CaptureLifecycle) {
         *lock(&self.cap.lifecycle) = Some(tokio::sync::watch::channel(snapshot).0);
@@ -206,6 +212,17 @@ impl FakeCaptureHandle {
 
 #[async_trait]
 impl CaptureAdapter for FakeCapture {
+    fn known_monitor_observation(&self) -> Result<crate::inventory::ObservedMonitors, InputError> {
+        lock(&self.cap.observation)
+            .clone()
+            .ok_or_else(crate::inventory::unavailable)
+    }
+    async fn prepare_monitor_observation(
+        &mut self,
+    ) -> Result<crate::inventory::ObservedMonitors, InputError> {
+        self.known_monitor_observation()
+    }
+
     fn lifecycle_receiver(&self) -> Option<tokio::sync::watch::Receiver<super::CaptureLifecycle>> {
         lock(&self.cap.lifecycle).as_ref().map(|tx| tx.subscribe())
     }

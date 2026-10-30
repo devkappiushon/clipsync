@@ -374,6 +374,48 @@ pub fn compile_organization(
         unresolved_link_ids,
     })
 }
+/// Resolves preserved v1 endpoints for v2 activation without mutating the document.
+/// The same identity and dead-corner rules used by compilation apply here.
+pub(crate) fn resolved_legacy_links(
+    document: &LayoutDocument,
+    inventories: &[InventoryView],
+) -> Result<(Vec<MonitorLink>, Vec<String>), OrganizationError> {
+    let bindings = document
+        .organization
+        .as_ref()
+        .map(|o| o.legacy_bindings.as_slice())
+        .unwrap_or_default();
+    let managed = document
+        .organization
+        .as_ref()
+        .map(|o| o.links.as_slice())
+        .unwrap_or_default();
+    let mut resolved = Vec::new();
+    let mut unresolved = Vec::new();
+    for old in &document.legacy.links {
+        let a = resolve_endpoint(&old.a, bindings, inventories)?;
+        let b = resolve_endpoint(&old.b, bindings, inventories)?;
+        let (Some(a), Some(b)) = (a, b) else {
+            unresolved.push(old.id.clone());
+            continue;
+        };
+        let link = MonitorLink {
+            id: old.id.clone(),
+            a: effective_endpoint(a, document.legacy.options.dead_corner_px)?,
+            b: effective_endpoint(b, document.legacy.options.dead_corner_px)?,
+        };
+        if resolved
+            .iter()
+            .chain(managed.iter())
+            .any(|other| links_overlap(&link, other))
+        {
+            return Err(OrganizationError::SegmentOverlap);
+        }
+        resolved.push(link);
+    }
+    Ok((resolved, unresolved))
+}
+
 fn contact_link(
     a: &Card<'_>,
     b: &Card<'_>,

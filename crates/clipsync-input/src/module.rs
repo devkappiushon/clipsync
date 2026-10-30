@@ -1,6 +1,7 @@
 //! The input module: destination side (Enter / datagrams / Stats), the source-side loopback
 //! driven by `ModuleCommand::InputLoopback` (contract §8 rules 1 to 3) and the continuous
 //! capture derived from `layout.toml` (§12.6 item 2, in `capture.rs`).
+mod organization;
 use crate::adapter::lifecycle::LifecycleCursor;
 use crate::adapter::{
     BarrierSpec, CaptureAdapter, CaptureEvent, EmulateAdapter, Hotkey, InputError, Zone, ZoneRef,
@@ -9,6 +10,7 @@ use crate::adapter::{
 use crate::capture::{self, Ctl, Engine, Note, SPAN_PROTOCOL, Target, ZONES_POLL, new_session};
 use crate::config::{InputConfig, map_pos, zone_ref};
 use crate::layout::{DerivedBarrier, Endpoint, Layout, trim_dead_corner};
+use crate::layout_document::LayoutDocument;
 use crate::msg;
 use crate::span::SpanTrack;
 use async_trait::async_trait;
@@ -19,6 +21,7 @@ use clipsync_proto::{
     OfferOutcome, OfferState, PeerId, PeerInfo, PeerZones, PendingOffer, ReceiveContext,
     RejectReason, SendError, ZoneInfo, mono_us,
 };
+use organization::OrganizationRuntime;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -36,6 +39,7 @@ pub struct InputModule {
     cap: Box<dyn CaptureAdapter>,
     emu: Box<dyn EmulateAdapter>,
     layout: Option<Layout>,
+    organization: OrganizationRuntime,
     layout_path: Option<PathBuf>,
 }
 
@@ -50,6 +54,7 @@ pub fn build_with_adapters(
         cap,
         emu,
         layout: None,
+        organization: OrganizationRuntime::default(),
         layout_path: None,
     })
 }
@@ -64,7 +69,8 @@ pub fn build_with_layout(
 ) -> Result<Box<dyn Module>, ModuleError> {
     let config = |e: crate::layout::LayoutError| ModuleError::Config(e.to_string());
     let path = profile_dir.join(crate::LAYOUT_FILE);
-    let layout = Layout::read(&path).map_err(config)?;
+    let document = LayoutDocument::read(&path).map_err(config)?;
+    let layout = document.as_ref().map(|d| d.legacy.clone());
     if let Some(l) = &layout {
         l.ensure_no_manual_barriers(&cfg).map_err(config)?;
     }
@@ -73,6 +79,10 @@ pub fn build_with_layout(
         cap,
         emu,
         layout,
+        organization: OrganizationRuntime {
+            document,
+            ..Default::default()
+        },
         layout_path: Some(path),
     }))
 }
@@ -135,6 +145,10 @@ struct Incoming {
     samples: u64,
     /// Entered with `EnterSpan`: this side decides the way back.
     span: Option<SpanTrack>,
+    routes: Option<(
+        crate::route_track::RouteTrack,
+        clipsync_proto::InventoryRevisions,
+    )>,
 }
 
 impl Incoming {
@@ -150,6 +164,7 @@ impl Incoming {
             latencies: Vec::new(),
             samples: 0,
             span: None,
+            routes: None,
         }
     }
 
@@ -271,6 +286,7 @@ struct State {
     last_event: Option<String>,
     last_block: Option<String>,
     layout: Option<Layout>,
+    organization: OrganizationRuntime,
     layout_path: Option<PathBuf>,
     /// "Travar nesta tela": barriers stay installed but never open a session.
     locked: bool,
@@ -339,6 +355,7 @@ impl Module for InputModule {
             last_event: None,
             last_block: None,
             layout: me.layout,
+            organization: me.organization,
             layout_path: me.layout_path,
             locked: false,
             cont: None,
@@ -362,16 +379,26 @@ impl Module for InputModule {
         if paused && st.cap_hooks {
             st.arm_resume().await;
         }
+        st.refresh_known_inventory().await;
         st.start_continuous().await;
         let mut task: Option<JoinHandle<LoopDone>> = None;
         let mut tick = tokio::time::interval(ZONES_POLL);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut cleanup = std::collections::VecDeque::new();
         loop {
+            cleanup.extend(st.organization.cleanup.take());
             st.reconcile_host().await;
+            if !st.preparation_valid() {
+                st.cancel_preparation().await;
+            }
             if st.authority.snapshot.stopped {
                 break;
             }
             tokio::select! {
+                _ = async { if let Some(job) = cleanup.front_mut() { let _ = job.await; } }, if !cleanup.is_empty() => { cleanup.pop_front(); },
+                done = async { match st.organization.preparation.as_mut() { Some(p) => p.future.as_mut().await, None => std::future::pending().await } }, if st.organization.preparation.is_some() => {
+                    st.finish_preparation(done, false).await;
+                },
                 () = st.authority.changed() => {},
                 input = rx.recv() => {
                     let Some(input) = input else { break };
@@ -421,6 +448,7 @@ impl Module for InputModule {
             }
         }
         st.release_all().await;
+        st.cancel_preparation().await;
         if let Some(t) = task {
             if let Some(c) = &st.ctl {
                 let _ = c.tx.send(LoopSignal::Stop);
@@ -438,6 +466,13 @@ impl Module for InputModule {
                 .send(ModuleReply::Error(msg::SESSION_CANCELLED.to_owned()));
         }
         st.stop_continuous().await;
+        cleanup.extend(st.organization.cleanup.take());
+        let _ = tokio::time::timeout(crate::network::SEND_WAIT, async {
+            for job in cleanup {
+                let _ = job.await;
+            }
+        })
+        .await;
         let _ = st.emu.stop().await;
         st.network.stop().await;
         Ok(())
@@ -466,6 +501,9 @@ impl State {
 
     async fn apply_pause(&mut self, p: bool) {
         self.paused = p;
+        if p {
+            self.cancel_preparation().await;
+        }
         self.send_ctl(Ctl::Paused(p));
         if p {
             for i in self.incoming.values_mut() {
@@ -510,6 +548,19 @@ impl State {
             Note::Event(t) => self.last_event = Some(t),
             Note::Block(t) => self.last_block = Some(t),
             Note::Active(p) => self.active_peer = p,
+            Note::PrepareInventory => {
+                if !self.organization.inventory_blocked {
+                    self.begin_preparation(None).await;
+                }
+            }
+            Note::Inventory(o) => {
+                if self.organization.inventory_blocked {
+                    return;
+                }
+                if let Err(e) = self.observe_inventory(o).await {
+                    self.organization.problem = Some(e.to_string());
+                }
+            }
             Note::Zones(z) => self.on_zones(z).await,
             Note::Hotkey(h) => self.on_hotkey(h).await,
             Note::Ignored => self.ignored += 1,
@@ -551,6 +602,7 @@ impl State {
     /// Every 2 s, in every platform: the zones the adapter knows (the engine does the same while
     /// it owns the adapter) and whether the links still lead to trusted peers.
     async fn on_tick(&mut self) {
+        self.refresh_known_inventory().await;
         for peer in self.incoming.keys().copied().collect::<Vec<_>>() {
             self.reconcile_incoming(peer).await;
         }
@@ -651,6 +703,9 @@ impl State {
             .collect();
         peers.sort_by_key(|p| p.peer);
         InputState {
+            inventories: self.organization.catalog.snapshot(),
+            inventory_problem: self.organization.problem.clone(),
+            pending_monitor_offer: self.organization.pending.clone(),
             local: self.local_zones.iter().map(zone_info).collect(),
             peers,
             screen_locked: self.locked,
@@ -668,13 +723,27 @@ impl State {
         let Some(path) = self.layout_path.clone() else {
             return Err(msg::NO_LAYOUT_PATH.to_owned());
         };
-        let layout = Layout::read(&path).map_err(|e| e.to_string())?;
+        let document = LayoutDocument::read(&path).map_err(|e| e.to_string())?;
+        let layout = document.as_ref().map(|d| d.legacy.clone());
         if let Some(l) = &layout {
             l.ensure_no_manual_barriers(&self.cfg)
                 .map_err(|e| e.to_string())?;
         }
-        self.stop_continuous().await;
+        if self
+            .organization
+            .document
+            .as_ref()
+            .is_some_and(|d| d.organization.is_some())
+            || document.as_ref().is_some_and(|d| d.organization.is_some())
+        {
+            self.quiesce_organization().await.map_err(|e| e.code)?;
+        } else {
+            self.stop_continuous().await;
+        }
         self.layout = layout;
+        self.organization.document = document;
+        self.organization.suspended = false;
+        self.organization.ingress_suspended = false;
         self.start_continuous().await;
         self.last_event = Some(msg::LAYOUT_RELOADED.to_owned());
         Ok(())
@@ -709,6 +778,16 @@ impl State {
     /// `InputOffer`: one `LayoutOffer` per peer; `Offered` becomes `Denied` if the peer refuses
     /// within `OFFER_GRACE`.
     async fn offer(&mut self, to: Vec<PeerId>, reply: oneshot::Sender<ModuleReply>) {
+        if self
+            .organization
+            .document
+            .as_ref()
+            .is_some_and(|d| d.organization.is_some())
+        {
+            let _ = reply.send(ModuleReply::Error("mapa v2 exige oferta v4".into()));
+            return;
+        }
+
         if self.offer_job.is_some() {
             let _ = reply.send(ModuleReply::Error(msg::OFFER_BUSY.to_owned()));
             return;
@@ -840,6 +919,15 @@ impl State {
     /// The barriers that exist on these zones. A link whose monitor is missing waits for it
     /// (§13.8 item 3); `report` says why in `last_block`.
     fn build_targets(&mut self, zones: &[Zone], report: bool) -> Vec<Target> {
+        if self
+            .organization
+            .document
+            .as_ref()
+            .is_some_and(|d| d.organization.is_some())
+        {
+            return self.organization_targets(zones);
+        }
+
         let dead = self.layout.as_ref().map_or(0, |l| l.options.dead_corner_px);
         let mut targets = Vec::new();
         for b in self.derived_links() {
@@ -888,7 +976,14 @@ impl State {
         {
             return;
         }
-        if self.derived_links().is_empty() {
+        if self.organization.suspended
+            || (self.derived_links().is_empty()
+                && !self
+                    .organization
+                    .document
+                    .as_ref()
+                    .is_some_and(|d| d.organization.as_ref().is_some_and(|o| !o.links.is_empty())))
+        {
             return;
         }
         self.suspended = false;
@@ -918,9 +1013,15 @@ impl State {
             return;
         }
         self.retry_on_zones = false;
-        self.targets_key = targets_key(&targets);
+        self.targets_key = format!(
+            "{}{:?}",
+            targets_key(&targets),
+            self.organization.catalog.snapshot()
+        );
         let (ctl, ctl_rx) = mpsc::unbounded_channel();
         let engine = Engine {
+            cleanup: self.organization.cleanup.clone(),
+            expected_observation: self.organization.observed.clone(),
             host: self.host.clone(),
             cap,
             targets,
@@ -930,6 +1031,8 @@ impl State {
             paused: self.paused,
             dead_corner_px: self.layout.as_ref().map_or(0, |l| l.options.dead_corner_px),
             peer_zones: self.peer_zones.clone(),
+            catalog: self.organization.catalog.clone(),
+            route_plans: self.organization.plans.clone(),
         };
         self.cont = Some(Cont {
             ctl,
@@ -943,16 +1046,28 @@ impl State {
         if self.cont.is_none() {
             return;
         }
-        if self.derived_links().is_empty() {
+        if self.organization.suspended
+            || (self.derived_links().is_empty()
+                && !self
+                    .organization
+                    .document
+                    .as_ref()
+                    .is_some_and(|d| d.organization.as_ref().is_some_and(|o| !o.links.is_empty())))
+        {
             self.stop_continuous().await;
             self.suspended = true;
             return;
         }
         let zones = self.local_zones.clone();
         let targets = self.build_targets(&zones, false);
-        let key = targets_key(&targets);
+        let key = format!(
+            "{}{:?}",
+            targets_key(&targets),
+            self.organization.catalog.snapshot()
+        );
         if key != self.targets_key {
             self.targets_key = key;
+            self.send_ctl(Ctl::RoutePlans(self.organization.plans.clone()));
             self.send_ctl(Ctl::Retarget(targets));
         }
     }
@@ -961,19 +1076,27 @@ impl State {
     async fn sync_links(&mut self) {
         if self.cont.is_some() {
             self.retarget().await;
-        } else if self.suspended && !self.derived_links().is_empty() {
+        } else if !self.organization.suspended
+            && (self.suspended && !self.derived_links().is_empty()
+                || self
+                    .organization
+                    .document
+                    .as_ref()
+                    .is_some_and(|d| d.organization.is_some()))
+        {
             self.start_continuous().await;
         }
     }
 
     /// Closes the open session and takes the adapter back.
     async fn stop_continuous(&mut self) {
-        let Some(c) = self.cont.take() else { return };
+        let Some(c) = self.cont.as_mut() else { return };
         let _ = c.ctl.send(Ctl::Stop);
-        match c.task.await {
+        match (&mut c.task).await {
             Ok(cap) => self.cap = Some(cap),
             Err(_) => self.last_block = Some(msg::adapter_failed("captura")),
         }
+        self.cont = None;
     }
 
     /// Barriers of a loopback toward `to`: the links of `layout.toml`, else the manual
@@ -1039,6 +1162,63 @@ impl State {
         task: &mut Option<JoinHandle<LoopDone>>,
     ) -> Option<JoinHandle<LoopDone>> {
         match cmd {
+            ModuleCommand::InputPrepareInventory => {
+                self.begin_preparation(Some(reply)).await;
+                None
+            }
+            ModuleCommand::InputPreviewOrganization(r) => {
+                let result = self.preview_organization(r).await;
+                let _ = reply.send(match result {
+                    Ok(v) => ModuleReply::OrganizationPreview(v),
+                    Err(e) => ModuleReply::OrganizationFailure(e),
+                });
+                None
+            }
+            ModuleCommand::InputApplyOrganization(r) => {
+                let result = self.apply_organization(r).await;
+                let _ = reply.send(match result {
+                    Ok(v) => ModuleReply::OrganizationApplied(v),
+                    Err(e) => ModuleReply::OrganizationFailure(e),
+                });
+                None
+            }
+            ModuleCommand::InputSuspendOrganization => {
+                let result = self.quiesce_organization().await;
+                let _ = reply.send(match result {
+                    Ok(()) => ModuleReply::Done,
+                    Err(e) => ModuleReply::OrganizationFailure(e),
+                });
+                None
+            }
+            ModuleCommand::InputRestoreLayoutV1 { base_rev } => {
+                let result = self.restore_layout_v1(base_rev).await;
+                let _ = reply.send(match result {
+                    Ok(v) => ModuleReply::OrganizationApplied(v),
+                    Err(e) => ModuleReply::OrganizationFailure(e),
+                });
+                None
+            }
+            ModuleCommand::InputOfferV4 { to } => {
+                self.offer_v4(to, reply).await;
+                None
+            }
+            ModuleCommand::InputAnswerOfferV4 {
+                from,
+                connection,
+                rev,
+                base_rev,
+                accept,
+            } => {
+                let result = self
+                    .answer_offer_v4(from, connection, rev, base_rev, accept)
+                    .await;
+                let _ = reply.send(match result {
+                    Ok(Some(v)) => ModuleReply::OrganizationApplied(v),
+                    Ok(None) => ModuleReply::Done,
+                    Err(e) => ModuleReply::OrganizationFailure(e),
+                });
+                None
+            }
             ModuleCommand::Status => {
                 let _ = reply.send(ModuleReply::Status(self.status()));
                 None
@@ -1180,10 +1360,13 @@ impl State {
             ModuleInput::PeerUp(info) => {
                 self.reconcile_incoming(info.id).await;
                 self.announce_zones(&info);
+                self.announce_inventory(&info);
                 self.peers.insert(info.id, info);
                 self.sync_links().await;
             }
             ModuleInput::PeerDown(id) => {
+                self.cancel_preparation().await;
+                self.organization.catalog.invalidate(id);
                 self.peers.remove(&id);
                 self.buckets.remove(&id);
                 self.frontiers.remove(&id);
@@ -1218,6 +1401,20 @@ impl State {
             return;
         }
         match m {
+            InputMsg::InventoryV4(inv) => self.receive_inventory(from, context, inv).await,
+            InputMsg::EnterRoutes(entry) => self.enter_routes(from, entry, context).await,
+            InputMsg::ReturnedRoute(returned) => self.send_ctl(Ctl::ReturnedRoute {
+                from,
+                context,
+                returned,
+            }),
+            InputMsg::LayoutOfferV4(offer) => {
+                self.organization.pending = Some(clipsync_proto::PendingMonitorOffer {
+                    from,
+                    connection: context.connection,
+                    offer,
+                });
+            }
             InputMsg::Enter { session, edge, pos } => {
                 self.on_enter(
                     from,
@@ -1502,7 +1699,8 @@ impl State {
         f
     }
     fn authorized(&self, from: PeerId, context: ReceiveContext) -> bool {
-        !self.paused
+        self.organization.preparation.is_none()
+            && !self.paused
             && !self.host.paused()
             && self
                 .host
@@ -1571,6 +1769,17 @@ impl State {
             self.ignored += 1;
             return;
         }
+        if let Some(rev) = self
+            .incoming
+            .get(&from)
+            .and_then(|i| i.routes.as_ref())
+            .map(|(_, r)| r.target)
+            && (!self.confirm_local_inventory(rev).await || !self.authorized(from, context))
+        {
+            self.incoming.remove(&from);
+            self.release_all().await;
+            return;
+        }
         let Some(inc) = self.incoming.get_mut(&from) else {
             self.ignored += 1;
             return;
@@ -1605,6 +1814,22 @@ impl State {
         let session = dg.session;
         let mut events = dg.events;
         // The way back: the destination follows the cursor and takes the push out of the motion.
+        let mut returned_route = None;
+        if let Some((track, revisions)) = inc.routes.as_mut() {
+            if let Some((x, y)) = self.emu.cursor() {
+                track.sync(x, y);
+            }
+            returned_route =
+                track
+                    .step(&mut events)
+                    .map(|(route, pos)| clipsync_proto::ReturnedRoute {
+                        session,
+                        inventories: *revisions,
+                        route,
+                        pos,
+                    });
+        }
+        let v4 = inc.routes.is_some();
         let mut returned = None;
         if let Some(track) = inc.span.as_mut() {
             if let Some((x, y)) = self.emu.cursor() {
@@ -1616,7 +1841,7 @@ impl State {
             && !events.is_empty()
             && let Err(e) = self.emu.emit(&events).await
         {
-            if matches!(e, InputError::Locked) {
+            if v4 || matches!(e, InputError::Locked) {
                 // The screen locked in the middle of the session: the source gets the cursor back.
                 self.incoming.remove(&from);
                 self.release_all().await;
@@ -1628,6 +1853,27 @@ impl State {
         if !self.authorized(from, context) {
             self.reconcile_incoming(from).await;
             return;
+        }
+        if v4 {
+            let rev = self
+                .incoming
+                .get(&from)
+                .and_then(|i| i.routes.as_ref())
+                .map(|(_, r)| r.target);
+            if !self.confirm_local_inventory(rev.unwrap_or(0)).await
+                || !self.authorized(from, context)
+            {
+                self.incoming.remove(&from);
+                self.release_all().await;
+                return;
+            }
+        }
+        if let Some(returned) = returned_route {
+            if let Some(i) = self.incoming.get_mut(&from) {
+                i.active = false;
+            }
+            self.release_all().await;
+            self.send_v3(from, context.connection, InputMsg::ReturnedRoute(returned));
         }
         if let Some(pos) = returned {
             if let Some(i) = self.incoming.get_mut(&from) {
