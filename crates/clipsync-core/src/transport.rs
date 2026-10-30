@@ -15,10 +15,10 @@ use clipsync_proto::{
     ALPN_MESH, BlockRecord, ClipMsg, CloseCode, Datagram, EventId, Frame, Hello, InputDatagram,
     MAX_CONTROL_FRAME_BYTES, MAX_FRAME_BYTES, MAX_RECENT_BLOCKS, MAX_RECENT_REMOVALS,
     MIN_PROTOCOL_VERSION, ModuleHost, ModuleInput, ModuleKind, ModuleMsg, ModuleSet,
-    PROTOCOL_VERSION, PeerId, PeerInfo, PeerPerms, PeerState, PeerStatus, RemovalRecord, SendError,
-    WireError, authorize_inbound, authorize_inbound_datagram, authorize_outbound,
-    authorize_outbound_datagram, decode_datagram, encode_datagram, encode_frame, min_version,
-    read_frame, write_frame,
+    PROTOCOL_VERSION, PeerId, PeerInfo, PeerInputContext, PeerPerms, PeerState, PeerStatus,
+    ReceiveContext, RejectReason, RemovalRecord, SendError, WireError, authorize_inbound,
+    authorize_inbound_datagram, authorize_outbound, authorize_outbound_datagram, decode_datagram,
+    encode_datagram, encode_frame, min_version, read_frame, write_frame,
 };
 use quinn::{Connection, Endpoint, RecvStream, SendStream, VarInt};
 use tokio::sync::{Notify, mpsc, watch};
@@ -27,6 +27,8 @@ use tokio::time::timeout;
 use crate::tls::{self, PinSet, PinVerifier, VerifyMode};
 use crate::{CoreError, Identity, PeerEntry, Peers, msg};
 
+const RELIABLE_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_READERS: usize = 32;
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(10);
 const BACKOFF_MIN: Duration = Duration::from_secs(1);
@@ -112,6 +114,7 @@ struct Inner {
     server_verifier: Arc<PinVerifier>,
     modules: HashMap<ModuleKind, mpsc::Sender<ModuleInput>>,
     paused: AtomicBool,
+    lifecycle: watch::Sender<clipsync_proto::HostLifecycle>,
     peers: Mutex<HashMap<PeerId, Slot>>,
     /// Newest first, at most MAX_RECENT_BLOCKS. Locked on its own, never inside `peers`.
     blocks: Mutex<VecDeque<BlockRecord>>,
@@ -127,6 +130,7 @@ struct Inner {
 }
 
 struct Slot {
+    input_epoch: u64,
     entry: PeerEntry,
     state: PeerState,
     active: Option<Active>,
@@ -151,6 +155,7 @@ struct Active {
 impl Slot {
     fn new(entry: PeerEntry) -> Self {
         Self {
+            input_epoch: 0,
             entry,
             state: PeerState::Disconnected,
             active: None,
@@ -243,6 +248,11 @@ impl Mesh {
             server_verifier,
             modules: opts.modules,
             paused: AtomicBool::new(opts.paused),
+            lifecycle: watch::Sender::new(clipsync_proto::HostLifecycle {
+                paused: opts.paused,
+                pause_generation: 0,
+                stopped: false,
+            }),
             peers: Mutex::new(slots),
             blocks: Mutex::new(VecDeque::new()),
             removals: Mutex::new(VecDeque::new()),
@@ -314,7 +324,22 @@ impl Mesh {
 
     /// Applies at once and tells every module (ModuleInput::Paused). Persisting is the agent's job.
     pub async fn set_paused(&self, paused: bool) {
-        self.inner.paused.store(paused, Ordering::SeqCst);
+        {
+            let mut slots = self.inner.lock();
+            if self.inner.paused.swap(paused, Ordering::SeqCst) != paused {
+                for slot in slots.values_mut() {
+                    slot.input_epoch = self.inner.next_gen.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+            // Same lock as authority: concurrent Pause/Resume cannot publish out of order.
+            self.inner.lifecycle.send_modify(|s| {
+                if paused {
+                    s.pause_generation = s.pause_generation.saturating_add(1);
+                }
+                s.stopped |= s.pause_generation == u64::MAX;
+                s.paused = paused;
+            });
+        }
         self.inner.broadcast(|| ModuleInput::Paused(paused)).await;
     }
 
@@ -385,6 +410,9 @@ impl Mesh {
                         let changed =
                             slot.entry.perms != entry.perms || slot.entry.name != entry.name;
                         let readdressed = slot.entry.addr != entry.addr;
+                        if slot.entry.perms.input_in != entry.perms.input_in {
+                            slot.input_epoch = inner.next_gen.fetch_add(1, Ordering::SeqCst);
+                        }
                         slot.entry = entry;
                         if changed && slot.active.is_some() {
                             up.push(slot.info());
@@ -400,6 +428,7 @@ impl Mesh {
                 }
             }
         }
+        inner.lifecycle.send_modify(|_| {});
         // The control task writes the Bye; the close waits the same grace as a shutdown Bye.
         let mut told = false;
         for (_, revoke, version) in &closing {
@@ -428,6 +457,7 @@ impl Mesh {
     /// Bye on every control stream, then close every connection with CloseCode::Shutdown.
     pub async fn shutdown(&self) {
         let inner = &self.inner;
+        inner.lifecycle.send_modify(|s| s.stopped = true);
         inner.stop.send_replace(true);
         tokio::time::sleep(BYE_GRACE).await;
         let conns: Vec<Connection> = inner
@@ -463,6 +493,31 @@ impl Inner {
         self.paused.load(Ordering::SeqCst)
     }
 
+    fn input_context(&self, peer: PeerId) -> Option<PeerInputContext> {
+        let slots = self.lock();
+        let slot = slots.get(&peer)?;
+        let active = slot.active.as_ref()?;
+        Some(PeerInputContext {
+            connection: active.generation,
+            input_epoch: slot.input_epoch,
+            input_in: slot.entry.perms.input_in,
+            paused: self.paused(),
+            connected: active.conn.close_reason().is_none(),
+        })
+    }
+    fn receive_context(
+        &self,
+        peer: PeerId,
+        generation: u64,
+        stream: Option<u64>,
+    ) -> Option<ReceiveContext> {
+        let c = self.input_context(peer)?;
+        (c.connection == generation && c.connected).then_some(ReceiveContext {
+            connection: generation,
+            input_epoch: c.input_epoch,
+            stream,
+        })
+    }
     fn perms_of(&self, peer: &PeerId) -> Option<PeerPerms> {
         self.lock().get(peer).map(|s| s.entry.perms)
     }
@@ -478,14 +533,18 @@ impl Inner {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
         let mut blocks = self.blocks.lock().unwrap_or_else(PoisonError::into_inner);
-        blocks.push_front(BlockRecord {
-            at_unix_ms,
-            peer,
-            peer_name,
-            module,
-            reason,
-        });
-        blocks.truncate(MAX_RECENT_BLOCKS);
+        push_block_record(
+            &mut blocks,
+            BlockRecord {
+                occurrences: 1,
+                last_unix_ms: at_unix_ms,
+                at_unix_ms,
+                peer,
+                peer_name,
+                module,
+                reason,
+            },
+        );
     }
 
     /// The peer refused our certificate: it no longer has us paired (revoked while we were away,
@@ -527,9 +586,20 @@ impl Inner {
     }
 
     async fn broadcast(&self, make: impl Fn() -> ModuleInput) {
+        // A stalled clipboard queue must not prevent Input's PeerDown/Paused notification.
+        let mut waiting = tokio::task::JoinSet::new();
         for tx in self.modules.values() {
-            let _ = tx.send(make()).await;
+            match tx.try_send(make()) {
+                Ok(()) | Err(mpsc::error::TrySendError::Closed(_)) => {}
+                Err(mpsc::error::TrySendError::Full(message)) => {
+                    let tx = tx.clone();
+                    waiting.spawn(async move {
+                        let _ = timeout(RELIABLE_TIMEOUT, tx.send(message)).await;
+                    });
+                }
+            }
         }
+        while waiting.join_next().await.is_some() {}
     }
 
     async fn deliver(&self, kind: ModuleKind, input: ModuleInput) {
@@ -787,6 +857,7 @@ impl Inner {
                             dialed_by,
                             generation,
                         });
+                        slot.input_epoch = generation;
                         slot.state = PeerState::Connected;
                         slot.refused = false;
                         Installed::Won {
@@ -805,6 +876,7 @@ impl Inner {
             Some(Installed::Lost) => return close(&conn, CloseCode::Duplicate),
             Some(Installed::Won { old, fresh, info }) => (old, fresh, info),
         };
+        self.lifecycle.send_modify(|_| {});
         if let Some(old) = old {
             close(&old, CloseCode::Duplicate);
         }
@@ -813,8 +885,8 @@ impl Inner {
             self.clone()
                 .control_task(peer, conn.clone(), send, recv, revoke),
         );
-        tokio::spawn(self.clone().uni_task(peer, conn.clone()));
-        tokio::spawn(self.clone().datagram_task(peer, conn.clone()));
+        tokio::spawn(self.clone().uni_task(peer, generation, conn.clone()));
+        tokio::spawn(self.clone().datagram_task(peer, generation, conn.clone()));
         let watcher = self.clone();
         tokio::spawn(async move {
             let reason = conn.closed().await;
@@ -846,6 +918,7 @@ impl Inner {
             }
         };
         if lost {
+            self.lifecycle.send_modify(|_| {});
             tracing::info!(peer = %peer, reason = %reason, "disconnected");
             self.broadcast(|| ModuleInput::PeerDown(peer)).await;
         }
@@ -901,24 +974,52 @@ impl Inner {
         }
     }
 
-    async fn uni_task(self: Arc<Self>, from: PeerId, conn: Connection) {
-        while let Ok(mut recv) = conn.accept_uni().await {
-            let this = self.clone();
-            let conn = conn.clone();
-            tokio::spawn(async move {
-                match read_frame(&mut recv, MAX_FRAME_BYTES).await {
-                    Ok(frame) => this.handle_frame(from, frame, &conn).await,
-                    Err(WireError::TooLarge { len, .. }) => {
-                        let _ = recv.stop(varint(CloseCode::Protocol));
-                        tracing::warn!(peer = %from, len, "module frame above the limit refused");
-                    }
-                    Err(e) => tracing::debug!(peer = %from, error = %e, "bad module frame"),
+    async fn uni_task(self: Arc<Self>, from: PeerId, generation: u64, conn: Connection) {
+        let mut readers = tokio::task::JoinSet::new();
+        loop {
+            tokio::select! {
+                biased;
+                _=conn.closed()=>break,
+                done=readers.join_next(), if !readers.is_empty()=> {
+                    if matches!(done,Some(Ok(true))) {break;}
                 }
-            });
+                accepted=conn.accept_uni(), if readers.len()<MAX_READERS=> {
+                    let Ok(mut recv)=accepted else {break};
+                    let deadline=tokio::time::Instant::now()+RELIABLE_TIMEOUT;
+                    let Some(context)=self.receive_context(from,generation,Some(recv.id().index())) else {break};
+                    let this=self.clone(); let connection=conn.clone();
+                    readers.spawn(async move {
+                        let work=async {
+                            match read_frame(&mut recv,MAX_FRAME_BYTES).await {
+                                Ok(frame)=>this.handle_frame(from,frame,&connection,context).await,
+                                Err(WireError::TooLarge{..})=>{let _=recv.stop(varint(CloseCode::Protocol));}
+                                Err(_)=>{}
+                            }
+                        };
+                        if tokio::time::timeout_at(deadline,work).await.is_err() {
+                            let _=recv.stop(varint(CloseCode::Protocol));
+                            close(&connection,CloseCode::Protocol);
+                            true
+                        } else {false}
+                    });
+                }
+            }
+        }
+        readers.abort_all();
+        while readers.join_next().await.is_some() {}
+        // The watcher may win this race; uninstall checks the generation and publishes once.
+        if let Some(reason) = conn.close_reason() {
+            self.uninstall(from, generation, reason).await;
         }
     }
 
-    async fn handle_frame(&self, from: PeerId, frame: Frame, conn: &Connection) {
+    async fn handle_frame(
+        &self,
+        from: PeerId,
+        frame: Frame,
+        conn: &Connection,
+        context: ReceiveContext,
+    ) {
         match frame {
             Frame::Module(m) => {
                 let Some(perms) = self.perms_of(&from) else {
@@ -926,8 +1027,15 @@ impl Inner {
                 };
                 match authorize_inbound(self.local, &perms, self.paused(), &m) {
                     Ok(()) => {
-                        self.deliver(m.kind(), ModuleInput::Reliable { from, msg: m })
-                            .await
+                        self.deliver(
+                            m.kind(),
+                            ModuleInput::Reliable {
+                                from,
+                                msg: m,
+                                context,
+                            },
+                        )
+                        .await
                     }
                     Err(reason) => {
                         self.push_block(Some(from), Some(m.kind()), reason.pt().to_string());
@@ -965,21 +1073,25 @@ impl Inner {
         }
     }
 
-    async fn datagram_task(self: Arc<Self>, from: PeerId, conn: Connection) {
+    async fn datagram_task(self: Arc<Self>, from: PeerId, generation: u64, conn: Connection) {
         let mut dropped: u64 = 0;
         while let Ok(bytes) = conn.read_datagram().await {
             let Ok(Datagram::Input(dg)) = decode_datagram(&bytes) else {
                 dropped += 1;
                 continue;
             };
-            let allowed = self
-                .perms_of(&from)
-                .is_some_and(|p| authorize_inbound_datagram(self.local, &p, self.paused()).is_ok());
+            let Some(context) = self.receive_context(from, generation, None) else {
+                break;
+            };
+            let allowed = self.input_context(from).is_some_and(|c| c.permits(context))
+                && self.perms_of(&from).is_some_and(|p| {
+                    authorize_inbound_datagram(self.local, &p, self.paused()).is_ok()
+                });
             let delivered = allowed
-                && self
-                    .modules
-                    .get(&ModuleKind::Input)
-                    .is_some_and(|tx| tx.try_send(ModuleInput::Datagram { from, dg }).is_ok());
+                && self.modules.get(&ModuleKind::Input).is_some_and(|tx| {
+                    tx.try_send(ModuleInput::Datagram { from, dg, context })
+                        .is_ok()
+                });
             if !delivered {
                 dropped += 1;
             }
@@ -990,22 +1102,53 @@ impl Inner {
     }
 }
 
+/// Quinn's ordinary Drop finishes a prefix. An interrupted frame must be reset instead.
+struct PendingSend {
+    stream: SendStream,
+    finished: bool,
+}
+impl Drop for PendingSend {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = self.stream.reset(varint(CloseCode::Protocol));
+        }
+    }
+}
 async fn send_uni(conn: &Connection, frame: &Frame) -> Result<(), SendError> {
+    let deadline = tokio::time::Instant::now() + RELIABLE_TIMEOUT;
     let buf = encode_frame(frame, MAX_FRAME_BYTES).map_err(|e| match e {
         WireError::TooLarge { .. } => SendError::TooLarge,
         other => SendError::Transport(other.to_string()),
     })?;
-    let transport = |e: &dyn std::fmt::Display| SendError::Transport(e.to_string());
-    let mut s = conn.open_uni().await.map_err(|e| transport(&e))?;
-    s.write_all(&buf).await.map_err(|e| transport(&e))?;
-    s.finish().map_err(|e| transport(&e))?;
-    Ok(())
+    tokio::time::timeout_at(deadline, async {
+        let transport = |e: &dyn std::fmt::Display| SendError::Transport(e.to_string());
+        let stream = conn.open_uni().await.map_err(|e| transport(&e))?;
+        let mut pending = PendingSend {
+            stream,
+            finished: false,
+        };
+        pending
+            .stream
+            .write_all(&buf)
+            .await
+            .map_err(|e| transport(&e))?;
+        pending.stream.finish().map_err(|e| transport(&e))?;
+        pending.finished = true;
+        Ok(())
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(SendError::Transport(
+            "reliable send deadline exceeded".into(),
+        ))
+    })
 }
 
 /// The core's side of the module contract.
 struct MeshHost(Arc<Inner>);
 
 struct Route {
+    generation: u64,
     conn: Connection,
     perms: PeerPerms,
     remote: ModuleSet,
@@ -1018,6 +1161,7 @@ impl MeshHost {
         let slot = slots.get(to).ok_or(SendError::NotConnected)?;
         let active = slot.active.as_ref().ok_or(SendError::NotConnected)?;
         Ok(Route {
+            generation: active.generation,
             conn: active.conn.clone(),
             perms: slot.entry.perms,
             remote: active.remote,
@@ -1046,6 +1190,49 @@ impl ModuleHost for MeshHost {
         self.0.paused()
     }
 
+    fn lifecycle_receiver(&self) -> Option<watch::Receiver<clipsync_proto::HostLifecycle>> {
+        Some(self.0.lifecycle.subscribe())
+    }
+
+    fn peer_input_context(&self, peer: PeerId) -> Option<PeerInputContext> {
+        self.0.input_context(peer)
+    }
+    async fn send_reliable_on(
+        &self,
+        to: PeerId,
+        connection: u64,
+        msg: ModuleMsg,
+    ) -> Result<(), SendError> {
+        let r = self.route(&to)?;
+        if r.generation != connection {
+            return Err(SendError::NotConnected);
+        }
+        authorize_outbound(self.0.local, &r.perms, r.remote, self.0.paused(), &msg)?;
+        if r.version < min_version(&msg) {
+            return Err(SendError::RemoteTooOld);
+        }
+        send_uni(&r.conn, &Frame::Module(msg)).await
+    }
+    async fn reject_input_on(
+        &self,
+        to: PeerId,
+        connection: u64,
+        reason: RejectReason,
+    ) -> Result<(), SendError> {
+        let r = self.route(&to)?;
+        if r.generation != connection {
+            return Err(SendError::NotConnected);
+        }
+        send_uni(
+            &r.conn,
+            &Frame::Rejected {
+                kind: ModuleKind::Input,
+                ref_id: None,
+                reason,
+            },
+        )
+        .await
+    }
     async fn send_reliable(&self, to: PeerId, msg: ModuleMsg) -> Result<(), SendError> {
         let r = self.route(&to)?;
         authorize_outbound(self.0.local, &r.perms, r.remote, self.0.paused(), &msg)?;
@@ -1071,5 +1258,92 @@ impl ModuleHost for MeshHost {
             quinn::SendDatagramError::TooLarge => SendError::TooLarge,
             other => SendError::Transport(other.to_string()),
         })
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod send_backpressure {
+    include!("../tests/support/send_backpressure.rs");
+}
+
+// Ordem por chegada; separado do relógio do SO para testar regressão de tempo de parede.
+fn push_block_record(blocks: &mut VecDeque<BlockRecord>, mut record: BlockRecord) {
+    if let Some(index) = blocks.iter().position(|old| {
+        old.peer == record.peer && old.module == record.module && old.reason == record.reason
+    }) && let Some(old) = blocks.remove(index)
+    {
+        record.at_unix_ms = old.at_unix_ms;
+        record.occurrences = old.occurrences.saturating_add(record.occurrences);
+    }
+    if record.last_unix_ms == 0 {
+        record.last_unix_ms = record.at_unix_ms;
+    }
+    blocks.push_front(record);
+    blocks.truncate(MAX_RECENT_BLOCKS);
+}
+
+#[cfg(test)]
+mod block_groups_tests {
+    use super::*;
+    fn record(reason: &str, at: u64) -> BlockRecord {
+        BlockRecord {
+            at_unix_ms: at,
+            last_unix_ms: at,
+            occurrences: 1,
+            peer: Some(PeerId([1; 32])),
+            peer_name: Some("nome".into()),
+            module: Some(ModuleKind::Input),
+            reason: reason.into(),
+        }
+    }
+    #[test]
+    fn thousand_repeats_share_one_group() {
+        let mut groups = VecDeque::new();
+        for at in 1..=1000 {
+            push_block_record(&mut groups, record("A", at));
+        }
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].occurrences, 1000);
+        assert_eq!(groups[0].at_unix_ms, 1);
+        assert_eq!(groups[0].last_unix_ms, 1000);
+    }
+    #[test]
+    fn arrival_lru_preserves_other_causes_and_ignores_names_and_wall_clock() {
+        let mut groups = VecDeque::new();
+        push_block_record(&mut groups, record("A", 100));
+        push_block_record(&mut groups, record("B", 200));
+        let mut renamed = record("A", 50);
+        renamed.peer_name = Some("outro nome".into());
+        push_block_record(&mut groups, renamed);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].reason, "A");
+        assert_eq!(groups[1].reason, "B");
+        assert_eq!(groups[0].at_unix_ms, 100);
+        assert_eq!(groups[0].last_unix_ms, 50);
+        assert_eq!(groups[0].occurrences, 2);
+        assert_eq!(groups[0].peer_name.as_deref(), Some("outro nome"));
+        for n in 0..19 {
+            push_block_record(&mut groups, record(&format!("nova{n}"), 1));
+        }
+        assert_eq!(groups.len(), 20);
+        assert!(!groups.iter().any(|b| b.reason == "B"));
+        assert!(groups.iter().any(|b| b.reason == "A"));
+    }
+    #[test]
+    fn counts_saturate_without_merging_different_modules_or_peers() {
+        let mut max = record("A", 10);
+        max.occurrences = u64::MAX;
+        let mut groups = VecDeque::from([max]);
+        push_block_record(&mut groups, record("A", 11));
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].occurrences, u64::MAX);
+        let mut other = record("A", 12);
+        other.module = Some(ModuleKind::Clipboard);
+        push_block_record(&mut groups, other);
+        let mut other = record("A", 13);
+        other.peer = Some(PeerId([2; 32]));
+        push_block_record(&mut groups, other);
+        assert_eq!(groups.len(), 3);
     }
 }

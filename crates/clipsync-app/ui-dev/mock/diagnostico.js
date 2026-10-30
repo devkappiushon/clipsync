@@ -48,6 +48,17 @@ function rede() {
 
 function bloqueios() {
   if (cenario === "vazio") return [];
+  if (cenario === "b01-grupos") {
+    // Dados fictícios para conferir grupos, legado, saturação JSON e reflow na tabela B01.
+    return [
+      { at_unix_ms: AGORA - 45 * MIN, peer_id: "a".repeat(64), peer_name: "par-legado-dev", module: "input", reason: "Entrada legada fictícia sem agregação." },
+      { at_unix_ms: AGORA - 35 * MIN, peer_id: "b".repeat(64), peer_name: "par-grupos-dev", module: "clipboard", reason: "Oferta fictícia recusada: malha pausada.", occurrences: 7, last_unix_ms: AGORA - 2 * MIN },
+      { at_unix_ms: AGORA - 25 * MIN, peer_id: "b".repeat(64), peer_name: "par-grupos-dev", module: "clipboard", reason: "Oferta fictícia recusada: permissão ausente.", occurrences: 3, last_unix_ms: AGORA - 5 * MIN },
+      { at_unix_ms: AGORA - 20 * MIN, peer_id: null, peer_name: null, module: null, reason: "Conexão fictícia recusada: chave desconhecida.", occurrences: 4, last_unix_ms: AGORA - 6 * MIN },
+      { at_unix_ms: AGORA - 60 * MIN, peer_id: "c".repeat(64), peer_name: "par-saturado-dev", module: "input", reason: "Recusa fictícia com contador saturado.", occurrences: JSON.parse("18446744073709551615"), last_unix_ms: AGORA - MIN },
+      { at_unix_ms: AGORA - 50 * MIN, peer_id: "d".repeat(64), peer_name: "estação-fictícia-de-validação-do-refluxo-de-texto-com-nome-muito-longo-para-a-tabela-de-diagnóstico", module: "input", reason: "Este bloqueio fictício tem um motivo deliberadamente longo para verificar a quebra de linhas na tabela: o destino recusou a emulação de teclado e mouse enquanto a sessão estava pausada, e o controle permaneceu nesta máquina até uma nova tentativa autorizada.", occurrences: 2, last_unix_ms: AGORA - 8 * MIN },
+    ];
+  }
   const casa = estado.dispositivos.find((d) => d.name === "pc-de-casa");
   const antigo = estado.dispositivos.find((d) => d.name === "notebook-antigo");
   // S7 (contrato §13.6 item 9): quando o destino recusa emular, a origem registra o motivo como bloqueio.

@@ -831,7 +831,8 @@ async fn the_lock_and_the_switch_go_through_the_agent() {
 
     // Locked to this screen, the switch is refused.
     ok(&d.a, lock(true)).await;
-    assert_eq!(err(&d.a, switch(idb)).await.code, "denied");
+    let refusal = err(&d.a, switch(idb)).await;
+    assert_eq!(refusal.code, "denied", "{refusal:?}");
     ok(&d.a, lock(false)).await;
 
     // No agent, no lock.

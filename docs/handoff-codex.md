@@ -2,6 +2,8 @@
 
 Escrito em 2026-10-28 pelo Maestro (Claude), que coordenou o time do Maestri de S1 a S7. Daqui em diante o trabalho segue com o Codex. As regras de trabalho estão no `AGENTS.md` da raiz; este documento conta o que existe, como chegou aqui e o que está aberto.
 
+> **Histórico anterior à S8 e à v0.3.1.** O estado atual está em `CONTEXTO.md` e no workboard. As seções 6 e 7 descrevem o pedido que virou a S8, registrada na §14 do contrato; não são o estado de hoje.
+
 ## 1. Em uma página
 
 - **O que é:** um app só, sem servidor central, que leva teclado, mouse e área de transferência entre os computadores do usuário, no lugar do Input Leap. Requisito central: a passagem do mouse é **por trecho de borda de monitor** (ex.: "a borda inferior só do monitor 2 do PC leva ao notebook"), não por máquina inteira.

@@ -253,12 +253,14 @@ pub(crate) async fn host_start(
         return Err(UiError::bad_request("window_secs: 1..120").with_field("window_secs"));
     }
     ctx.require_profile()?;
+    let operation = ctx.profile.reserve_operation(false)?;
     let window = Duration::from_secs(args.window_secs);
     let (listen_tx, listen_rx) = oneshot::channel::<SocketAddr>();
     let (id, task) = begin(ctx, Step::Listening, |id| {
         let profile = ctx.profile.clone();
         let confirm = confirm_fn(Arc::downgrade(ctx), id);
         async move {
+            let _operation = operation;
             let on_listen = move |addr| {
                 let _ = listen_tx.send(addr);
             };
@@ -308,10 +310,14 @@ pub(crate) async fn join_start(
         .filter(|a| a.port() != 0 && !a.ip().is_unspecified())
         .ok_or_else(|| UiError::new(code::BAD_ADDR, msg::BAD_ADDR).with_field("addr"))?;
     ctx.require_profile()?;
+    let operation = ctx.profile.reserve_operation(false)?;
     let (id, task) = begin(ctx, Step::Connecting, |id| {
         let profile = ctx.profile.clone();
         let confirm = confirm_fn(Arc::downgrade(ctx), id);
-        async move { pairing::join(&profile, addr, confirm).await }
+        async move {
+            let _operation = operation;
+            pairing::join(&profile, addr, confirm).await
+        }
     })?;
     tokio::spawn(watch(Arc::downgrade(ctx), id, task));
     Ok(JoinStarted { attempt_id: id })

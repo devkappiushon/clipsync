@@ -364,6 +364,8 @@ mod tests {
         let mut i = input();
         let l = layout(s.id, s.peers[0].id);
         s.recent_blocks.push(BlockRecord {
+            occurrences: 1,
+            last_unix_ms: 0,
             at_unix_ms: 1,
             peer: None,
             peer_name: None,

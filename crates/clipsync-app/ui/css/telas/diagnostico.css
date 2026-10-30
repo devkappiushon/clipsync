@@ -74,3 +74,17 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+@container (max-width: 360px) {
+  .diagnostico__kv {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* O diálogo é montado no body; somente seus selos de remoção podem quebrar. */
+.dialogo:has(.diagnostico__previa) .linha > .selo {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

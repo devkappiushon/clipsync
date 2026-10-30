@@ -19,7 +19,7 @@ use tokio::time::timeout;
 
 use crate::control::{self, ControlHandler};
 use crate::transport::{Mesh, MeshOptions};
-use crate::{CoreError, Profile, State, msg};
+use crate::{Config, CoreError, Profile, ProfileOperationGuard, msg};
 
 const MODULE_QUEUE: usize = 1024;
 const MODULE_STOP_GRACE: Duration = Duration::from_secs(3);
@@ -38,14 +38,76 @@ pub async fn run(
     modules: Vec<Box<dyn Module>>,
     shutdown: impl Future<Output = ()> + Send,
 ) -> Result<(), CoreError> {
-    let cfg = p.load_config()?;
+    let startup = Startup::reserve(p).await?;
+    run_reserved(startup, modules, None, None, shutdown).await
+}
+
+/// Reserva o perfil antes de ler a configuração usada para construir adapters.
+pub struct Startup {
+    profile: Profile,
+    config: Config,
+    operation: ProfileOperationGuard,
+    control: control::ControlListener,
+}
+
+impl Startup {
+    pub async fn reserve(profile: &Profile) -> Result<Self, CoreError> {
+        let operation = profile.reserve_operation(false)?;
+        let control = control::bind(&profile.socket_path()).await?;
+        Self::with_listener(profile, operation, control)
+    }
+
+    pub fn with_listener(
+        profile: &Profile,
+        operation: ProfileOperationGuard,
+        control: control::ControlListener,
+    ) -> Result<Self, CoreError> {
+        profile.check_operation(&operation, false)?;
+        if !control.belongs_to(&profile.socket_path()) {
+            return Err(CoreError::AgentAlreadyRunning);
+        }
+        let config = profile.load_config()?;
+        Ok(Self {
+            profile: profile.clone(),
+            config,
+            operation,
+            control,
+        })
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    /// A supervisão também retém a operação enquanto a readiness estiver indeterminada.
+    pub fn operation_guard(&self) -> ProfileOperationGuard {
+        self.operation.clone()
+    }
+}
+
+/// Motivo interno da recusa de readiness; não altera o protocolo local ou remoto.
+pub enum StartupFailure {
+    External,
+    Bootstrap,
+}
+
+/// Readiness pertence à tarefa que consome o listener. Falhas limpam módulos antes de liberar a reserva.
+pub async fn run_reserved(
+    startup: Startup,
+    modules: Vec<Box<dyn Module>>,
+    initial_lock: Option<bool>,
+    ready: Option<oneshot::Sender<Result<(), StartupFailure>>>,
+    shutdown: impl Future<Output = ()> + Send,
+) -> Result<(), CoreError> {
+    let Startup {
+        profile: p,
+        config: cfg,
+        operation,
+        mut control,
+    } = startup;
     let identity = p.load_identity()?;
     let peers = p.load_peers()?;
     let state = p.load_state()?;
-    // The control channel is bound before the QUIC port, so a second agent on this profile fails
-    // here, and a peer coming up (PeerUp to the modules) always finds `status` answering: requests
-    // that arrive before `serve` below wait for it.
-    let control = control::bind(&p.socket_path()).await?;
 
     let mut channels = HashMap::new();
     let mut adapters = HashMap::new();
@@ -117,8 +179,65 @@ pub async fn run(
             }
         })
     });
-    let served = control.serve(handler, shutdown).await;
+    let bootstrap = async {
+        if let Some(locked) = initial_lock {
+            if !state.paused {
+                return Err(CoreError::Profile(
+                    "bootstrap exige pausa persistida".into(),
+                ));
+            }
+            match handler
+                .ask_module(ModuleKind::Input, ModuleCommand::InputLock { locked })
+                .await
+            {
+                Ok(ModuleReply::Done) => {}
+                _ => return Err(CoreError::Profile("trava de tela não confirmada".into())),
+            }
+        }
+        // A resposta atravessa a mesma fila que recebeu Paused, confirmando seu processamento.
+        for kind in channels.keys() {
+            match handler.ask_module(*kind, ModuleCommand::Status).await {
+                Ok(ModuleReply::Status(_)) => {}
+                _ => {
+                    return Err(CoreError::Profile(
+                        "inicialização de módulo não confirmada".into(),
+                    ));
+                }
+            }
+        }
+        if !control.is_current() {
+            return Err(CoreError::AgentAlreadyRunning);
+        }
+        Ok(())
+    }
+    .await;
+    let mut operation = Some(operation);
+    let served = match bootstrap {
+        Ok(()) => {
+            if ready.is_some_and(|ready| ready.send(Ok(())).is_err()) {
+                // O chamador já encerrou a espera: sucesso tardio não libera a operação.
+                Err(CoreError::Profile(
+                    "inicialização cancelada antes da confirmação".into(),
+                ))
+            } else {
+                drop(operation.take());
+                control.serve_reserved(handler.clone(), shutdown).await
+            }
+        }
+        Err(error) => {
+            if let Some(ready) = ready {
+                let failure = if matches!(error, CoreError::AgentAlreadyRunning) {
+                    StartupFailure::External
+                } else {
+                    StartupFailure::Bootstrap
+                };
+                let _ = ready.send(Err(failure));
+            }
+            Err(error)
+        }
+    };
 
+    drop(handler);
     for tx in channels.values() {
         let _ = tx.send(ModuleInput::Shutdown).await;
     }
@@ -128,6 +247,7 @@ pub async fn run(
     })
     .await;
     tasks.abort_all();
+    while tasks.join_next().await.is_some() {}
     if let Some(r) = revocations {
         r.abort();
     }
@@ -140,6 +260,8 @@ pub async fn run(
     if let Some(addr) = bound {
         wait_port_released(addr).await;
     }
+    drop(control);
+    drop(operation);
     served
 }
 
@@ -315,8 +437,20 @@ impl Agent {
     /// state.toml cannot be written, the agent keeps the new state (a pause stays a pause) and
     /// answers with an error saying it will not survive a restart.
     async fn set_paused(&self, paused: bool) -> ControlResponse {
+        let _operation = if paused {
+            None
+        } else {
+            match self.profile.reserve_operation(false) {
+                Ok(guard) => Some(guard),
+                Err(_) => {
+                    return ControlResponse::Error {
+                        message: "reconfiguração do perfil em andamento".into(),
+                    };
+                }
+            }
+        };
         self.mesh.set_paused(paused).await;
-        match self.profile.save_state(&State { version: 1, paused }) {
+        match self.profile.set_paused(paused) {
             Ok(()) => ControlResponse::Ok,
             Err(e) => {
                 tracing::error!(paused, error = %e, "{}", msg::STATE_NOT_SAVED);
@@ -344,10 +478,24 @@ impl ControlHandler for Agent {
                     message: format!("{}: {e}", msg::PEERS_NOT_LOADED),
                 },
             },
-            ControlRequest::Module { kind, cmd } => match self.ask_module(kind, cmd).await {
-                Ok(reply) => ControlResponse::Module(reply),
-                Err(message) => ControlResponse::Error { message },
-            },
+            ControlRequest::Module { kind, cmd } => {
+                let _operation = if matches!(cmd, ModuleCommand::InputLock { .. }) {
+                    match self.profile.reserve_operation(false) {
+                        Ok(guard) => Some(guard),
+                        Err(_) => {
+                            return ControlResponse::Error {
+                                message: "reconfiguração do perfil em andamento".into(),
+                            };
+                        }
+                    }
+                } else {
+                    None
+                };
+                match self.ask_module(kind, cmd).await {
+                    Ok(reply) => ControlResponse::Module(reply),
+                    Err(message) => ControlResponse::Error { message },
+                }
+            }
         }
     }
 }

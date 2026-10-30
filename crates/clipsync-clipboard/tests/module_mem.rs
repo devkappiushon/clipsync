@@ -626,3 +626,64 @@ async fn q_clipsendcurrent_sends_the_clipboard_to_clipboard_out_peers() {
         msg::EMPTY_CLIPBOARD
     ));
 }
+
+#[tokio::test]
+async fn r_remote_clock_rejection_does_not_poison_the_next_copy() {
+    let hub = MemHub::new();
+    let mut sender = hub.add_node("origem-relógio", BOTH);
+    let receiver = spawn_clip(&hub, "destino-relógio", ClipMode::Auto).await;
+    hub.link(sender.id, receiver.id, ALL, ALL);
+    for timestamp in [0, u64::MAX, 1_000_001] {
+        send_offer(&sender, receiver.id, offer(timestamp, "recusado sintético")).await;
+        assert_eq!(
+            next_ack(&mut sender).await.state,
+            DeliveryState::Rejected(RejectReason::Invalid)
+        );
+        assert!(inbox_of(&receiver).await.is_empty());
+        assert_eq!(
+            (receiver.fake.writes(), receiver.fake.contents()),
+            (0, None)
+        );
+    }
+    receiver.fake.user_copy("cópia após recusa");
+    loop {
+        let input = tokio::time::timeout(Duration::from_secs(3), sender.rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let ModuleInput::Reliable {
+            msg: ModuleMsg::Clip(ClipMsg::Offer(o)),
+            ..
+        } = input
+        {
+            assert_eq!((o.lamport, o.text.as_str()), (1, "cópia após recusa"));
+            break;
+        }
+    }
+    assert!(matches!(
+        command(&receiver, ModuleCommand::Status).await,
+        ModuleReply::Status(_)
+    ));
+}
+
+#[tokio::test]
+async fn s_explicit_sends_do_not_claim_local_application() {
+    let hub = MemHub::new();
+    let mut source = hub.add_node("origem-explícita", BOTH);
+    let sender = spawn_clip(&hub, "emissor-explícito", ClipMode::Auto).await;
+    let target = spawn_clip(&hub, "destino-explícito", ClipMode::Auto).await;
+    hub.link(source.id, sender.id, ALL, ALL);
+    hub.link(sender.id, target.id, ALL, ALL);
+    for text in ["primeiro", "segundo", "terceiro"] {
+        let out = clip_sent(&sender, text, Some(target.id)).await;
+        assert_eq!(out[0].state, DeliveryState::Applied);
+    }
+    assert_eq!((sender.fake.writes(), sender.fake.contents()), (0, None));
+    // The local clock is now 3, but no origin has been applied/copied locally yet.
+    send_offer(&source, sender.id, offer(1, "recebido menor que envios")).await;
+    assert_eq!(next_ack(&mut source).await.state, DeliveryState::Applied);
+    assert_eq!(
+        (sender.fake.writes(), sender.fake.contents().as_deref()),
+        (1, Some("recebido menor que envios"))
+    );
+}

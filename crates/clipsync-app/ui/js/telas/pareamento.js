@@ -3,12 +3,35 @@
 
 import { api } from "../api.js";
 import { aviso, cabecalho, estadoErro } from "../areas.js";
-import { botao, campo, cartao, confirmar, esqueleto, interruptor, segmentado, selo } from "../componentes.js";
+import { abrirDialogo, botao, campo, cartao, esqueleto, interruptor, segmentado, selo } from "../componentes.js";
+import { criarAnunciador, guardarFoco, interacaoAtual, restaurarFoco } from "../acessibilidade.js";
 import { h, trocar } from "../dom.js";
 import { indicarParNoLayout, recurso } from "../estado.js";
 import { INDISPONIVEL, mensagemDe } from "../formatar.js";
 
 const JANELA_S = 120;
+
+// Cada reinício encerra a tentativa antiga antes de criar outra; nunca reutiliza código/grants.
+export async function iniciarTentativa({ comandos, modo, endereco = "", anterior = null }) {
+  if (anterior) await comandos.pairCancel({ attempt_id: anterior });
+  if (modo === "aceitar") {
+    const r = await comandos.pairHostStart({ port: 0, window_secs: JANELA_S });
+    return { step: "listening", attempt_id: r.attempt_id, port: r.port, addresses: r.addresses, expires_unix_ms: r.expires_unix_ms };
+  }
+  const r = await comandos.pairJoinStart({ addr: endereco.trim() });
+  return { step: "connecting", attempt_id: r.attempt_id, expires_unix_ms: Date.now() + JANELA_S * 1000 };
+}
+
+export function criarAvisosPrazo() {
+  let avisou30 = false;
+  let expirou = false;
+  return (prazo, agora) => {
+    if (expirou) return null;
+    if (agora >= prazo) { expirou = true; return "expirou"; }
+    if (prazo - agora <= 30000 && !avisou30) { avisou30 = true; return "30s"; }
+    return null;
+  };
+}
 
 const RESULTADOS = {
   paired: null,
@@ -52,6 +75,16 @@ export default function montar({ ir, assinar }) {
   let disponiveis = { clipboard: true, input: true };
   let relogio = null;
   let saiu = false;
+  let ocupado = false;
+  let corrigindoEndereco = false;
+  let resultadoDuranteCorrecao = null;
+  let tentativaDescartada = null;
+  let geracaoCarga = 0;
+  let consultaPendente = false;
+  let focoTentativa = null;
+  let avisosPrazo = criarAvisosPrazo();
+  let expirou = false;
+  const anuncios = criarAnunciador();
 
   // Duas colunas: à esquerda o passo atual, à direita as permissões iniciais (liberadas depois do código).
   const corpo = h("div", { class: "colunas pareamento__colunas" });
@@ -64,6 +97,7 @@ export default function montar({ ir, assinar }) {
       descricao: "Confirme o mesmo código nas duas máquinas. O código vem da conexão, não da rede.",
       acoes: [botaoCabecalho],
     }),
+    anuncios.no,
     corpo,
   );
 
@@ -77,30 +111,138 @@ export default function montar({ ir, assinar }) {
     elemento.textContent = formatarRestante(expiresUnixMs);
     relogio = setInterval(() => {
       elemento.textContent = formatarRestante(expiresUnixMs);
+      const avisoPrazo = avisosPrazo(expiresUnixMs, Date.now());
+      if (avisoPrazo === "30s") {
+        anuncios.status("Faltam 30 segundos para o pareamento expirar.");
+      }
+      if (avisoPrazo === "expirou" && !expirou) {
+        expirou = true;
+        pararRelogio();
+        anuncios.erro("O tempo de pareamento acabou. Recomece para receber um código novo.");
+        pintar();
+      }
     }, 1000);
   }
 
   async function chamar(fn) {
+    if (ocupado || saiu || (expirou && estado?.step !== "idle")) return;
+    geracaoCarga++;
+    ocupado = true;
     erroGeral = null;
+    const foco = guardarFoco(no);
+    const passo = estado?.step;
     try {
       await fn();
     } catch (erro) {
       erroGeral = mensagemDe(erro);
+      anuncios.erro(erroGeral);
+    } finally {
+      geracaoCarga++;
+      ocupado = false;
     }
-    pintar();
+    if (saiu) return;
+    const preservaInteracao = interacaoAtual(foco, no);
+    const avancar = estado?.step !== passo && preservaInteracao;
+    pintar({ foco, avancar });
+    if (erroEndereco) { anuncios.erro(erroEndereco); if (preservaInteracao) [...corpo.querySelectorAll("[data-focus-key]")].find((e) => e.dataset.focusKey === "pareamento-endereco")?.focus({ preventScroll: true }); }
+    if (consultaPendente) { consultaPendente = false; await carregar(); }
+  }
+
+  function novaTentativa() {
+    geracaoCarga++;
+    grants = { clipboard_in: false, clipboard_out: false, input_in: false };
+    confiancaTotal = false;
+    avisosPrazo = criarAvisosPrazo();
+    expirou = false;
+    resultado = null;
+    erroEndereco = null;
+    focoTentativa = null;
+    anuncios.limpar();
+  }
+
+  async function recomecar() {
+    if (ocupado || saiu) return;
+    geracaoCarga++;
+    ocupado = true;
+    const foco = guardarFoco(no);
+    try {
+      const proximo = await iniciarTentativa({ comandos: api, modo, endereco: enderecoDigitado, anterior: estado?.attempt_id });
+      if (saiu) return abandonar(proximo.attempt_id);
+      novaTentativa();
+      estado = proximo;
+      pintar({ foco, avancar: interacaoAtual(foco, no) });
+    } catch (erro) { erroGeral = mensagemDe(erro); anuncios.erro(erroGeral); pintar(); }
+    finally {
+      geracaoCarga++;
+      ocupado = false;
+      if (consultaPendente && !saiu) { consultaPendente = false; await carregar(); }
+    }
+  }
+
+  async function corrigirEndereco() {
+    if (ocupado || saiu || modo !== "conectar") return;
+    const minha = ++geracaoCarga;
+    const foco = guardarFoco(no);
+    ocupado = true;
+    corrigindoEndereco = true;
+    try {
+      const tentativa = estado?.attempt_id;
+      if (tentativa != null) await api.pairCancel({ attempt_id: tentativa });
+      if (saiu || minha !== geracaoCarga) return;
+      // Cancelar confirma a decisão, mas o watcher ainda pode publicar essa tentativa.
+      // Só há um slot no backend; basta reter o último descarte, inclusive ao iniciar outra.
+      if (tentativa != null) tentativaDescartada = tentativa;
+      novaTentativa();
+      erroGeral = null;
+      estado = { step: "idle", attempt_id: null };
+      pintar({ foco, avancar: interacaoAtual(foco, no) });
+    } catch (erro) {
+      if (saiu || minha !== geracaoCarga) return;
+      // Se o cancelamento foi recusado, o resultado recebido continua sendo válido.
+      if (resultadoDuranteCorrecao) {
+        erroGeral = null;
+        corrigindoEndereco = false;
+        receberResultado(resultadoDuranteCorrecao);
+        return;
+      }
+      erroGeral = mensagemDe(erro);
+      anuncios.erro(erroGeral);
+      pintar({ foco });
+    } finally {
+      geracaoCarga++;
+      ocupado = false;
+      corrigindoEndereco = false;
+      resultadoDuranteCorrecao = null;
+      if (consultaPendente && !saiu) { consultaPendente = false; await carregar(); }
+    }
+  }
+
+  function botaoCorrigirEndereco() {
+    return modo === "conectar" && botao({
+      rotulo: "Corrigir endereço", dataset: { focusKey: "pareamento-corrigir-endereco" },
+      aoClicar: corrigirEndereco,
+    });
   }
 
   async function carregar() {
-    corpo.classList.add("colunas--unica");
-    trocar(corpo, esqueleto({ linhas: 4 }));
+    if (saiu) return;
+    if (ocupado) { consultaPendente = true; return; }
+    const minha = ++geracaoCarga;
+    const foco = guardarFoco(no);
+    if (!estado) { corpo.classList.add("colunas--unica"); trocar(corpo, esqueleto({ linhas: 4 })); }
     try {
-      estado = await api.pairState();
+      const proximo = await api.pairState();
+      if (saiu || minha !== geracaoCarga) return;
+      if (proximo.attempt_id != null && proximo.attempt_id === tentativaDescartada) return;
+      estado = proximo;
       if (estado.step === "permissions") disponiveis = disponiveisDoEstado();
     } catch (erro) {
-      trocar(corpo, estadoErro(erro, carregar));
+      if (saiu || minha !== geracaoCarga) return;
+      anuncios.erro(mensagemDe(erro));
+      trocar(corpo, estadoErro(erro, carregar, { anunciar: false }));
       return;
     }
-    pintar();
+    pintar({ foco });
   }
 
   function disponiveisDoEstado() {
@@ -131,7 +273,7 @@ export default function montar({ ir, assinar }) {
   function abas() {
     const ocioso = estado.step === "idle";
     return segmentado({
-      rotulo: "Modo de pareamento",
+      rotulo: "Modo de pareamento", chaveFoco: "pareamento-modo",
       opcoes: [
         { valor: "aceitar", rotulo: "Aceitar", desabilitada: !ocioso },
         { valor: "conectar", rotulo: "Conectar", desabilitada: !ocioso },
@@ -155,22 +297,22 @@ export default function montar({ ir, assinar }) {
           "div",
           { class: "linha" },
           botao({
-            rotulo: "Aceitar pareamento",
+            rotulo: "Aceitar pareamento", dataset: { focusKey: "pareamento-aceitar" },
             variante: "primario",
             icone: "avancar",
             aoClicar: () =>
               chamar(async () => {
-                resultado = null;
-                const r = await api.pairHostStart({ port: 0, window_secs: JANELA_S });
-                if (saiu) return abandonar(r.attempt_id);
-                estado = { ...estado, step: "listening", attempt_id: r.attempt_id, port: r.port, addresses: r.addresses, expires_unix_ms: r.expires_unix_ms };
+                novaTentativa();
+                const proximo = await iniciarTentativa({ comandos: api, modo: "aceitar" });
+                if (saiu) return abandonar(proximo.attempt_id);
+                estado = proximo;
               }),
           }),
         ),
       );
     } else {
       const entrada = campo({
-        rotulo: "Endereço e porta da outra máquina",
+        rotulo: "Endereço e porta da outra máquina", dataset: { focusKey: "pareamento-endereco" },
         tipo: "mono",
         valor: enderecoDigitado,
         placeholder: "192.168.0.10:53122",
@@ -183,11 +325,11 @@ export default function montar({ ir, assinar }) {
       const conectar = () =>
         chamar(async () => {
           erroEndereco = null;
-          resultado = null;
+          novaTentativa();
           try {
-            const r = await api.pairJoinStart({ addr: enderecoDigitado.trim() });
-            if (saiu) return abandonar(r.attempt_id);
-            estado = { ...estado, step: "connecting", attempt_id: r.attempt_id, expires_unix_ms: Date.now() + JANELA_S * 1000 };
+            const proximo = await iniciarTentativa({ comandos: api, modo: "conectar", endereco: enderecoDigitado });
+            if (saiu) return abandonar(proximo.attempt_id);
+            estado = proximo;
           } catch (erro) {
             if (erro?.code === "bad_addr") {
               erroEndereco = mensagemDe(erro);
@@ -206,7 +348,7 @@ export default function montar({ ir, assinar }) {
         "div",
         { class: "pilha" },
         entrada,
-        h("div", { class: "linha" }, botao({ rotulo: "Conectar", variante: "primario", icone: "avancar", aoClicar: conectar })),
+        h("div", { class: "linha" }, botao({ rotulo: "Conectar", dataset: { focusKey: "pareamento-conectar" }, variante: "primario", icone: "avancar", aoClicar: conectar })),
       );
     }
     return cartao({ filhos: [conteudo] });
@@ -244,7 +386,7 @@ export default function montar({ ir, assinar }) {
       "section",
       { class: "cartao" },
       h("div", { class: "cartao__cabecalho" }, h("h2", null, "Aguardando a outra máquina"), selo("acento", "escutando")),
-      h("p", null, "Na outra máquina, escolha Conectar e digite este endereço:"),
+      h("p", null, "Os dois computadores precisam se alcançar pela rede. Digite na outra máquina um destes endereços:"),
       h("ul", { class: "pareamento__enderecos" }, (estado.addresses ?? []).map(enderecoCopiavel)),
       h("p", { class: "pareamento__restante" }, h("span", { class: "nota" }, "Tempo restante para conectar"), linhaTempo()),
     );
@@ -252,7 +394,8 @@ export default function montar({ ir, assinar }) {
 
   function cartaoConectando() {
     return cartao({
-      filhos: [h("p", { class: "pareamento__passo" }, h("span", { class: "girador", "aria-hidden": "true" }), `Conectando a ${enderecoDigitado.trim() || "outra máquina"}.`)],
+      titulo: "Conectando à outra máquina",
+      filhos: [linhaTempo(), h("p", { class: "pareamento__passo" }, h("span", { class: "girador", "aria-hidden": "true" }), `Conectando a ${enderecoDigitado.trim() || "outra máquina"}.`)],
     });
   }
 
@@ -272,13 +415,13 @@ export default function montar({ ir, assinar }) {
           h("span", { class: "mono muted" }, par.short),
           h("span", { class: "muted" }, ` · módulos: ${rotuloModulos(par.modules ?? {})}`),
         ),
-      h("p", { class: "pareamento__codigo", "aria-live": "polite", "aria-label": `Código ${estado.code}` }, estado.code),
+      h("p", { class: "pareamento__codigo" }, estado.code),
       h("p", { class: "muted" }, "Confirme que a outra máquina mostra o mesmo código. Se for diferente, alguém pode estar no meio da conexão."),
       h(
         "div",
         { class: "linha pareamento__decisao" },
         botao({
-          rotulo: "São iguais",
+          rotulo: "São iguais", dataset: { focusKey: "pareamento-confirmar-codigo" },
           variante: "primario",
           icone: "verificar",
           aoClicar: () =>
@@ -299,7 +442,7 @@ export default function montar({ ir, assinar }) {
   function cartaoConfirmado() {
     return cartao({
       titulo: "Código confirmado",
-      filhos: [h("p", null, `Escolha, no painel de permissões, o que ${(estado.peer ?? { name: "a outra máquina" }).name} pode fazer com esta máquina. Depois, clique em Concluir.`)],
+      filhos: [linhaTempo(), h("p", null, `Escolha, no painel de permissões, o que ${(estado.peer ?? { name: "a outra máquina" }).name} pode fazer com esta máquina. Depois, clique em Concluir.`)],
     });
   }
 
@@ -307,6 +450,7 @@ export default function montar({ ir, assinar }) {
     return cartao({
       titulo: "Aguardando a outra máquina",
       filhos: [
+        linhaTempo(),
         h("p", { class: "pareamento__passo" }, h("span", { class: "girador", "aria-hidden": "true" }), "Esperando a outra máquina confirmar as permissões dela."),
         h("p", { class: "muted" }, "Sem decisão em 2 minutos, o pareamento é recusado nos dois lados."),
       ],
@@ -331,7 +475,7 @@ export default function montar({ ir, assinar }) {
         { class: "pilha" },
         h("h3", { class: "pareamento__grupo" }, "Área de transferência"),
         interruptor({
-          rotulo: "Pode me enviar clipboard",
+          rotulo: "Pode me enviar clipboard", chaveFoco: "pareamento-clipboard-in",
           descricao: motivoClipboard ?? "O texto que ele copiar chega à caixa desta máquina.",
           marcado: grants.clipboard_in,
           desabilitado: !ativo || motivoClipboard !== null,
@@ -340,7 +484,7 @@ export default function montar({ ir, assinar }) {
           },
         }),
         interruptor({
-          rotulo: "Pode receber meu clipboard",
+          rotulo: "Pode receber meu clipboard", chaveFoco: "pareamento-clipboard-out",
           descricao: motivoClipboard ?? "O texto que você copiar aqui vai para ele.",
           marcado: grants.clipboard_out,
           desabilitado: !ativo || motivoClipboard !== null,
@@ -350,7 +494,7 @@ export default function montar({ ir, assinar }) {
         }),
         h("h3", { class: "pareamento__grupo pareamento__grupo--separado" }, "Teclado e mouse"),
         interruptor({
-          rotulo: "Pode controlar meu teclado e mouse",
+          rotulo: `${par.name} pode controlar o teclado e mouse deste computador`, chaveFoco: "pareamento-input-in",
           descricao: motivoInput ?? "Confiança total: ele pode digitar e clicar qualquer coisa aqui enquanto estiver autorizado.",
           marcado: grants.input_in,
           desabilitado: !ativo || motivoInput !== null,
@@ -360,23 +504,29 @@ export default function montar({ ir, assinar }) {
               confiancaTotal = false;
               return;
             }
-            const ok = await confirmar({
-              titulo: `Deixar ${par.name} controlar esta máquina?`,
-              mensagem: "Confiança total: esse dispositivo poderá digitar e clicar qualquer coisa aqui enquanto estiver autorizado. Você pode desligar quando quiser em Dispositivos.",
-              rotuloConfirmar: "Conceder controle",
+            const tentativa = estado.attempt_id;
+            const { promessa } = abrirDialogo({
+              titulo: `Deixar ${par.name} controlar este computador?`,
+              conteudo: h("p", null, "Confiança total: esse computador poderá digitar e clicar qualquer coisa aqui enquanto estiver autorizado. Conceda no computador que receberá o controle."),
+              raizRetorno: no,
+              acoes: [
+                { rotulo: "Cancelar", valor: "cancelar", foco: true },
+                { rotulo: "Conceder controle", valor: "conceder", variante: "primario" },
+              ],
             });
+            const ok = (await promessa) === "conceder" && !expirou && estado.attempt_id === tentativa && estado.step === "permissions";
             if (!ok) throw new Error("cancelado");
             grants.input_in = true;
             confiancaTotal = true;
           },
         }),
-        interruptor({ rotulo: "É controlada por esta máquina", descricao: INDISPONIVEL, marcado: false, desabilitado: true }),
+        interruptor({ rotulo: `Controlar ${par.name} a partir deste computador`, descricao: `Autorize a entrada em ${par.name}, na tela Dispositivos dele. ${INDISPONIVEL}`, marcado: false, desabilitado: true }),
       ),
       h(
         "div",
         { class: "pareamento__concluir" },
         botao({
-          rotulo: "Concluir",
+          rotulo: "Concluir", dataset: { focusKey: "pareamento-concluir" },
           variante: "primario",
           icone: "verificar",
           desabilitado: !ativo,
@@ -394,7 +544,7 @@ export default function montar({ ir, assinar }) {
     if (resultado.outcome === "paired") {
       const d = resultado.device;
       return [
-        aviso("info", selo("ok", "pareado"), h("p", null, d ? `${d.name} agora faz parte da malha.` : "Dispositivo pareado.")),
+        h("div", { class: "aviso aviso--info" }, selo("ok", "pareado"), h("p", null, d ? `${d.name} agora faz parte da malha.` : "Dispositivo pareado.")),
         d &&
           h(
             "dl",
@@ -407,8 +557,8 @@ export default function montar({ ir, assinar }) {
             h("dd", null, rotuloGrants(d.perms)),
           ),
         d?.remote_modules?.input && recurso("input") && aviso("info",
-          h("p", null, "Para passar o mouse, configure a posição do outro computador na máquina que tem o mouse físico. Parear não cria a passagem automaticamente."),
-          botao({ rotulo: "Configurar passagem do mouse", variante: "primario", aoClicar: () => { indicarParNoLayout(d.peer_id); ir("layout"); } }),
+          h("p", null, d?.perms?.input_in ? `Você permitiu que ${d.name} controle este computador. Em ${d.name}, configure a saída do computador que tem o mouse físico. Você também pode configurar uma saída daqui quando usar o mouse deste computador.` : "Para passar o mouse, configure a saída no computador que tem o mouse físico. Parear não cria a passagem automaticamente."),
+          botao({ rotulo: "Configurar saída deste computador", variante: "primario", aoClicar: () => { indicarParNoLayout(d.peer_id); ir("layout"); } }),
         ),
         h(
           "div",
@@ -418,7 +568,7 @@ export default function montar({ ir, assinar }) {
             rotulo: "Parear outro",
             icone: "mais",
             aoClicar: () => {
-              resultado = null;
+              novaTentativa();
               pintar();
             },
           }),
@@ -426,19 +576,17 @@ export default function montar({ ir, assinar }) {
       ];
     }
     return [
-      aviso("erro", h("p", null, fraseDoResultado(resultado))),
+      h("div", { class: "aviso aviso--erro" }, h("p", null, fraseDoResultado(resultado))),
       h(
         "div",
         { class: "linha" },
         botao({
-          rotulo: "Tentar de novo",
+          rotulo: "Recomeçar com novo código", dataset: { focusKey: "pareamento-recomecar" },
           variante: "primario",
           icone: "atualizar",
-          aoClicar: () => {
-            resultado = null;
-            pintar();
-          },
+          aoClicar: recomecar,
         }),
+        botaoCorrigirEndereco(),
       ),
     ];
   }
@@ -448,40 +596,69 @@ export default function montar({ ir, assinar }) {
     return partes.length > 0 ? partes.join(", ") : "nenhuma";
   }
 
-  function pintar() {
+  function pintar({ foco = guardarFoco(no), avancar = false } = {}) {
+    if (saiu || !estado) return;
+    const acompanhaTentativa = interacaoAtual(focoTentativa, no);
     pararRelogio();
-    const aviso_ = erroGeral && aviso("erro", h("p", null, erroGeral));
+    const aviso_ = erroGeral && h("div", { class: "aviso aviso--erro" }, h("p", null, erroGeral));
+    botaoCabecalho.hidden = estado.step === "idle" || !!resultado;
     if (resultado) {
-      botaoCabecalho.hidden = true;
       corpo.classList.add("colunas--unica");
       trocar(corpo, h("div", { class: "pilha" }, aviso_, cartao({ filhos: painelResultado() })));
-      return;
+    } else if (expirou) {
+      corpo.classList.add("colunas--unica");
+      trocar(corpo, h("div", { class: "pilha" }, aviso_, cartao({
+        titulo: "Tempo de pareamento esgotado",
+        filhos: [
+          h("p", null, "Recomece para criar outra tentativa e outro código. O endereço digitado será preservado; as permissões anteriores serão descartadas."),
+          h("div", { class: "linha" },
+            botao({ rotulo: "Recomeçar com novo código", variante: "primario", dataset: { focusKey: "pareamento-recomecar" }, aoClicar: recomecar }),
+            botaoCorrigirEndereco(),
+          ),
+        ],
+      })));
+    } else {
+      const passos = { listening: cartaoEscutando, connecting: cartaoConectando, code: cartaoCodigo, permissions: cartaoConfirmado, waiting_peer: cartaoAguardandoPar };
+      const permissoesVisiveis = ["permissions", "waiting_peer"].includes(estado.step);
+      corpo.classList.toggle("colunas--unica", !permissoesVisiveis);
+      trocar(corpo, h("div", { class: "pilha" }, aviso_, abas(), (passos[estado.step] ?? cartaoOcioso)()), permissoesVisiveis && painelPermissoes());
     }
-    botaoCabecalho.hidden = estado.step === "idle";
-    corpo.classList.remove("colunas--unica");
-    const passos = {
-      listening: cartaoEscutando,
-      connecting: cartaoConectando,
-      code: cartaoCodigo,
-      permissions: cartaoConfirmado,
-      waiting_peer: cartaoAguardandoPar,
-    };
-    trocar(corpo, h("div", { class: "pilha" }, aviso_, abas(), (passos[estado.step] ?? cartaoOcioso)()), painelPermissoes());
+    for (const titulo of corpo.querySelectorAll("h2")) titulo.tabIndex = -1;
+    const primeiro = () => erroEndereco || (modo === "conectar" && estado.step === "idle" && !resultado) ? [...corpo.querySelectorAll("[data-focus-key]")].find((e) => e.dataset.focusKey === "pareamento-endereco") : corpo.querySelector("h2, input:not(:disabled), button:not(:disabled)");
+    if (avancar && interacaoAtual(foco, no)) {
+      primeiro()?.focus({ preventScroll: true });
+      focoTentativa = guardarFoco(no);
+    } else if (restaurarFoco(foco, no, { fallback: primeiro }) && acompanhaTentativa) {
+      // A própria repintura da espera não encerra a posse da ação sobre o foco.
+      focoTentativa = guardarFoco(no);
+    }
+  }
+
+  function receberResultado(data) {
+    if (!estado) return;
+    if (data.attempt_id && data.attempt_id !== estado.attempt_id) return;
+    if (corrigindoEndereco) { resultadoDuranteCorrecao = data; return; }
+    geracaoCarga++;
+    const foco = focoTentativa;
+    resultado = data;
+    estado = { ...estado, step: "idle", attempt_id: null, code: null, peer: null };
+    if (data.outcome === "paired") anuncios.status("Pareamento concluído.");
+    else anuncios.erro(fraseDoResultado(data));
+    pintar({ foco, avancar: interacaoAtual(foco, no) });
   }
 
   const cancelarEventos = [
     assinar("pair_code_ready", (data) => {
-      if (!estado) return;
+      if (!estado || corrigindoEndereco) return;
+      if (data.attempt_id !== estado.attempt_id || expirou) return;
+      geracaoCarga++;
+      const foco = focoTentativa;
       estado = { ...estado, step: "code", attempt_id: data.attempt_id, code: data.code, peer: data.peer };
       resultado = null;
-      pintar();
+      anuncios.status(`Código de confirmação: ${String(data.code).split("").join(" ")}. Confira na outra máquina.`);
+      pintar({ foco, avancar: interacaoAtual(foco, no) });
     }),
-    assinar("pair_result", (data) => {
-      if (!estado) return;
-      resultado = data;
-      estado = { ...estado, step: "idle", attempt_id: null, code: null, peer: null };
-      pintar();
-    }),
+    assinar("pair_result", receberResultado),
     assinar("resync", () => carregar()),
   ];
 
@@ -491,6 +668,7 @@ export default function montar({ ir, assinar }) {
     no,
     desmontar: () => {
       saiu = true;
+      geracaoCarga++;
       pararRelogio();
       // Depois de "Concluir" (waiting_peer) a decisão já é sua e fica com a outra máquina; antes disso, sair cancela.
       if (["listening", "connecting", "code", "permissions"].includes(estado?.step)) abandonar(estado.attempt_id);

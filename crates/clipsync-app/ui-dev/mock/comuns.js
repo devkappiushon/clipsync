@@ -1,8 +1,9 @@
 // Comandos comuns (barra lateral e bandeja): app_state, agent_start, agent_stop, pause_set.
 
 import { EU, features, malha } from "./dados.js";
-import { cenario, emitir, erro, estado, plataforma, registrar } from "./nucleo.js";
+import { emitir, erro, estado, plataforma, registrar } from "./nucleo.js";
 
+import { aplicarPausa } from "./pausa.js";
 import { travessiaAtual } from "./travessia.js";
 
 registrar({
@@ -13,11 +14,12 @@ registrar({
     agent: estado.agente,
     agent_error: estado.erroAgente,
     paused: estado.pausado,
+    pause_warning: estado.avisoPausa,
     screen_locked: estado.telaTravada,
     mesh: malha(),
     modules: { ...estado.modulos },
     input_supported: true,
-    version: "0.3.1",
+    version: "0.4.0",
     platform: plataforma,
     features: features(),
     traversal: travessiaAtual(),
@@ -37,13 +39,5 @@ registrar({
     return { agent: "stopped" };
   },
 
-  pause_set: ({ paused }) => {
-    estado.pausado = paused === true;
-    // O adaptador só tenta registrar o Win+Alt+P ao pausar. Se o Windows recusar, o campo liga e o bloqueio
-    // fica registrado; ao retomar, o campo volta a false e o bloqueio continua no Diagnóstico.
-    estado.retomadaRecusada = estado.pausado && cenario === "windows-recusa";
-    if (estado.retomadaRecusada) estado.bloqueioRecusa = true;
-    emitir("pause_changed", { paused: estado.pausado });
-    return { paused: estado.pausado };
-  },
+  pause_set: ({ paused }) => aplicarPausa(paused),
 });

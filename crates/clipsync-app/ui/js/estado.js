@@ -4,6 +4,7 @@ import { api, ouvir } from "./api.js";
 import { aplicarTema } from "./tema.js";
 
 let app = null;
+let geracaoApp = 0;
 let parDoLayout = null;
 export const indicarParNoLayout = (peerId) => { parDoLayout = peerId; };
 export function consumirParDoLayout() {
@@ -16,6 +17,12 @@ const assinantes = new Map();
 
 export const obterApp = () => app;
 
+/** Posse do processo e estado persistido não substituem uma resposta de Status. */
+export function pausaObservada(estado) {
+  return ["in_app", "external"].includes(estado?.agent) && !estado.agent_error && typeof estado.paused === "boolean"
+    ? estado.paused : null;
+}
+
 /** Recurso ligado nesta versão? Ex.: recurso("peer_pause"). Sem estado carregado, false. */
 export const recurso = (nome) => app?.features?.[nome] === true;
 
@@ -24,13 +31,16 @@ export function observarApp(fn) {
   return () => aoMudarApp.delete(fn);
 }
 
-function definirApp(proximo) {
-  app = proximo;
-  for (const fn of aoMudarApp) fn(app);
+function definirApp(proximo, consultado = false) {
+  app = proximo.pause_warning === undefined && app?.pause_warning != null
+    ? { ...proximo, pause_warning: app.pause_warning } : proximo;
+  for (const fn of aoMudarApp) fn(app, consultado);
 }
 
 export async function atualizarApp() {
-  definirApp(await api.appState());
+  const minha = ++geracaoApp;
+  const proximo = await api.appState();
+  if (minha === geracaoApp) definirApp(proximo, true);
   return app;
 }
 
@@ -60,6 +70,8 @@ function reconsultarApp() {
 }
 
 function tratar({ event, data }) {
+  if (["traversal_changed", "pause_changed", "agent_state", "screen_lock_changed", "layout_changed",
+    "peer_connected", "peer_disconnected", "peer_blocked", "resync"].includes(event)) geracaoApp++;
   switch (event) {
     case "traversal_changed":
       if (app) definirApp({ ...app, traversal: data.traversal });
@@ -71,6 +83,7 @@ function tratar({ event, data }) {
       break;
     case "agent_state":
       if (app) definirApp({ ...app, agent: data.agent, agent_error: data.error });
+      reconsultarApp();
       break;
     case "screen_lock_changed":
       if (app) definirApp({ ...app, screen_locked: data.screen_locked });

@@ -32,7 +32,8 @@ fn module_err(e: clipsync_proto::ModuleError) -> Fail {
 }
 
 pub async fn run(profile: &Profile) -> Result<(), Fail> {
-    let cfg = profile.load_config()?;
+    let startup = agent::Startup::reserve(profile).await?;
+    let cfg = startup.config();
     let plan = plan(cfg.modules, clipsync_input::SUPPORTED)?;
     // a disabled module is not built: no adapter loaded, no permission asked, not announced
     let mut modules: Vec<Box<dyn Module>> = Vec::new();
@@ -59,7 +60,7 @@ pub async fn run(profile: &Profile) -> Result<(), Fail> {
     let shutdown = async {
         let _ = tokio::signal::ctrl_c().await;
     };
-    match agent::run(profile, modules, shutdown).await {
+    match agent::run_reserved(startup, modules, None, None, shutdown).await {
         Ok(()) => {
             println!("{}", msg::RUN_STOPPED);
             Ok(())

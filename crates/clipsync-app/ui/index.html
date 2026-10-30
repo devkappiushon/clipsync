@@ -47,13 +47,13 @@
       </ul>
     </nav>
 
-    <div class="estado-lateral" aria-label="Estado da malha">
+    <div class="estado-lateral" role="region" aria-label="Estado da malha">
       <p class="estado-lateral__maquina">
         <span class="ponto" id="maquina-ponto" data-estado="neutro" aria-hidden="true"></span>
         <strong class="mono" id="maquina-nome">Carregando</strong>
       </p>
       <p class="nota" id="malha" role="status"><span class="esqueleto"></span></p>
-      <button class="btn btn--secundario btn--bloco" id="pausar" type="button" aria-pressed="false" disabled>
+      <button class="btn btn--secundario btn--bloco" id="pausar" type="button" disabled>
         <span class="btn__rotulo" id="pausar-rotulo">Pausar tudo</span>
         <kbd>Win+Alt+P</kbd>
       </button>

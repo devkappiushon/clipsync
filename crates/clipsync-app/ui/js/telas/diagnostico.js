@@ -1,8 +1,9 @@
 // Tela 6 · Diagnóstico em duas colunas: Sistema, Rede e Pacote de suporte à esquerda; Adaptadores, Conflitos e
 // Últimos bloqueios (sem conteúdo) à direita. "Exportar pacote de suporte" mostra a prévia redigida antes de gravar em Downloads.
 
+import { criarAnunciador, guardarFoco, interacaoAtual } from "../acessibilidade.js";
 import { api } from "../api.js";
-import { area, aviso, cabecalho, estadoVazio, indisponivel } from "../areas.js";
+import { area, cabecalho, estadoVazio, indisponivel } from "../areas.js";
 import { abrirDialogo, botao, cartao, selo, tabela } from "../componentes.js";
 import { h, trocar } from "../dom.js";
 import { recurso } from "../estado.js";
@@ -30,9 +31,18 @@ const EVENTOS = ["peer_connected", "peer_disconnected", "peer_blocked", "resync"
 
 export default function montar({ assinar }) {
   const avisoTopo = h("div");
+  const anuncios = criarAnunciador();
+  function mostrarAviso(tom, texto) {
+    trocar(avisoTopo, texto && h("div", { class: `aviso aviso--${tom}` }, h("p", null, texto)));
+    if (!texto) anuncios.limpar();
+    else if (tom === "erro") anuncios.erro(texto);
+    else anuncios.status(texto);
+  }
 
   const regiao = area({
     linhas: 8,
+    rotulo: "Resultado do diagnóstico",
+    fallback: () => no.querySelector("[data-focus-fallback]"),
     buscar: () => api.diagnosticsGet(),
     pintar: (dados) =>
       h(
@@ -96,8 +106,8 @@ export default function montar({ assinar }) {
                   { chave: "addr", rotulo: "Endereço", tipo: "mono", render: (p) => p.addr ?? h("span", { class: "muted" }, "sem endereço") },
                   ...(recurso("peer_rtt")
                     ? [
-                        { chave: "rtt", rotulo: "RTT", tipo: "num", render: () => "" },
-                        { chave: "p95", rotulo: "Entrada p50 / p95", tipo: "num", render: () => "" },
+                        { chave: "rtt", rotulo: "RTT", tipo: "num", render: () => "sem medição" },
+                        { chave: "p95", rotulo: "Entrada p50 / p95", tipo: "num", render: () => "sem medição" },
                       ]
                     : []),
                 ],
@@ -126,7 +136,7 @@ export default function montar({ assinar }) {
   function blocoBloqueios(blocks) {
     return cartao({
       titulo: "Últimos bloqueios",
-      acoes: h("span", { class: "nota" }, "motivo, par e horário, nunca o conteúdo"),
+      acoes: h("span", { class: "nota" }, "ocorrências observadas, motivo, par e horários, nunca o conteúdo"),
       plano: blocks.length > 0,
       filhos: [
         blocks.length === 0
@@ -134,29 +144,47 @@ export default function montar({ assinar }) {
           : tabela({
               legenda: "Últimos bloqueios",
               colunas: [
-                { chave: "at", rotulo: "Horário", tipo: "num", render: (b) => formatarMomento(b.at_unix_ms) },
+                { chave: "at", rotulo: "Primeira ocorrência", tipo: "num", render: (b) => formatarMomento(b.at_unix_ms) },
+                { chave: "last", rotulo: "Última ocorrência", tipo: "num", render: (b) => formatarMomento(b.last_unix_ms || b.at_unix_ms) },
+                { chave: "occurrences", rotulo: "Ocorrências observadas", tipo: "num", render: (b) => {
+                  const count = b.occurrences ?? 1;
+                  // Acima deste limite o Number pode arredondar para cima: exiba um limite inferior exato.
+                  return count > Number.MAX_SAFE_INTEGER
+                    ? `pelo menos ${Number.MAX_SAFE_INTEGER.toLocaleString("pt-BR")}`
+                    : count.toLocaleString("pt-BR");
+                } },
                 { chave: "peer", rotulo: "Par", render: (b) => (b.peer_name ? h("strong", null, b.peer_name) : h("span", { class: "muted" }, "sem par")) },
                 { chave: "module", rotulo: "Módulo", render: (b) => (b.module ? MODULOS[b.module] ?? b.module : h("span", { class: "muted" }, "geral")) },
                 { chave: "reason", rotulo: "Motivo", render: (b) => b.reason },
               ],
               linhas: blocks,
-              chaveLinha: (b) => `${b.at_unix_ms}-${b.peer_id ?? "x"}`,
+              chaveLinha: (b) => JSON.stringify([b.peer_id ?? null, b.module ?? null, b.reason, b.at_unix_ms]),
             }),
       ],
     });
   }
 
   async function exportar() {
-    trocar(avisoTopo);
+    const foco = guardarFoco(no);
+    mostrarAviso(null);
     let previa;
     try {
       previa = await api.supportBundlePreview();
     } catch (erro) {
-      trocar(avisoTopo, aviso("erro", h("p", null, mensagemDe(erro))));
+      mostrarAviso("erro", mensagemDe(erro));
       return;
     }
-    const resultado = h("div");
-    const { promessa, dialogo } = abrirDialogo({
+    if (!no.isConnected) return;
+    if (!interacaoAtual(foco, no)) {
+      mostrarAviso("info", "Prévia pronta para consulta. Nada foi gravado.");
+      avisoTopo.append(botao({ rotulo: "Ver prévia do pacote", aoClicar: () => mostrarPrevia(previa) }));
+      return;
+    }
+    await mostrarPrevia(previa);
+  }
+
+  async function mostrarPrevia(previa) {
+    const { promessa } = abrirDialogo({
       largo: true,
       titulo: "Exportar pacote de suporte",
       conteudo: h(
@@ -168,8 +196,7 @@ export default function montar({ assinar }) {
           { class: "linha" },
           previa.redactions.length === 0 ? h("span", { class: "nota" }, "Nada precisou ser removido.") : previa.redactions.map((r) => selo("neutro", descreverRedacao(r))),
         ),
-        h("pre", { class: "diagnostico__previa", tabIndex: 0, "aria-label": "Prévia do pacote de suporte" }, previa.text),
-        resultado,
+        h("pre", { class: "diagnostico__previa", role: "region", tabIndex: 0, "aria-label": "Prévia do pacote de suporte" }, previa.text),
       ),
       acoes: [
         { rotulo: "Cancelar", valor: "cancelar" },
@@ -180,12 +207,11 @@ export default function montar({ assinar }) {
           foco: true,
           aoClicar: async () => {
             const r = await api.supportBundleExport();
-            trocar(avisoTopo, aviso("info", selo("ok", "gravado"), h("p", null, `Pacote gravado em ${r.path} (${formatarBytes(r.bytes)}). Anexe esse arquivo ao pedido de ajuda.`)));
+            mostrarAviso("info", `Pacote gravado em ${r.path} (${formatarBytes(r.bytes)}). Anexe esse arquivo ao pedido de ajuda.`);
           },
         },
       ],
     });
-    void dialogo;
     await promessa;
   }
 
@@ -198,13 +224,14 @@ export default function montar({ assinar }) {
       titulo: "Diagnóstico",
       descricao: "O que o sistema oferece, o que o ClipSync está usando e por que algo foi bloqueado.",
       acoes: [
-        botao({ rotulo: "Atualizar", icone: "atualizar", aoClicar: () => regiao.recarregar() }),
-        botao({ rotulo: "Exportar pacote de suporte", icone: "baixar", aoClicar: exportar }),
+        botao({ rotulo: "Atualizar", icone: "atualizar", dataset: { focusKey: "diagnostico-atualizar", focusFallback: "" }, aoClicar: () => regiao.recarregar() }),
+        botao({ rotulo: "Exportar pacote de suporte", icone: "baixar", dataset: { focusKey: "diagnostico-exportar" }, aoClicar: exportar }),
       ],
     }),
+    anuncios.no,
     avisoTopo,
     regiao.no,
   );
 
-  return { no, desmontar: cancelar };
+  return { no, desmontar: () => { cancelar(); regiao.desmontar(); } };
 }

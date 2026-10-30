@@ -11,3 +11,5 @@ pub const APP_FAILED: &str = "o ClipSync não conseguiu abrir";
 pub const UI_NOT_READY: &str = "a interface ainda não terminou de subir; tente de novo";
 
 pub const TRAY_TRAVERSAL_CHECKING: &str = "Mouse: conferindo configuração";
+
+pub const TRAY_PAUSE_UNKNOWN: &str = "Pausa não confirmada";

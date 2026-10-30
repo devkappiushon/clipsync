@@ -1,12 +1,31 @@
 // Tela 5 · Clipboard: faixa de estado do módulo, linha do modo (automático, manual; com confirmação indisponível)
 // com os interruptores indisponíveis nesta versão, e a caixa de recebidos em tabela com prévia sob demanda, copiar e descartar.
 
+import { criarAnunciador, guardarFoco, interacaoAtual } from "../acessibilidade.js";
 import { api } from "../api.js";
-import { area, aviso, cabecalho, estadoVazio } from "../areas.js";
+import { area, cabecalho, estadoVazio } from "../areas.js";
 import { abrirDialogo, botao, cartao, interruptor, segmentado, selo, tabela } from "../componentes.js";
-import { h, trocar } from "../dom.js";
-import { recurso } from "../estado.js";
+import { h, trocar, novoId } from "../dom.js";
+import { atualizarApp, recurso } from "../estado.js";
 import { INDISPONIVEL, formatarBytes, formatarMinutos, formatarMomento, mensagemDe, seloClassificacao, seloItemCaixa } from "../formatar.js";
+
+import { resumoEfeitos } from "./preferencias.js";
+
+export function feedbackModo(resposta) {
+  if (resposta.effects) {
+    const e = resposta.effects;
+    if (e.config_saved === false && e.pause === "not_requested" && e.stop === "not_requested" && e.start === "not_requested") {
+      return resposta.restart_needed
+        ? "O modo já estava configurado assim. O agente externo pode precisar de reinício para usar essa configuração."
+        : "O modo já estava configurado assim. Nenhuma alteração foi solicitada.";
+    }
+    const resumo = resumoEfeitos(resposta);
+    return resposta.restart_needed ? `${resumo} Reinicie o agente externo para aplicar o modo salvo.` : resumo;
+  }
+  return resposta.restart_needed
+    ? "O modo foi salvo na configuração. Reinicie o agente externo para aplicá-lo."
+    : "Modo salvo. Atualize para conferir o estado do agente.";
+}
 
 const EVENTOS = ["clip_received", "resync"];
 const COLUNAS_CAIXA = 6;
@@ -17,16 +36,30 @@ function podeCopiar(item) {
 
 export default function montar({ ir, assinar }) {
   const avisoTopo = h("div");
-  const previasAbertas = new Set();
+  const anuncios = criarAnunciador();
+  const previasAbertas = new Map();
+  const errosDaCaixa = new Map();
+  const idsPrevias = new Map();
 
   const regiao = area({
     linhas: 6,
+    rotulo: "Estado e caixa do clipboard",
     buscar: () => api.clipboardGet(),
-    pintar: (dados, recarregar) => h("div", { class: "clipboard__corpo" }, faixaEstado(dados), linhaModo(dados, recarregar), cartaoCaixa(dados, recarregar)),
+    pintar: (dados, recarregar) => {
+      for (const guardados of [previasAbertas, errosDaCaixa, idsPrevias]) {
+        for (const id of guardados.keys()) if (!dados.inbox.some((item) => item.id === id)) guardados.delete(id);
+      }
+      return h("div", { class: "clipboard__corpo" }, faixaEstado(dados), linhaModo(dados, recarregar), cartaoCaixa(dados, recarregar));
+    },
   });
 
+  const proteger = (tarefa) => (...args) => regiao.proteger(() => tarefa(...args));
+
   function mostrarAviso(tom, texto) {
-    trocar(avisoTopo, texto && aviso(tom, h("p", null, texto)));
+    trocar(avisoTopo, texto && h("div", { class: `aviso aviso--${tom}` }, h("p", null, texto)));
+    if (!texto) anuncios.limpar();
+    else if (tom === "erro") anuncios.erro(texto);
+    else anuncios.status(texto);
   }
 
   function celula(rotulo, valor, classe) {
@@ -37,7 +70,7 @@ export default function montar({ ir, assinar }) {
     return h(
       "div",
       { class: "clipboard__estado" },
-      !dados.enabled && aviso("aviso", h("p", null, "O módulo de clipboard está desligado nesta máquina. Nada entra nem sai; a caixa fica vazia.")),
+      !dados.enabled && h("div", { class: "aviso aviso--aviso" }, h("p", null, "O módulo de clipboard está desligado neste computador. Nada entra nem sai; a caixa fica vazia.")),
       cartao({
         filhos: [
           h(
@@ -55,30 +88,29 @@ export default function montar({ ir, assinar }) {
   }
 
   function linhaModo(dados, recarregar) {
-    const erroModo = h("p", { class: "campo__erro", role: "alert", hidden: true });
     const modo = segmentado({
       rotulo: "Modo do clipboard",
+      chaveFoco: "clipboard-modo",
       valor: dados.mode,
       opcoes: [
         { valor: "auto", rotulo: "Automático" },
         { valor: "manual", rotulo: "Manual" },
         { valor: "confirm", rotulo: "Com confirmação", desabilitada: !recurso("clipboard_confirm_mode") },
       ],
-      aoMudar: async (valor) => {
-        erroModo.hidden = true;
-        modo.setAttribute("aria-busy", "true");
+      aoMudar: proteger(async (valor) => {
+        mostrarAviso(null);
         try {
           const r = await api.clipboardSetMode({ mode: valor });
-          mostrarAviso("info", r.restart_needed ? "O modo foi gravado. Reinicie o agente do terminal (clipsync run) para ele valer." : null);
-          recarregar({ silencioso: true });
+          mostrarAviso("info", feedbackModo(r));
+          await atualizarApp().catch(() => {});
+          await recarregar({ silencioso: true });
         } catch (erro) {
-          erroModo.textContent = mensagemDe(erro);
-          erroModo.hidden = false;
-          recarregar({ silencioso: true });
-        } finally {
-          modo.removeAttribute("aria-busy");
+          mostrarAviso("erro", `${mensagemDe(erro)} ${resumoEfeitos(erro.details)}`.trim());
+          await atualizarApp().catch(() => {});
+          await recarregar({ silencioso: true });
+          throw erro;
         }
-      },
+      }),
     });
 
     return h(
@@ -98,9 +130,8 @@ export default function montar({ ir, assinar }) {
       h(
         "p",
         { class: "nota" },
-        `Automático aplica o texto recebido e registra na caixa. Manual só guarda na caixa. Com confirmação: ${INDISPONIVEL}.`,
+        `Automático aplica o texto recebido e registra na caixa. Manual só guarda na caixa. Com confirmação: ${INDISPONIVEL}. Se a troca reiniciar o agente deste app, a malha ficará pausada. Use Retomar tudo quando quiser.`,
       ),
-      erroModo,
     );
   }
 
@@ -125,7 +156,7 @@ export default function montar({ ir, assinar }) {
       });
     }
 
-    const itens = new Map(inbox.map((item) => [item.id, itemCaixa(item, recarregar)]));
+    const itens = new Map(inbox.map((item, i) => [item.id, itemCaixa(item, recarregar, inbox[i + 1]?.id ?? inbox[i - 1]?.id)]));
     const grade = tabela({
       legenda: "Itens recebidos",
       colunas: [
@@ -139,6 +170,7 @@ export default function montar({ ir, assinar }) {
       linhas: inbox,
       chaveLinha: (i) => i.id,
     });
+    grade.dataset.scrollKey = "clipboard-caixa";
     // A prévia e o erro de cada item ocupam uma linha própria logo abaixo dele, na largura toda.
     for (const tr of [...grade.querySelectorAll("tbody > tr")]) tr.after(itens.get(tr.dataset.chave).extra);
 
@@ -150,20 +182,29 @@ export default function montar({ ir, assinar }) {
     });
   }
 
-  function itemCaixa(item, recarregar) {
-    const previa = h("div", { class: "clipboard__previa-area" });
-    const erroItem = h("p", { class: "campo__erro", role: "alert", hidden: true });
+  function itemCaixa(item, recarregar, proximoId) {
+    const chave = (acao, id = item.id) => JSON.stringify(["clipboard-item", id, acao]);
+    const buscarAcao = (acao, id = item.id) => [...regiao.no.querySelectorAll("[data-focus-key]")]
+      .find((alvo) => alvo.dataset.focusKey === chave(acao, id));
+    if (!idsPrevias.has(item.id)) idsPrevias.set(item.id, novoId("clipboard-previa"));
+    const idPrevia = idsPrevias.get(item.id);
+    const previa = h("div", { class: "clipboard__previa-area", id: idPrevia });
+    const pintarPrevia = (texto) => trocar(previa, h("pre", { class: "clipboard__previa" }, texto === "" ? "(sem texto guardado)" : texto));
+    const erroItem = h("p", { class: "campo__erro", hidden: !errosDaCaixa.has(item.id) }, errosDaCaixa.get(item.id));
     const extra = h("tr", { class: "clipboard__extra", hidden: true }, h("td", { colspan: COLUNAS_CAIXA }, previa, erroItem));
     const sincronizar = () => {
       extra.hidden = previa.childElementCount === 0 && erroItem.hidden;
     };
     const limparErro = () => {
+      errosDaCaixa.delete(item.id);
       erroItem.hidden = true;
       sincronizar();
     };
     const falhar = (erro) => {
       erroItem.textContent = mensagemDe(erro);
+      errosDaCaixa.set(item.id, erroItem.textContent);
       erroItem.hidden = false;
+      anuncios.erro(erroItem.textContent);
       sincronizar();
     };
 
@@ -172,7 +213,9 @@ export default function montar({ ir, assinar }) {
       variante: "discreto",
       icone: "olho",
       "aria-expanded": String(previasAbertas.has(item.id)),
-      aoClicar: async () => {
+      "aria-controls": idPrevia,
+      dataset: { focusKey: chave("mostrar") },
+      aoClicar: proteger(async () => {
         limparErro();
         if (previasAbertas.has(item.id)) {
           previasAbertas.delete(item.id);
@@ -184,53 +227,66 @@ export default function montar({ ir, assinar }) {
         }
         try {
           const { preview } = await api.clipboardPreview({ id: item.id });
-          previasAbertas.add(item.id);
-          trocar(previa, h("pre", { class: "clipboard__previa" }, preview === "" ? h("span", { class: "muted" }, "(sem texto guardado)") : preview));
+          previasAbertas.set(item.id, preview);
+          pintarPrevia(preview);
           sincronizar();
           mostrar.querySelector(".btn__rotulo").textContent = "Ocultar";
           mostrar.setAttribute("aria-expanded", "true");
         } catch (erro) {
           falhar(erro);
         }
-      },
+      }),
     });
-    if (previasAbertas.has(item.id)) mostrar.click();
+    if (previasAbertas.has(item.id)) {
+      pintarPrevia(previasAbertas.get(item.id));
+      sincronizar();
+    }
 
+    const idMotivoCopiar = novoId("clipboard-copiar-motivo");
+    const motivoCopiar = !podeCopiar(item) && h("span", { id: idMotivoCopiar, class: "so-leitor" },
+      "Este item já foi aplicado ou não está disponível para copiar novamente.");
     const copiar = botao({
       rotulo: "Copiar",
+      dataset: { focusKey: chave("copiar") },
       variante: "discreto",
       icone: "copiar",
       desabilitado: !podeCopiar(item),
-      aoClicar: async () => {
+      "aria-describedby": !podeCopiar(item) ? idMotivoCopiar : null,
+      aoClicar: proteger(async () => {
         limparErro();
         try {
           await api.clipboardCopyItem({ id: item.id });
-          recarregar({ silencioso: true });
+          await recarregar({ silencioso: true, focoFallback: () => buscarAcao("mostrar") });
+          anuncios.status("Item copiado para este computador.");
         } catch (erro) {
           falhar(erro);
         }
-      },
+      }),
     });
     const descartar = botao({
       rotulo: "Descartar",
+      dataset: { focusKey: chave("descartar") },
       variante: "discreto",
       icone: "descartar",
-      aoClicar: async () => {
+      aoClicar: proteger(async () => {
         limparErro();
         try {
           await api.clipboardDiscardItem({ id: item.id });
           previasAbertas.delete(item.id);
-          recarregar({ silencioso: true });
+          await recarregar({ silencioso: true, focoFallback: () => buscarAcao("mostrar", proximoId) ?? no.querySelector("[data-focus-fallback]") });
+          anuncios.status("Item descartado da caixa.");
         } catch (erro) {
           falhar(erro);
         }
-      },
+      }),
     });
 
-    return { extra, acoes: h("div", { class: "clipboard__item-acoes" }, mostrar, copiar, descartar) };
+    sincronizar();
+    return { extra, acoes: h("div", { class: "clipboard__item-acoes" }, mostrar, copiar, motivoCopiar, descartar) };
   }
 
   async function enviarAgora() {
+    const foco = guardarFoco(no);
     mostrarAviso(null);
     let resultado;
     try {
@@ -239,6 +295,16 @@ export default function montar({ ir, assinar }) {
       mostrarAviso("erro", mensagemDe(erro));
       return;
     }
+    if (!no.isConnected) return;
+    if (!interacaoAtual(foco, no)) {
+      mostrarAviso("info", "Envio concluído. O resultado está disponível para consulta.");
+      avisoTopo.append(botao({ rotulo: "Ver resultado do envio", aoClicar: () => mostrarEnvio(resultado) }));
+      return;
+    }
+    await mostrarEnvio(resultado);
+  }
+
+  async function mostrarEnvio(resultado) {
     const { promessa } = abrirDialogo({
       titulo: "Clipboard enviado",
       conteudo: h(
@@ -261,13 +327,14 @@ export default function montar({ ir, assinar }) {
       titulo: "Clipboard",
       descricao: "Texto copiado aqui vai aos pares autorizados. O que chega fica na caixa até você decidir.",
       acoes: [
-        botao({ rotulo: "Enviar agora", icone: "enviar", atalho: "Win+Alt+V", aoClicar: enviarAgora }),
+        botao({ rotulo: "Enviar agora", icone: "enviar", dataset: { focusKey: "clipboard-enviar", focusFallback: "" }, aoClicar: enviarAgora }),
         botao({ rotulo: "Permissões", variante: "discreto", icone: "dispositivos", aoClicar: () => ir("dispositivos") }),
       ],
     }),
+    anuncios.no,
     avisoTopo,
     regiao.no,
   );
 
-  return { no, desmontar: cancelar };
+  return { no, desmontar: () => { cancelar(); regiao.desmontar(); previasAbertas.clear(); errosDaCaixa.clear(); idsPrevias.clear(); } };
 }

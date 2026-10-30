@@ -65,10 +65,18 @@ pub fn set_paused(app: &AppHandle, paused: bool) {
     } else {
         msg::TRAY_PAUSE
     };
-    if let Some(item) = app.try_state::<PauseItem>()
-        && let Err(error) = item.0.set_text(label)
-    {
-        tracing::warn!(error = %error, "could not relabel the pause item");
+    if let Some(item) = app.try_state::<PauseItem>() {
+        if let Err(error) = item.0.set_text(label) {
+            tracing::warn!(error = %error, "could not relabel the pause item");
+        }
+        let _ = item.0.set_enabled(true);
+    }
+}
+
+fn pause_unknown(app: &AppHandle) {
+    if let Some(item) = app.try_state::<PauseItem>() {
+        let _ = item.0.set_text(msg::TRAY_PAUSE_UNKNOWN);
+        let _ = item.0.set_enabled(false);
     }
 }
 
@@ -78,15 +86,25 @@ pub async fn sync_paused(app: &AppHandle, ui: &Ui) {
     match ui.call(json!({ "cmd": "app_state" })).await {
         Ok(state) => {
             set_traversal(app, state.get("traversal").unwrap_or(&Value::Null));
-            if let Some(paused) = state.get("paused").and_then(Value::as_bool) {
+            if let Some(paused) = confirmed_pause(&state) {
                 set_paused(app, paused);
+            } else {
+                pause_unknown(app);
             }
         }
         Err(error) => {
+            pause_unknown(app);
             set_traversal(app, &Value::Null);
             tracing::debug!(code = %error.code, "app_state unavailable at boot");
         }
     }
+}
+
+fn confirmed_pause(state: &Value) -> Option<bool> {
+    if !state.get("agent_error").is_none_or(Value::is_null) {
+        return None;
+    }
+    state.get("paused").and_then(Value::as_bool)
 }
 
 /// O mesmo estado da janela, resumido para o menu da bandeja.
@@ -127,20 +145,43 @@ async fn toggle_pause(app: &AppHandle) {
         .call(json!({ "cmd": "pause_set", "args": { "paused": target } }))
         .await
     {
-        Ok(reply) => {
-            let paused = reply
-                .get("paused")
-                .and_then(Value::as_bool)
-                .unwrap_or(target);
-            set_paused(app, paused);
+        Ok(_) => sync_paused(app, &ui).await,
+        Err(error) => {
+            tracing::warn!(code = %error.code, "pause toggle failed");
+            pause_unknown(app);
+            sync_paused(app, &ui).await;
+            // O aviso fica em app_state; não depende de preferência/daemon de notificação.
+            window::show_main(app);
         }
-        Err(error) => tracing::warn!(code = %error.code, "pause toggle failed"),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reconsulta_com_erro_nao_confirma_fallback_de_pausa() {
+        for agent in ["in_app", "external", "failed"] {
+            for paused in [true, false] {
+                assert_eq!(
+                    confirmed_pause(
+                        &json!({"agent":agent,"agent_error":"estado desconhecido","paused":paused,"pause_warning":"retomada não confirmada"})
+                    ),
+                    None
+                );
+                // Aviso de persistência não invalida um Status atual que foi observado.
+                assert_eq!(
+                    confirmed_pause(
+                        &json!({"agent":agent,"agent_error":null,"paused":paused,"pause_warning":"pausa aplicada em memória, mas não salva"})
+                    ),
+                    Some(paused)
+                );
+            }
+        }
+        assert_eq!(confirmed_pause(&Value::Null), None);
+        assert_eq!(confirmed_pause(&json!({"agent_error":null})), None);
+    }
+
     #[test]
     fn old_or_missing_state_never_claims_the_mouse_is_working() {
         for value in [Value::Null, json!({}), json!({"detail":""})] {

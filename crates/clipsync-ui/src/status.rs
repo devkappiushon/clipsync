@@ -136,6 +136,8 @@ pub struct AppState {
     pub agent: AgentMode,
     pub agent_error: Option<String>,
     pub paused: bool,
+    #[serde(default)]
+    pub pause_warning: Option<String>,
     pub screen_locked: bool,
     pub mesh: MeshCount,
     pub modules: Modules,
@@ -164,17 +166,41 @@ pub(crate) struct Observed {
     pub(crate) input: Option<InputState>,
 }
 
-/// `None` when no agent answers (or it answered something else).
-pub(crate) async fn agent_status(ctx: &Ctx) -> Option<AgentStatus> {
-    match ctx.request(ControlRequest::Status).await {
-        Ok(ControlResponse::Status(s)) => Some(s),
-        _ => None,
+/// Só NotRunning comprova ausência; erro/timeout/resposta inesperada conservam Unknown.
+async fn read_status(ctx: &Ctx) -> Result<Option<AgentStatus>, UiError> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        ctx.request(ControlRequest::Status),
+    )
+    .await
+    {
+        Ok(Ok(ControlResponse::Status(status))) => Ok(Some(status)),
+        Ok(Err(error)) if error.code == code::AGENT_NOT_RUNNING => Ok(None),
+        _ => Err(UiError::new(
+            "agent_unknown",
+            "não foi possível confirmar o estado atual do agente",
+        )),
     }
 }
 
+pub(crate) async fn agent_status(ctx: &Ctx) -> Option<AgentStatus> {
+    read_status(ctx).await.ok().flatten()
+}
+
 pub(crate) async fn observe(ctx: &Ctx) -> Observed {
-    let status = agent_status(ctx).await;
-    let (agent, agent_error) = agent::mode(ctx, status.is_some()).await;
+    let reading = read_status(ctx).await;
+    let unknown = reading.as_ref().err().map(|error| error.message.clone());
+    let status = reading.ok().flatten();
+    let (mut agent, mut agent_error) = agent::mode(ctx, status.is_some()).await;
+    if let Some(error) = unknown {
+        if agent != AgentMode::InApp {
+            agent = AgentMode::Failed;
+        }
+        agent_error = Some(error);
+    } else if agent == AgentMode::InApp && status.is_none() {
+        agent_error =
+            Some("o agente próprio ainda existe, mas seu estado não foi confirmado".into());
+    }
     let input_on = status.as_ref().is_some_and(|s| {
         s.modules
             .iter()
@@ -254,6 +280,7 @@ pub(crate) async fn app_state(ctx: &Ctx) -> Result<AppState, UiError> {
         agent: o.agent,
         agent_error: o.agent_error,
         paused,
+        pause_warning: crate::lock(&ctx.pause_warning).message.clone(),
         screen_locked: o.input.as_ref().is_some_and(|i| i.screen_locked),
         mesh,
         modules,
@@ -267,27 +294,87 @@ pub(crate) async fn app_state(ctx: &Ctx) -> Result<AppState, UiError> {
 
 /// Through the agent, like `clipsync pause` (§12.2 rule 1). The event `pause_changed` comes
 /// from the poll, so a pause from the terminal looks the same.
+#[derive(Default)]
+pub(crate) struct PauseWarning {
+    latest: Option<std::sync::Arc<()>>,
+    message: Option<String>,
+}
+impl PauseWarning {
+    fn begin(&mut self) -> std::sync::Arc<()> {
+        let ticket = std::sync::Arc::new(());
+        self.latest = Some(ticket.clone());
+        ticket
+    }
+    fn finish(&mut self, ticket: &std::sync::Arc<()>, message: Option<String>) {
+        if self
+            .latest
+            .as_ref()
+            .is_some_and(|current| std::sync::Arc::ptr_eq(current, ticket))
+        {
+            self.message = message;
+        }
+    }
+}
+
 pub(crate) async fn pause_set(ctx: &Ctx, paused: bool) -> Result<PausedReply, UiError> {
     ctx.require_profile()?;
+    let ticket = crate::lock(&ctx.pause_warning).begin();
     let req = if paused {
         ControlRequest::Pause
     } else {
         ControlRequest::Resume
     };
-    match ctx.request(req).await? {
-        ControlResponse::Ok => Ok(PausedReply { paused }),
-        // Applied in memory (fails closed), but state.toml was not written.
-        ControlResponse::Error { message } if message == core_msg::STATE_NOT_SAVED => {
+    let result = match ctx.request(req).await {
+        Ok(ControlResponse::Ok) => Ok(PausedReply { paused }),
+        Ok(ControlResponse::Error { message }) if message == core_msg::STATE_NOT_SAVED => {
             Err(UiError::new(code::IO, message))
         }
-        ControlResponse::Error { message } => Err(UiError::internal(&clean(&message))),
-        _ => Err(UiError::internal(msg::UNEXPECTED_REPLY)),
-    }
+        Ok(ControlResponse::Error { message }) => Err(UiError::internal(&clean(&message))),
+        Ok(_) => Err(UiError::internal(msg::UNEXPECTED_REPLY)),
+        Err(error) => Err(error),
+    };
+    let warning = result.as_ref().err().map(|error| {
+        let action = if paused { "pausa" } else { "retomada" };
+        if error.message == core_msg::STATE_NOT_SAVED {
+            format!("A {action} foi aplicada em memória, mas não foi salva. Esse estado não sobreviverá ao encerramento.")
+        } else {
+            format!("A {action} solicitada não foi confirmada. Confira o estado antes de tentar novamente.")
+        }
+    });
+    crate::lock(&ctx.pause_warning).finish(&ticket, warning);
+    ctx.emit(crate::UiEvent::Resync(crate::events::Resync {}));
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resposta_antiga_nao_apaga_falha_mais_recente() {
+        let mut warning = PauseWarning::default();
+        let old = warning.begin();
+        let new = warning.begin();
+        warning.finish(&new, Some("retomada não persistida".into()));
+        warning.finish(&old, None);
+        assert_eq!(warning.message.as_deref(), Some("retomada não persistida"));
+        let confirmed = warning.begin();
+        warning.finish(&confirmed, None);
+        warning.finish(&new, Some("falha atrasada".into()));
+        assert!(warning.message.is_none());
+    }
+
+    #[test]
+    fn acao_nova_pendente_preserva_aviso_ate_sua_confirmacao() {
+        let mut warning = PauseWarning::default();
+        let failed = warning.begin();
+        warning.finish(&failed, Some("pausa não persistida".into()));
+        let next = warning.begin();
+        warning.finish(&failed, None);
+        assert!(warning.message.is_some());
+        warning.finish(&next, None);
+        assert!(warning.message.is_none());
+    }
 
     fn input(refused: bool, switch: bool) -> InputState {
         InputState {

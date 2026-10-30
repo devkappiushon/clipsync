@@ -77,6 +77,14 @@ pub struct Block {
     pub peer_name: Option<String>,
     pub module: Option<ModuleName>,
     pub reason: String,
+    #[serde(default = "one")]
+    pub occurrences: u64,
+    #[serde(default)]
+    pub last_unix_ms: u64,
+}
+
+fn one() -> u64 {
+    1
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -228,6 +236,12 @@ async fn gather(ctx: &Ctx) -> Gathered {
                 .iter()
                 .map(|b| Block {
                     at_unix_ms: b.at_unix_ms,
+                    occurrences: b.occurrences,
+                    last_unix_ms: if b.last_unix_ms == 0 {
+                        b.at_unix_ms
+                    } else {
+                        b.last_unix_ms
+                    },
                     peer_id: b.peer.map(|id| id.to_hex()),
                     peer_name: b.peer_name.as_deref().map(clean),
                     module: b.module.map(ModuleName::from),
@@ -342,9 +356,21 @@ fn raw_text(g: &Gathered) -> String {
     }
     t.push_str("\n[últimos bloqueios]\n");
     for b in &g.diag.blocks {
+        let count = if b.occurrences == u64::MAX {
+            format!("pelo menos {}", b.occurrences)
+        } else {
+            b.occurrences.to_string()
+        };
+        let last = if b.last_unix_ms == 0 {
+            b.at_unix_ms
+        } else {
+            b.last_unix_ms
+        };
         t.push_str(&format!(
-            "{} · {} · {} · {}\n",
+            "primeiro={} · último={} · {} ocorrências observadas · {} · {} · {}\n",
             b.at_unix_ms,
+            last,
+            count,
             b.peer_name.as_deref().unwrap_or("-"),
             b.module.map_or("-", |m| match m {
                 ModuleName::Clipboard => "clipboard",
@@ -461,15 +487,27 @@ fn redact(raw: &str, g: &Gathered) -> BundlePreview {
                 })
             }))
     });
-    let mut n = g.devices.len();
+    let mut peer_numbers: Vec<String> = g.devices.iter().map(|d| d.peer_id.clone()).collect();
     for (id, name, addr) in extra {
-        if needles.iter().any(|(s, _, _)| *s == id.to_hex()) {
-            continue;
+        let hex = id.to_hex();
+        let n = match peer_numbers.iter().position(|known| *known == hex) {
+            Some(index) => index + 1,
+            None => {
+                peer_numbers.push(hex.clone());
+                let n = peer_numbers.len();
+                needles.push((hex, msg::redacted_id(n), RedactionKind::PeerId));
+                needles.push((id.short(), msg::redacted_id(n), RedactionKind::PeerId));
+                n
+            }
+        };
+        // Cada observação pode conter outro nome ou endereço do mesmo par.
+        if !name.is_empty()
+            && !needles
+                .iter()
+                .any(|(known, _, kind)| *kind == RedactionKind::PeerName && *known == name)
+        {
+            needles.push((name, msg::redacted_peer(n), RedactionKind::PeerName));
         }
-        n += 1;
-        needles.push((id.to_hex(), msg::redacted_id(n), RedactionKind::PeerId));
-        needles.push((id.short(), msg::redacted_id(n), RedactionKind::PeerId));
-        needles.push((name, msg::redacted_peer(n), RedactionKind::PeerName));
         ips.extend(addr.map(|a| a.ip()));
     }
     if let Some(name) = &g.device_name {
@@ -873,5 +911,31 @@ mod tests {
             format!("escuta {0}:47800 · {0} · versão 0.1.0", msg::REDACTED_IP)
         );
         assert_eq!(n, 2);
+    }
+    #[test]
+    fn legacy_block_defaults_are_normalized_in_support_text() {
+        let old: Block = serde_json::from_value(serde_json::json!({"at_unix_ms":42,"peer_id":null,"peer_name":null,"module":null,"reason":"negativa"})).unwrap();
+        assert_eq!(old.occurrences, 1);
+        assert_eq!(old.last_unix_ms, 0);
+        let mut gathered = Gathered {
+            diag: Diagnostics {
+                items: vec![],
+                network: Network {
+                    listen: None,
+                    addresses: vec![],
+                    peers: vec![],
+                },
+                blocks: vec![old],
+            },
+            status: None,
+            devices: vec![],
+            device_name: None,
+        };
+        let text = raw_text(&gathered);
+        assert!(text.contains("primeiro=42 · último=42 · 1 ocorrências observadas"));
+        gathered.diag.blocks[0].occurrences = u64::MAX;
+        assert!(
+            raw_text(&gathered).contains("pelo menos 18446744073709551615 ocorrências observadas")
+        );
     }
 }

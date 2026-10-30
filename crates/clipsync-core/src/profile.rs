@@ -356,7 +356,201 @@ fn module_table(fake: bool, keys: &[(&str, &str)]) -> toml::Table {
     t
 }
 
+/// Libera a trava explicitamente; fechar o descritor sozinho pode esperar uma cópia transitória em spawn.
+struct ProfileFileLock(fs::File);
+
+impl Drop for ProfileFileLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
+/// Reserva cooperativa do perfil; o arquivo permanece no disco após soltar o guard.
+#[derive(Clone)]
+pub struct ProfileOperationGuard {
+    _file: std::sync::Arc<ProfileFileLock>,
+    dir: PathBuf,
+    exclusive: bool,
+}
+
+/// Edição de módulos mantida dentro da reserva exclusiva do perfil.
+pub struct ConfigEdit<'a> {
+    profile: Profile,
+    _operation: &'a ProfileOperationGuard,
+    _lock: ProfileFileLock,
+    original: String,
+    raw: RawConfig,
+    config: Config,
+}
+
+impl ConfigEdit<'_> {
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    pub fn set_clipboard_mode(&mut self, mode: &str) -> Result<bool, CoreError> {
+        if !matches!(mode, "auto" | "manual") {
+            return Err(CoreError::Config("modo de clipboard inválido".into()));
+        }
+        let current = self.raw.clipboard.as_ref().and_then(|t| t.get("mode"));
+        let unchanged = current.map_or(mode == "auto", |value| value.as_str() == Some(mode));
+        if unchanged {
+            return Ok(false);
+        }
+        self.raw
+            .clipboard
+            .get_or_insert_with(toml::Table::new)
+            .insert("mode".into(), toml::Value::String(mode.into()));
+        let text = toml::to_string(&self.raw)
+            .map_err(|_| CoreError::Config("não foi possível serializar config.toml".into()))?;
+        self.profile.write_config_checked(&self.original, &text)?;
+        self.original = text;
+        self.config.clipboard = self.raw.clipboard.clone();
+        Ok(true)
+    }
+
+    pub fn set_modules(&mut self, next: ModuleSet) -> Result<bool, CoreError> {
+        self.profile.check_operation(self._operation, true)?;
+        if next.is_empty() {
+            return Err(CoreError::Config(
+                "pelo menos um módulo precisa estar ligado".into(),
+            ));
+        }
+        if next == self.config.modules {
+            return Ok(false);
+        }
+        if read_text(&self.profile.config_path())? != self.original {
+            return Err(CoreError::Profile("stale_config".into()));
+        }
+        self.raw.modules = RawModules {
+            input: next.input,
+            clipboard: next.clipboard,
+        };
+        let text = toml::to_string(&self.raw)
+            .map_err(|_| CoreError::Config("não foi possível serializar config.toml".into()))?;
+        self.profile.write_config_checked(&self.original, &text)?;
+        self.original = text;
+        self.config.modules = next;
+        Ok(true)
+    }
+}
+
 impl Profile {
+    fn private_directory(&self) -> Result<(), CoreError> {
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        builder.mode(0o700);
+        builder.create(&self.dir)?;
+        Ok(())
+    }
+
+    fn try_file_lock(&self, name: &str, shared: bool) -> Result<ProfileFileLock, CoreError> {
+        let mut opts = fs::OpenOptions::new();
+        opts.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        opts.mode(0o600);
+        let file = opts.open(self.dir.join(name))?;
+        let result = if shared {
+            file.try_lock_shared()
+        } else {
+            file.try_lock()
+        };
+        match result {
+            Ok(()) => Ok(ProfileFileLock(file)),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                Err(CoreError::Profile("profile_busy".into()))
+            }
+            Err(std::fs::TryLockError::Error(e)) => Err(e.into()),
+        }
+    }
+
+    /// Sem espera bloqueante; adquirir antes de configuração/estado.
+    pub fn reserve_operation(&self, exclusive: bool) -> Result<ProfileOperationGuard, CoreError> {
+        self.private_directory()?;
+        let file = self.try_file_lock("profile-operation.lock", !exclusive)?;
+        Ok(ProfileOperationGuard {
+            _file: std::sync::Arc::new(file),
+            dir: fs::canonicalize(&self.dir)?,
+            exclusive,
+        })
+    }
+
+    pub(crate) fn check_operation(
+        &self,
+        guard: &ProfileOperationGuard,
+        exclusive: bool,
+    ) -> Result<(), CoreError> {
+        if fs::canonicalize(&self.dir)? != guard.dir || (exclusive && !guard.exclusive) {
+            return Err(CoreError::Profile(
+                "reserva incompatível com o perfil".into(),
+            ));
+        }
+        Ok(())
+    }
+    /// Compara os bytes depois de sincronizar o temporário e imediatamente antes do rename.
+    /// Escritores que ignoram locks ainda podem disputar o próprio rename.
+    fn write_config_checked(&self, original: &str, text: &str) -> Result<(), CoreError> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = self
+            .dir
+            .join(format!("config-edit.tmp-{}-{n}", std::process::id()));
+        let result = (|| {
+            let mut opts = fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            #[cfg(unix)]
+            opts.mode(0o600);
+            let mut file = opts.open(&tmp)?;
+            file.write_all(text.as_bytes())?;
+            file.sync_all()?;
+            drop(file);
+            if read_text(&self.config_path())? != original {
+                return Err(CoreError::Profile("stale_config".into()));
+            }
+            fs::rename(&tmp, self.config_path())?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(tmp);
+        }
+        result
+    }
+
+    pub fn begin_config_edit<'a>(
+        &self,
+        operation: &'a ProfileOperationGuard,
+        expected: ModuleSet,
+    ) -> Result<ConfigEdit<'a>, CoreError> {
+        self.check_operation(operation, true)?;
+        let edit = self.begin_clipboard_edit(operation)?;
+        if edit.config.modules != expected {
+            return Err(CoreError::Profile("stale_config".into()));
+        }
+        Ok(edit)
+    }
+
+    /// Edição de modo aceita a reserva compartilhada do setter ou a exclusiva do lifecycle.
+    pub fn begin_clipboard_edit<'a>(
+        &self,
+        operation: &'a ProfileOperationGuard,
+    ) -> Result<ConfigEdit<'a>, CoreError> {
+        self.check_operation(operation, false)?;
+        let lock = self.try_file_lock("config.toml.lock", false)?;
+        let original = read_text(&self.config_path())?;
+        let raw: RawConfig = toml::from_str(&original)
+            .map_err(|_| CoreError::Config("config.toml inválido".into()))?;
+        let config = validated_config(&raw)?;
+        Ok(ConfigEdit {
+            profile: self.clone(),
+            _operation: operation,
+            _lock: lock,
+            original,
+            raw,
+            config,
+        })
+    }
+
     /// `--profile` argument, else `$CLIPSYNC_PROFILE`, else `$XDG_CONFIG_HOME/clipsync`, else `~/.config/clipsync`.
     /// On Windows the last two are replaced by `%LOCALAPPDATA%\clipsync`.
     pub fn resolve(arg: Option<PathBuf>) -> Result<Self, CoreError> {
@@ -404,6 +598,24 @@ impl Profile {
                 "pelo menos um módulo precisa estar ligado".into(),
             ));
         }
+        let operation = self.reserve_operation(true)?;
+        self.init_with_reserved(opts, identity, &operation)
+    }
+
+    pub fn init_with_reserved(
+        &self,
+        opts: InitOptions,
+        identity: Identity,
+        operation: &ProfileOperationGuard,
+    ) -> Result<Identity, CoreError> {
+        self.check_operation(operation, true)?;
+        valid_name(&opts.device_name)?;
+        if opts.modules.is_empty() {
+            return Err(CoreError::Config(
+                "pelo menos um módulo precisa estar ligado".into(),
+            ));
+        }
+        let _config_lock = self.try_file_lock("config.toml.lock", false)?;
         let mut dir = fs::DirBuilder::new();
         dir.recursive(true);
         #[cfg(unix)]
@@ -456,49 +668,17 @@ impl Profile {
             )));
         }
         let raw: RawConfig = toml::from_str(&read_text(&path)?)
-            .map_err(|e| CoreError::Config(format!("config.toml: {e}")))?;
-        if raw.version != CONFIG_VERSION {
-            return Err(CoreError::Config(format!(
-                "config.toml: versão {} não suportada (esperada {CONFIG_VERSION})",
-                raw.version
-            )));
-        }
-        valid_name(&raw.device_name)?;
-        let modules = ModuleSet {
-            clipboard: raw.modules.clipboard,
-            input: raw.modules.input,
-        };
-        if modules.is_empty() {
-            return Err(CoreError::Config(
-                "config.toml: pelo menos um módulo precisa estar ligado".into(),
-            ));
-        }
-        Ok(Config {
-            version: raw.version,
-            device_name: raw.device_name,
-            modules,
-            listen: raw.network.listen,
-            clipboard: raw.clipboard,
-            input: raw.input,
-        })
+            .map_err(|_| CoreError::Config("config.toml inválido".into()))?;
+        validated_config(&raw)
     }
 
     /// Sets `[clipboard] mode` ("auto" or "manual") in config.toml, keeping every other key.
     /// Written through a temp file and a rename; the running agent reads it on restart.
     pub fn set_clipboard_mode(&self, mode: &str) -> Result<(), CoreError> {
-        if !matches!(mode, "auto" | "manual") {
-            return Err(CoreError::Config(format!(
-                "[clipboard] mode inválido: {mode} (use auto ou manual)"
-            )));
-        }
-        self.load_config()?; // the same checks as a normal read
-        let mut raw: RawConfig = toml::from_str(&read_text(&self.config_path())?)
-            .map_err(|e| CoreError::Config(format!("config.toml: {e}")))?;
-        raw.clipboard
-            .get_or_insert_with(toml::Table::new)
-            .insert("mode".into(), toml::Value::String(mode.into()));
-        let text = toml::to_string(&raw).map_err(|e| CoreError::Config(e.to_string()))?;
-        write_private(&self.config_path(), text.as_bytes())
+        let operation = self.reserve_operation(false)?;
+        self.begin_clipboard_edit(&operation)?
+            .set_clipboard_mode(mode)?;
+        Ok(())
     }
 
     pub fn load_identity(&self) -> Result<Identity, CoreError> {
@@ -610,7 +790,7 @@ impl Profile {
             return Ok(State::default());
         }
         let st: State = toml::from_str(&read_text(&path)?)
-            .map_err(|e| CoreError::Config(format!("state.toml: {e}")))?;
+            .map_err(|_| CoreError::Config("state.toml inválido".into()))?;
         if st.version != 1 {
             return Err(CoreError::Config(format!(
                 "state.toml: versão {} não suportada",
@@ -621,11 +801,45 @@ impl Profile {
     }
 
     pub fn save_state(&self, s: &State) -> Result<(), CoreError> {
-        let text = toml::to_string(&State {
-            version: 1,
-            paused: s.paused,
-        })
-        .map_err(|e| CoreError::Config(e.to_string()))?;
+        if s.version != 1 {
+            return Err(CoreError::Config("state.toml: versão não suportada".into()));
+        }
+        self.set_paused(s.paused)
+    }
+
+    /// Atualiza somente paused após validar o estado corrente sob exclusão.
+    pub fn set_paused(&self, paused: bool) -> Result<(), CoreError> {
+        let _state_lock = self.try_file_lock("state.toml.lock", false)?;
+        let mut state = self.load_state()?;
+        state.paused = paused;
+        let text = toml::to_string(&state).map_err(|e| CoreError::Config(e.to_string()))?;
         write_private(&self.state_path(), text.as_bytes())
     }
+}
+
+fn validated_config(raw: &RawConfig) -> Result<Config, CoreError> {
+    if raw.version != CONFIG_VERSION {
+        return Err(CoreError::Config(format!(
+            "config.toml: versão {} não suportada (esperada {CONFIG_VERSION})",
+            raw.version
+        )));
+    }
+    valid_name(&raw.device_name)?;
+    let modules = ModuleSet {
+        clipboard: raw.modules.clipboard,
+        input: raw.modules.input,
+    };
+    if modules.is_empty() {
+        return Err(CoreError::Config(
+            "config.toml: pelo menos um módulo precisa estar ligado".into(),
+        ));
+    }
+    Ok(Config {
+        version: raw.version,
+        device_name: raw.device_name.clone(),
+        modules,
+        listen: raw.network.listen,
+        clipboard: raw.clipboard.clone(),
+        input: raw.input.clone(),
+    })
 }

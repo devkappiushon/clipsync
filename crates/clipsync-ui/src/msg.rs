@@ -141,3 +141,29 @@ pub fn config(detail: &str) -> String {
 pub fn internal(detail: &str) -> String {
     format!("erro interno: {detail}")
 }
+
+/// Contagens do que o poll observou, sem prometer total da rede ou diversidade ilimitada.
+pub fn notify_block_summary(
+    count: u64,
+    keys: usize,
+    peers: usize,
+    keys_overflow: bool,
+    peers_overflow: bool,
+) -> String {
+    let count = if count == u64::MAX {
+        format!("pelo menos {count}")
+    } else {
+        count.to_string()
+    };
+    let keys = if keys_overflow {
+        format!("pelo menos {}", keys + 1)
+    } else {
+        keys.to_string()
+    };
+    let peers = if peers_overflow {
+        format!("pelo menos {}", peers + 1)
+    } else {
+        peers.to_string()
+    };
+    format!("{count} ocorrências observadas, {keys} causas e {peers} dispositivos.")
+}

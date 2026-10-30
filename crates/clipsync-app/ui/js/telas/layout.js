@@ -6,7 +6,8 @@
 
 import { api } from "../api.js";
 import { aviso, cabecalho, estadoErro, indisponivel } from "../areas.js";
-import { abrirDialogo, botao, cartao, esqueleto, selo } from "../componentes.js";
+import { abrirDialogo, botao, campo, cartao, esqueleto, selo } from "../componentes.js";
+import { criarAnunciador, guardarFoco, interacaoAtual, restaurarFoco } from "../acessibilidade.js";
 import { h, novoId, trocar } from "../dom.js";
 import { consumirParDoLayout, obterApp, observarApp, recurso } from "../estado.js";
 import { INDISPONIVEL, INDISPONIVEL_NESTE_SISTEMA, mensagemDe, seloDispositivo } from "../formatar.js";
@@ -14,7 +15,7 @@ import { icone, svg } from "../icones.js";
 
 import { configurarPosicao } from "../layout-simples.js";
 import { resumoTravessia } from "../travessia-vista.js";
-import { falhaAoLigar, ligacoesLocais, posicionarDestino, posicaoRelativa, resultadoDoTeste, trechosLivres as trechosDisponiveis } from "../travessia.js";
+import { falhaAoLigar, limitesAlca, ligacoesLocais, proporLigacao, posicionarDestino, posicaoRelativa, resultadoDoTeste, trechosLivres as trechosDisponiveis } from "../travessia.js";
 
 const MALHA_PX = 16;
 const MARGEM = 160; // unidades do plano em volta dos monitores
@@ -84,6 +85,21 @@ export default function montar({ ir, assinar }) {
   let saiu = false;
   let geracaoCarga = 0;
   let avancado = false;
+  let operacao = false;
+  let recargaPendente = false;
+  let focoBorda = null;
+  let alvoBorda = null;
+  const origemFormulario = { peer_id: null, monitor: null, edge: "right" };
+  const anuncios = criarAnunciador();
+  const chaves = new Map();
+  let proximaChave = 0;
+  const chave = (tipo, id) => {
+    const identidade = JSON.stringify([tipo, id]);
+    if (!chaves.has(identidade)) chaves.set(identidade, `layout-${++proximaChave}`);
+    return chaves.get(identidade);
+  };
+  const encontrar = (valor) => [...no.querySelectorAll("[data-focus-key]")].find((e) => e.dataset.focusKey === valor);
+  const fallbackCanvas = () => encontrar(alvoBorda ?? focoBorda?.chave) ?? no.querySelector(".layout__dispositivo, .layout__origem select, button");
   const escolha = { peer_id: consumirParDoLayout(), edge: null };
   let idMalha = novoId("layout-malha");
   let focarPopover = false;
@@ -97,7 +113,7 @@ export default function montar({ ir, assinar }) {
   const avisoTopo = h("div");
   const areaTravessia = h("div");
   const areaSimples = h("div", { class: "layout__simples" });
-  const ajustes = h("details", { class: "layout__avancado" }, h("summary", null, "Ajustes avançados"), areaRodape);
+  const ajustes = h("details", { class: "layout__avancado", dataset: { focusKey: "layout-avancado" } }, h("summary", null, "Ajustes avançados"), areaRodape);
   ajustes.addEventListener("toggle", () => {
     avancado = ajustes.open;
     no.toggleAttribute("data-avancado", avancado);
@@ -110,15 +126,17 @@ export default function montar({ ir, assinar }) {
   }
   function pintarSimples() {
     if (!layout || saiu) return;
-    trocar(areaSimples, configurarPosicao({ layout, escolha, ocupado: testando, salvando, resultado: resultadoTeste, aoGravar: salvarPosicao, aoTestar: testarEntrada, aoAvancado: abrirAvancado }));
+    trocar(areaSimples, configurarPosicao({ layout, escolha, ocupado: testando, salvando, resultado: resultadoTeste, aoGravar: salvarPosicao, aoTestar: testarEntrada, aoAvancado: abrirAvancado, aoParear: () => ir("pareamento"), aoDiagnostico: () => ir("diagnostico"), aoPrevia: pintarCanvas }));
   }
   async function salvarPosicao(proposta) {
     if (salvando || testando) return;
     const d = layout.devices.find((x) => x.peer_id === proposta.b.peer_id);
-    const pos = posicionarDestino(layout, { peer_id: proposta.b.peer_id, edge: proposta.a.edge });
+    const pos = posicionarDestino(layout, { peer_id: proposta.b.peer_id, edge: proposta.a.edge, posicao: escolha.posicao });
     if (!d || !pos) return;
+    const foco = guardarFoco(no);
     salvando = true;
     pintarSimples();
+    restaurarFoco(foco, no);
     let rev = layout.rev;
     let posicaoSalva = false;
     try {
@@ -128,28 +146,33 @@ export default function montar({ ir, assinar }) {
         posicaoSalva = true;
       }
       await api.layoutSetLink({ ...proposta, base_rev: rev });
-      mostrarAvisoTopo("info", "Passagem configurada nesta máquina. Confira a permissão de controle no destino e teste o mouse.");
+      trocar(avisoTopo);
+      anuncios.status("Passagem configurada neste computador. Confira a permissão de controle no destino e teste o mouse.");
     } catch (erro) {
       mostrarAvisoTopo("aviso", falhaAoLigar(erro?.code, mensagemDe(erro), posicaoSalva));
     }
     salvando = false;
     await carregar({ silencioso: true });
+    restaurarFoco(foco, no, { fallback: () => encontrar("layout-ligar") });
   }
   async function testarEntrada(peerId) {
     if (testando || salvando) return;
     const nome = layout.devices.find((d) => d.peer_id === peerId)?.name ?? "";
+    const foco = guardarFoco(no);
     testando = true;
     resultadoTeste = null;
     pintarSimples();
     pintarPainel();
+    restaurarFoco(foco, no);
     try {
       const r = await api.inputTest({ peer_id: peerId, seconds: 5 });
       resultadoTeste = { peerId, nome, stats: r.stats };
+      anuncios.status(`${resultadoDoTeste(r.stats).titulo}. ${r.stats.received} recebidos, ${r.stats.lost} perdidos, ${r.stats.out_of_order} fora de ordem.`);
     } catch (erro) {
       mostrarAvisoTopo("aviso", `O teste não foi concluído: ${mensagemDe(erro)} Confira o Diagnóstico.`);
     } finally {
       testando = false;
-      if (!saiu) { pintarSimples(); pintarPainel(); }
+      if (!saiu) { pintarSimples(); pintarPainel(); restaurarFoco(foco, no, { fallback: () => encontrar("layout-testar") }); if (recargaPendente) await carregar({ silencioso: true }); }
     }
   }
   async function moverDispositivo(d, x, y) {
@@ -158,6 +181,7 @@ export default function montar({ ir, assinar }) {
     const destino = d.is_self ? escolha.peer_id : d.peer_id;
     escolha.peer_id = destino;
     escolha.edge = posicaoRelativa(layout, destino);
+    escolha.posicao = !d.is_self ? { x: r.device.x, y: r.device.y } : null;
     pintarSimples();
   }
 
@@ -168,7 +192,11 @@ export default function montar({ ir, assinar }) {
   });
   observador.observe(envoltorio);
 
-  async function carregar({ silencioso = false } = {}) {
+  async function carregar({ silencioso = false, duranteOperacao = false } = {}) {
+    if (saiu) return;
+    if (salvando || testando || (operacao && !duranteOperacao)) { recargaPendente = true; return; }
+    recargaPendente = false;
+    const foco = guardarFoco(no);
     const minha = ++geracaoCarga;
     if (!silencioso) trocar(corpo, esqueleto({ linhas: 6 }));
     try {
@@ -185,6 +213,7 @@ export default function montar({ ir, assinar }) {
     if (selecao?.tipo === "dispositivo" && !layout.devices.some((d) => d.peer_id === selecao.peerId)) selecao = null;
     try {
       pintarTudo();
+      restaurarFoco(foco, no, { fallback: fallbackCanvas });
     } catch (erro) {
       // Falha ao desenhar nunca fica muda: a tela mostra o erro em vez de um canvas vazio.
       console.error("falha ao pintar o layout", erro);
@@ -198,6 +227,7 @@ export default function montar({ ir, assinar }) {
       avisoTopo,
       areaTravessia,
       areaOferta,
+      areaSimples,
       h(
         "div",
         { class: "layout__principal" },
@@ -205,11 +235,11 @@ export default function montar({ ir, assinar }) {
           plano: true,
           filhos: [
             h("div", { class: "layout__palco" }, envoltorio, popover),
-            h("p", { class: "nota layout__legenda" }, "Arraste o outro computador para a posição desejada e clique em Ligar nessa posição. Para escolher trechos de borda, abra Ajustes avançados."),
+            ...layout.devices.filter((d) => d.monitors.length === 0).map((d) => h("p", { class: "nota layout__legenda" }, `${d.name}: sem monitores conhecidos. Confira a conexão e o módulo de teclado e mouse.`)),
+            h("p", { class: "nota layout__legenda", id: "layout-canvas-ajuda" }, "Prévia da posição escolhida. Clique em Ligar nessa posição para aplicar. Você também pode arrastar ou usar setas; os ajustes avançados oferecem todos os controles por formulário."),
           ],
         }),
       ),
-      areaSimples,
       ajustes,
       h("div", { class: "layout__lateral" }, painel, areaLigacoes),
     );
@@ -223,31 +253,39 @@ export default function montar({ ir, assinar }) {
   }
 
   function mostrarAvisoTopo(tom, texto) {
-    trocar(avisoTopo, texto && aviso(tom, h("p", null, texto)));
+    trocar(avisoTopo, texto && h("div", { class: `aviso aviso--${tom}` }, h("p", null, texto)));
+    if (texto) { if (tom === "erro" || tom === "aviso") anuncios.erro(texto); else anuncios.status(texto); }
   }
 
   async function executar(fn, { depois = "recarregar" } = {}) {
+    if (operacao || salvando || testando || saiu) return undefined;
+    const foco = guardarFoco(no);
+    operacao = true;
     avisoPainel = null;
     try {
       const r = await fn();
-      if (depois === "recarregar") await carregar({ silencioso: true });
+      if (depois === "recarregar") await carregar({ silencioso: true, duranteOperacao: true });
       return r;
     } catch (erro) {
       if (erro?.code === "stale_rev") {
         mostrarAvisoTopo("aviso", mensagemDe(erro));
-        await carregar({ silencioso: true });
+        await carregar({ silencioso: true, duranteOperacao: true });
         return undefined;
       }
       if (ERROS_DE_OFERTA.has(erro?.code)) {
         // A oferta mudou ou sumiu depois que a tela a mostrou: o texto do erro fica no topo e a oferta é lida de novo.
         mostrarAvisoTopo("aviso", mensagemDe(erro));
-        await carregar({ silencioso: true });
+        await carregar({ silencioso: true, duranteOperacao: true });
         return undefined;
       }
       mostrarAvisoTopo("erro", mensagemDe(erro));
       avisoPainel = { tom: "erro", texto: mensagemDe(erro) };
       pintarPainel();
       return undefined;
+    } finally {
+      operacao = false;
+      restaurarFoco(foco, no, { fallback: fallbackCanvas });
+      if (recargaPendente && !saiu) await carregar({ silencioso: true, duranteOperacao: true });
     }
   }
 
@@ -257,9 +295,15 @@ export default function montar({ ir, assinar }) {
     const lista = [];
     for (const d of layout.devices) {
       const monitores = d.monitors.length > 0 ? d.monitors : [{ ref: null, name: "sem monitores conhecidos", index: 0, x: 0, y: 0, width: 1920, height: 1080, scale: 1 }];
-      for (const m of monitores) lista.push({ d, m, x: d.x + m.x, y: d.y + m.y, w: m.width, h: m.height, fantasma: m.ref === null });
+      const pos = posicaoVisual(d);
+      for (const m of monitores) lista.push({ d, m, x: (pos?.x ?? d.x) + m.x, y: (pos?.y ?? d.y) + m.y, w: m.width, h: m.height, fantasma: m.ref === null });
     }
     return lista;
+  }
+
+  function posicaoVisual(d) {
+    return !avancado && d.peer_id === escolha.peer_id && proporLigacao(layout, escolha)
+      ? posicionarDestino(layout, escolha) : { x: d.x, y: d.y };
   }
 
   function calcularEscala(rects) {
@@ -296,18 +340,7 @@ export default function montar({ ir, assinar }) {
   }
 
   function trechosLivres(ponta) {
-    const ocupados = [
-      ...layout.locked_edges.filter((e) => mesmaBorda(e, ponta)),
-      ...layout.links.filter((l) => l.id !== selecao?.linkId).flatMap((l) => [l.a, l.b]).filter((p) => mesmaBorda(p, ponta)),
-    ].sort((p, q) => p.from - q.from);
-    const livres = [];
-    let cursor = 0;
-    for (const o of ocupados) {
-      if (o.from > cursor) livres.push({ from: cursor, to: o.from });
-      cursor = Math.max(cursor, o.to);
-    }
-    if (cursor < 1) livres.push({ from: cursor, to: 1 });
-    return livres.filter((t) => t.to - t.from >= PASSO_FRACAO);
+    return trechosDisponiveis(layout, ponta, selecao?.linkId).filter((t) => t.to - t.from >= PASSO_FRACAO);
   }
 
   // ----- canvas -----
@@ -316,7 +349,7 @@ export default function montar({ ir, assinar }) {
     const rects = retangulos();
     const { largura, altura } = calcularEscala(rects);
     larguraPintada = envoltorio.clientWidth;
-    const desenho = svg("svg", { class: "layout__svg", width: largura, height: altura, role: "group", "aria-label": "Monitores em escala sobre malha de 16 px; arrastar encaixa na malha" });
+    const desenho = svg("svg", { class: "layout__svg", width: largura, height: altura, role: "group", "aria-label": "Monitores e prévia da passagem", "aria-describedby": "layout-canvas-ajuda" });
     desenho.append(
       svg(
         "defs",
@@ -330,6 +363,19 @@ export default function montar({ ir, assinar }) {
     for (const d of layout.devices) desenho.append(grupoDispositivo(d, rects));
     for (const l of layout.links) desenho.append(ligacao(l, rects));
     if (selecao?.tipo === "borda") desenho.append(selecaoBorda(rects));
+    if (!avancado) {
+      const proposta = proporLigacao(layout, escolha);
+      if (proposta) for (const [ponta, texto] of [[proposta.a, "Saída"], [proposta.b, "Entrada"]]) {
+        const r = retanguloDe(ponta, rects);
+        if (!r) continue;
+        const a = pontoNaBorda(r, ponta.edge, ponta.from);
+        const b = pontoNaBorda(r, ponta.edge, ponta.to);
+        desenho.append(svg("line", { class: "layout__previa-borda", x1: a.x, y1: a.y, x2: b.x, y2: b.y }));
+        const rotulo = svg("text", { class: "layout__texto", x: (a.x + b.x) / 2 + 8, y: (a.y + b.y) / 2 - 8 });
+        rotulo.textContent = texto;
+        desenho.append(rotulo);
+      }
+    }
 
     trocar(envoltorio, desenho);
   }
@@ -341,32 +387,37 @@ export default function montar({ ir, assinar }) {
       class: `layout__dispositivo${d.is_self ? " layout__dispositivo--eu" : ""}${d.state !== "connected" && !d.is_self ? " layout__dispositivo--fora" : ""}${selecao?.tipo === "dispositivo" && selecao.peerId === d.peer_id ? " layout__dispositivo--selecionado" : ""}`,
       tabindex: 0,
       role: "button",
-      "aria-label": `${d.name}${d.is_self ? " (esta máquina)" : ""}, ${ESTADOS[d.state] ?? d.state}${d.hotkey ? `, atalho Win+Alt+${d.hotkey}` : ""}. Enter seleciona; setas movem.`,
+      "data-focus-key": chave("dispositivo", d.peer_id),
+      "aria-pressed": String(selecao?.tipo === "dispositivo" && selecao.peerId === d.peer_id),
+      "aria-describedby": "layout-canvas-ajuda",
+      "aria-label": `${d.name}${d.is_self ? " (esta máquina)" : ""}, ${ESTADOS[d.state] ?? d.state}${d.hotkey ? `, atalho Win+Alt+${d.hotkey}` : ""}.`,
     });
 
-    const primeiro = tela(Math.min(...meus.map((r) => r.x)), Math.min(...meus.map((r) => r.y)));
+    const primeiroMonitor = [...meus].sort((a, b) => a.y - b.y || a.x - b.x)[0];
+    const primeiro = tela(primeiroMonitor.x, primeiroMonitor.y);
     const texto = `${d.name}${d.is_self ? " · esta máquina" : ""}${d.hotkey ? ` · Win+Alt+${d.hotkey}` : ""}${ativo ? " · ativo" : ""}${d.state !== "connected" && !d.is_self ? ` · ${ESTADOS[d.state] ?? d.state}` : ""}`;
-    // Rótulo que passaria da borda direita do canvas encosta nela, alinhado à direita, em vez de ser cortado.
-    const passa = primeiro.x + texto.length * LARGURA_LETRA_PX > envoltorio.clientWidth;
-    const rotulo = svg("text", { class: "layout__nome", x: passa ? envoltorio.clientWidth - 8 : primeiro.x, y: primeiro.y - 8, ...(passa && { "text-anchor": "end" }) });
-    rotulo.textContent = texto;
-    grupo.append(rotulo);
-
+    // Nome cabe na área da própria máquina, sem cobrir monitores vizinhos.
+    const larguraGrupo = primeiroMonitor.w * escala;
+    const rotulo = svg("text", { class: "layout__nome", x: primeiro.x + 8, y: primeiro.y + 16 });
+    rotulo.textContent = caber(texto, larguraGrupo - 16);
+    const nomeIntegral = svg("title"); nomeIntegral.textContent = texto; grupo.append(nomeIntegral);
     for (const r of meus) {
       const p = tela(r.x, r.y);
       const w = r.w * escala;
       const hh = r.h * escala;
       grupo.append(svg("rect", { class: `layout__monitor${r.fantasma ? " layout__monitor--fantasma" : ""}`, x: p.x, y: p.y, width: w, height: hh, rx: 4 }));
-      const t1 = svg("text", { class: "layout__texto", x: p.x + 8, y: p.y + 18 });
+      const t1 = svg("text", { class: "layout__texto", x: p.x + 8, y: p.y + 38 });
       t1.textContent = caber(r.fantasma ? r.m.name : nomeDoMonitor(r.m), w - 16);
       grupo.append(t1);
       if (!r.fantasma && w > 72 && hh > 40) {
-        const t2 = svg("text", { class: "layout__texto layout__texto--fraco", x: p.x + 8, y: p.y + 34 });
+        const t2 = svg("text", { class: "layout__texto layout__texto--fraco", x: p.x + 8, y: p.y + 54 });
         t2.textContent = caber(medidasDoMonitor(r.m), w - 16);
         grupo.append(t2);
       }
       if (avancado && !r.fantasma) for (const edge of Object.keys(BORDAS)) grupo.append(zonaBorda(d, r, { x: p.x, y: p.y, w, h: hh }, edge));
     }
+
+    grupo.append(rotulo);
 
     // Bordas internas travadas
     for (const e of (avancado ? layout.locked_edges : []).filter((x) => x.peer_id === d.peer_id)) {
@@ -389,7 +440,8 @@ export default function montar({ ir, assinar }) {
         evento.preventDefault();
         const dx = (passo[0] * MALHA_PX) / escala;
         const dy = (passo[1] * MALHA_PX) / escala;
-        moverDispositivo(d, Math.round(d.x + dx), Math.round(d.y + dy));
+        const pos = posicaoVisual(d);
+        moverDispositivo(d, Math.round(pos.x + dx), Math.round(pos.y + dy));
       } else if (evento.key === "Enter" || evento.key === " ") {
         evento.preventDefault();
         selecionarDispositivo(d);
@@ -404,6 +456,7 @@ export default function montar({ ir, assinar }) {
       if (evento.target.closest(".layout__borda, .layout__alca, .layout__segmento, .layout__travada")) return;
       evento.preventDefault();
       const inicio = { x: evento.clientX, y: evento.clientY };
+      const pos = posicaoVisual(d);
       let dx = 0;
       let dy = 0;
       let moveu = false;
@@ -415,16 +468,18 @@ export default function montar({ ir, assinar }) {
         if (dx !== 0 || dy !== 0) moveu = true;
         grupo.setAttribute("transform", `translate(${dx} ${dy})`);
       };
-      const soltar = () => {
+      const soltar = (eventoFinal) => {
         grupo.removeEventListener("pointermove", mover);
         grupo.removeEventListener("pointerup", soltar);
         grupo.removeEventListener("pointercancel", soltar);
         grupo.classList.remove("layout__dispositivo--arrastando");
+        grupo.removeAttribute("transform");
+        if (eventoFinal.type === "pointercancel") return;
         if (!moveu) {
           selecionarDispositivo(d);
           return;
         }
-        moverDispositivo(d, Math.round(d.x + dx / escala), Math.round(d.y + dy / escala));
+        moverDispositivo(d, Math.round(pos.x + dx / escala), Math.round(pos.y + dy / escala));
       };
       grupo.addEventListener("pointermove", mover);
       grupo.addEventListener("pointerup", soltar);
@@ -444,9 +499,13 @@ export default function montar({ ir, assinar }) {
       ...geo,
       tabindex: 0,
       role: "button",
-      "aria-label": `${d.name}, ${nomeDoMonitor(r.m)}, borda ${BORDAS[edge]}. Enter seleciona um trecho para ligar.`,
+      "data-focus-key": chave("borda", [d.peer_id, r.m.ref, edge]),
+      "aria-describedby": "layout-canvas-ajuda",
+      "aria-label": `${d.name}, ${nomeDoMonitor(r.m)}, borda ${BORDAS[edge]}`,
     });
     const escolher = (fracaoClicada) => {
+      focoBorda = guardarFoco(no);
+      alvoBorda = chave("borda", [d.peer_id, r.m.ref, edge]);
       const ligacaoExistente = layout.links.find((l) => [l.a, l.b].some((p) => mesmaBorda(p, ponta) && fracaoClicada >= p.from && fracaoClicada <= p.to));
       if (ligacaoExistente) {
         selecionarLigacao(ligacaoExistente, ponta);
@@ -552,6 +611,13 @@ export default function montar({ ir, assinar }) {
       alcaDe.setAttribute("cy", q1.y);
       alcaAte.setAttribute("cx", q2.x);
       alcaAte.setAttribute("cy", q2.y);
+      for (const [alca, lado] of [[alcaDe, "from"], [alcaAte, "to"]]) {
+        const limites = limitesAlca(layout, ponta, lado, selecao?.linkId);
+        alca.setAttribute("aria-valuenow", ponta[lado] * 100);
+        alca.setAttribute("aria-valuetext", pct(ponta[lado]));
+        alca.setAttribute("aria-valuemin", (limites?.min ?? ponta[lado]) * 100);
+        alca.setAttribute("aria-valuemax", (limites?.max ?? ponta[lado]) * 100);
+      }
     };
     selecaoAtual = g;
     return g;
@@ -560,6 +626,7 @@ export default function montar({ ir, assinar }) {
   let selecaoAtual = null;
 
   function alca(rr, ponta, lado, p) {
+    const limites = limitesAlca(layout, ponta, lado, selecao?.linkId) ?? { min: ponta[lado], max: ponta[lado] };
     const circulo = svg("circle", {
       class: "layout__alca",
       cx: p.x,
@@ -567,14 +634,18 @@ export default function montar({ ir, assinar }) {
       r: 7,
       tabindex: 0,
       role: "slider",
-      "aria-label": lado === "from" ? "Começo do trecho" : "Fim do trecho",
-      "aria-valuemin": 0,
-      "aria-valuemax": 100,
+      "data-focus-key": chave("alca", [ponta.peer_id, ponta.monitor, ponta.edge, lado]),
+      "aria-label": `${lado === "from" ? "Começo" : "Fim"} do trecho, ${descreverPonta(layout, ponta)}`,
+      "aria-orientation": vertical(ponta.edge) ? "vertical" : "horizontal",
+      "aria-valuemin": limites.min * 100,
+      "aria-valuemax": limites.max * 100,
       "aria-valuenow": Math.round(ponta[lado] * 100),
       "aria-valuetext": pct(ponta[lado]),
     });
     const aplicar = (f) => {
-      const novo = arredondarFracao(f);
+      const permitidos = limitesAlca(layout, ponta, lado, selecao?.linkId);
+      if (!permitidos) return;
+      const novo = f === permitidos.min || f === permitidos.max ? f : limitar(arredondarFracao(f), permitidos.min, permitidos.max);
       if (lado === "from") ponta.from = Math.min(novo, ponta.to - PASSO_FRACAO);
       else ponta.to = Math.max(novo, ponta.from + PASSO_FRACAO);
       circulo.setAttribute("aria-valuenow", Math.round(ponta[lado] * 100));
@@ -586,6 +657,7 @@ export default function montar({ ir, assinar }) {
       evento.preventDefault();
       evento.stopPropagation();
       circulo.setPointerCapture(evento.pointerId);
+      const inicioTrecho = { from: ponta.from, to: ponta.to };
       const caixaSvg = envoltorio.querySelector("svg").getBoundingClientRect();
       const mover = (e) => {
         const px = e.clientX - caixaSvg.left;
@@ -593,7 +665,8 @@ export default function montar({ ir, assinar }) {
         const f = vertical(ponta.edge) ? (py - rr.y) / rr.h : (px - rr.x) / rr.w;
         aplicar(limitar(f, 0, 1));
       };
-      const soltar = () => {
+      const soltar = (eventoFinal) => {
+        if (eventoFinal.type === "pointercancel") { Object.assign(ponta, inicioTrecho); selecaoAtual?.atualizar(); pintarPainel(); }
         circulo.removeEventListener("pointermove", mover);
         circulo.removeEventListener("pointerup", soltar);
         circulo.removeEventListener("pointercancel", soltar);
@@ -605,14 +678,16 @@ export default function montar({ ir, assinar }) {
     circulo.addEventListener("click", (evento) => evento.stopPropagation());
     circulo.addEventListener("keydown", (evento) => {
       const delta = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 }[evento.key];
-      if (!delta) return;
+      const permitidos = limitesAlca(layout, ponta, lado, selecao?.linkId);
+      if (!permitidos || (!delta && evento.key !== "Home" && evento.key !== "End")) return;
       evento.preventDefault();
-      aplicar(ponta[lado] + delta * PASSO_FRACAO);
+      aplicar(evento.key === "Home" ? permitidos.min : evento.key === "End" ? permitidos.max : ponta[lado] + delta * PASSO_FRACAO);
     });
     return circulo;
   }
 
   function selecionarLigacao(l, pontaClicada) {
+    focoBorda = guardarFoco(no);
     const minha = mesmaBorda(l.a, pontaClicada) ? "a" : "b";
     const outra = minha === "a" ? "b" : "a";
     const outroDispositivo = layout.devices.find((d) => d.peer_id === l[outra].peer_id);
@@ -626,7 +701,7 @@ export default function montar({ ir, assinar }) {
   }
 
   function selecionarDispositivo(d) {
-    if (!d.is_self) { escolha.peer_id = d.peer_id; escolha.edge = posicaoRelativa(layout, d.peer_id); }
+    if (!d.is_self) { if (escolha.peer_id !== d.peer_id) escolha.posicao = null; escolha.peer_id = d.peer_id; escolha.edge = posicaoRelativa(layout, d.peer_id); }
     selecao = { tipo: "dispositivo", peerId: d.peer_id };
     avisoPainel = null;
     resultadoTeste = null;
@@ -637,11 +712,13 @@ export default function montar({ ir, assinar }) {
   }
 
   function limparSelecao() {
+    const foco = guardarFoco(popover);
     selecao = null;
     avisoPainel = null;
     pintarCanvas();
     pintarPainel();
     pintarLigacoes();
+    restaurarFoco(foco, no, { fallback: fallbackCanvas });
   }
 
   // ----- painel -----
@@ -679,13 +756,13 @@ export default function montar({ ir, assinar }) {
 
     const seletorDispositivo = h(
       "select",
-      { class: "entrada", id: idDispositivo, disabled: dispositivos.length === 0 },
+      { dataset: { focusKey: "borda-destino-computador" }, class: "entrada", id: idDispositivo, disabled: dispositivos.length === 0 },
       dispositivos.length === 0 && h("option", { value: "" }, "Nenhuma outra máquina com monitores conhecidos"),
       dispositivos.map(([peerId, nome]) => h("option", { value: peerId, selected: selecao.destino?.peer_id === peerId }, nome)),
     );
-    const seletorBorda = h("select", { class: "entrada", id: idBordaDestino, disabled: dispositivos.length === 0 });
-    const entradaDe = h("input", { class: "entrada entrada--mono layout__pct", id: idDe, type: "number", min: 0, max: 100, step: 5, value: Math.round((selecao.destino?.from ?? 0) * 100), disabled: !selecao.destino });
-    const entradaAte = h("input", { class: "entrada entrada--mono layout__pct", id: idAte, type: "number", min: 0, max: 100, step: 5, value: Math.round((selecao.destino?.to ?? 1) * 100), disabled: !selecao.destino });
+    const seletorBorda = h("select", { dataset: { focusKey: "borda-destino-monitor" }, class: "entrada", id: idBordaDestino, disabled: dispositivos.length === 0 });
+    const entradaDe = h("input", { dataset: { focusKey: "borda-destino-de" }, "aria-label": "Início do trecho de destino (%)", class: "entrada entrada--mono layout__pct", id: idDe, type: "number", min: 0, max: 100, step: 5, value: Math.round((selecao.destino?.from ?? 0) * 100), disabled: !selecao.destino });
+    const entradaAte = h("input", { dataset: { focusKey: "borda-destino-ate" }, "aria-label": "Fim do trecho de destino (%)", class: "entrada entrada--mono layout__pct", id: idAte, type: "number", min: 0, max: 100, step: 5, value: Math.round((selecao.destino?.to ?? 1) * 100), disabled: !selecao.destino });
 
     /** O que o campo mostra é o que a gravação manda: se o destino antigo não está mais nas opções, vale a opção mostrada. */
     const sincronizar = () => {
@@ -703,6 +780,8 @@ export default function montar({ ir, assinar }) {
     seletorBorda.addEventListener("change", sincronizar);
     preencherBordas();
 
+    entradaDe.addEventListener("input", () => { if (selecao.destino) selecao.destino.from = Number(entradaDe.value) / 100; });
+    entradaAte.addEventListener("input", () => { if (selecao.destino) selecao.destino.to = Number(entradaAte.value) / 100; });
     const lerDestino = () => {
       if (!selecao.destino) return null;
       return { peer_id: selecao.destino.peer_id, monitor: selecao.destino.monitor, edge: selecao.destino.edge, from: limitar(Number(entradaDe.value) / 100, 0, 1), to: limitar(Number(entradaAte.value) / 100, 0, 1) };
@@ -712,18 +791,21 @@ export default function montar({ ir, assinar }) {
       "div",
       { class: "linha layout__popover-acoes" },
       botao({
-        rotulo: linkId ? "Salvar ligação" : "Ligar",
+        rotulo: linkId ? "Salvar ligação" : "Ligar", dataset: { focusKey: "borda-salvar" },
         variante: "primario",
         icone: "verificar",
         desabilitado: !selecao.destino || !recurso("layout_links"),
         aoClicar: async () => {
+          const focoRetorno = guardarFoco(no);
           const b = lerDestino();
           if (!b) return;
           const r = await executar(() => api.layoutSetLink({ id: linkId, a: { peer_id: ponta.peer_id, monitor: ponta.monitor, edge: ponta.edge, from: ponta.from, to: ponta.to }, b, base_rev: layout.rev }), { depois: "nada" });
           if (!r) return;
           if (r.warnings?.length > 0) mostrarAvisoTopo("info", "A ligação foi gravada. O trecho foi encurtado nas pontas pelos cantos mortos.");
+          const foco = focoRetorno;
           selecao = null;
           await carregar({ silencioso: true });
+          restaurarFoco(foco, no, { fallback: fallbackCanvas });
         },
       }),
       linkId &&
@@ -738,16 +820,17 @@ export default function montar({ ir, assinar }) {
             await carregar({ silencioso: true });
           },
         }),
-      botao({ rotulo: "Cancelar", variante: "discreto", icone: "fechar", aoClicar: limparSelecao }),
+      botao({ rotulo: "Cancelar", dataset: { focusKey: "borda-cancelar" }, variante: "discreto", icone: "fechar", aoClicar: limparSelecao }),
     );
 
     const no = h(
       "section",
-      { class: `layout__popover ${classesDoLado(ponta)}`, role: "dialog", "aria-modal": "false", "aria-labelledby": idTitulo },
+      { class: `layout__popover ${classesDoLado(ponta)}`, dataset: { scrollKey: "layout-borda-editor" }, role: "dialog", "aria-modal": "false", "aria-labelledby": idTitulo },
       h("h2", { id: idTitulo }, linkId ? `Destino da borda (ligação ${linkId})` : "Destino da borda"),
       avisoPainel && aviso(avisoPainel.tom, h("p", null, avisoPainel.texto)),
       !recurso("layout_links") && h("p", { class: "nota" }, `Ligações: ${INDISPONIVEL}.`),
-      h("div", { class: "layout__campo" }, h("span", { class: "campo__rotulo" }, "Borda"), h("p", { class: "mono layout__borda-texto" }, descreverPonta(layout, ponta)), h("p", { class: "nota" }, "Arraste as alças no canvas para encurtar.")),
+      h("div", { class: "layout__campo" }, h("span", { class: "campo__rotulo" }, "Borda"), h("p", { class: "mono layout__borda-texto" }, descreverPonta(layout, ponta)), h("p", { class: "nota" }, "Ajuste os percentuais abaixo ou use as alças no canvas. Home e End usam os limites permitidos.")),
+      camposOrigem(ponta),
       h("div", { class: "layout__campo" }, h("label", { class: "campo__rotulo", for: idDispositivo }, "Dispositivo"), seletorDispositivo),
       h("div", { class: "layout__campo" }, h("label", { class: "campo__rotulo", for: idBordaDestino }, "Borda de destino"), seletorBorda),
       h(
@@ -789,7 +872,7 @@ export default function montar({ ir, assinar }) {
       const resumo = resultadoDoTeste(s);
       trocar(
         areaTeste,
-        aviso(resumo.tom, h("strong", null, resumo.titulo), h("p", null, resumo.texto)),
+        h("div", { class: `aviso aviso--${resumo.tom}` }, h("strong", null, resumo.titulo), h("p", null, resumo.texto)),
         h(
           "dl",
           { class: "kv layout__estatisticas" },
@@ -810,6 +893,7 @@ export default function montar({ ir, assinar }) {
       acoes: h("div", { class: "linha" }, d.is_self && selo("acento", "esta máquina"), seloDispositivo(d.state), layout.active_peer_id === d.peer_id && selo("ok", "ativo")),
       filhos: [
         avisoPainel && aviso(avisoPainel.tom, h("p", null, avisoPainel.texto)),
+        posicaoFina(d),
         h(
           "dl",
           { class: "kv" },
@@ -844,8 +928,10 @@ export default function montar({ ir, assinar }) {
             !recurso("switch_device") && h("span", { class: "nota", id: idIrNota }, INDISPONIVEL_NESTE_SISTEMA),
             botao({
               rotulo: testando ? "Teste em andamento..." : "Testar passagem (5 s)",
+              dataset: { focusKey: chave("painel-testar", d.peer_id) },
+              "aria-busy": String(testando), "aria-disabled": String(testando),
               icone: "teclado",
-              desabilitado: testando || d.state !== "connected",
+              desabilitado: d.state !== "connected",
               aoClicar: () => testarEntrada(d.peer_id),
             }),
             botao({ rotulo: "Cancelar seleção", variante: "discreto", icone: "fechar", aoClicar: limparSelecao }),
@@ -872,7 +958,7 @@ export default function montar({ ir, assinar }) {
       const atalho = atalhoDaLigacao(l);
       const corpoLigacao = h(
         "button",
-        { class: "layout__lig-corpo", type: "button", "aria-pressed": String(selecionada) },
+        { dataset: { focusKey: chave("ligacao", l.id) }, class: "layout__lig-corpo", type: "button", "aria-pressed": String(selecionada) },
         h("span", { class: "layout__lig-de mono" }, descreverPonta(layout, l.a)),
         h("span", { class: "layout__lig-para" }, `para ${descreverPonta(layout, l.b)}`),
       );
@@ -955,12 +1041,97 @@ export default function montar({ ir, assinar }) {
 
   // ----- barra de ações (sob o canvas) -----
 
+  function camposOrigem(ponta) {
+    const campos = ["from", "to"].map((lado) => {
+      const permitidos = limitesAlca(layout, ponta, lado, selecao?.linkId);
+      const id = novoId("origem-percentual");
+      const entrada = h("input", {
+        class: "entrada entrada--mono layout__pct", id, type: "number", step: "any",
+        min: (permitidos?.min ?? ponta[lado]) * 100, max: (permitidos?.max ?? ponta[lado]) * 100,
+        value: Math.round(ponta[lado] * 10000) / 100,
+        dataset: { focusKey: `borda-origem:${lado}` },
+      });
+      entrada.addEventListener("change", () => {
+        const limites = limitesAlca(layout, ponta, lado, selecao?.linkId);
+        const valor = Number(entrada.value) / 100;
+        if (!limites || !Number.isFinite(valor)) return;
+        ponta[lado] = limitar(valor, limites.min, limites.max);
+        entrada.value = Math.round(ponta[lado] * 10000) / 100;
+        selecaoAtual?.atualizar();
+      });
+      return h("div", { class: "campo" }, h("label", { for: id }, lado === "from" ? "Início do trecho de origem (%)" : "Fim do trecho de origem (%)"), entrada);
+    });
+    return h("div", { class: "layout__trecho" }, campos);
+  }
+
+  function formularioOrigem() {
+    const computadores = layout.devices.filter((d) => d.monitors.length > 0);
+    const d = computadores.find((d) => d.peer_id === origemFormulario.peer_id) ?? computadores.find((d) => d.is_self) ?? computadores[0];
+    if (!d) return h("p", { class: "nota" }, "Sem monitores conhecidos. Conecte os computadores e confira o módulo de teclado e mouse para editar uma borda.");
+    origemFormulario.peer_id = d.peer_id;
+    const m = d.monitors.find((m) => m.ref === origemFormulario.monitor) ?? d.monitors[0];
+    origemFormulario.monitor = m.ref;
+    const ponta = { peer_id: d.peer_id, monitor: m.ref, edge: origemFormulario.edge };
+    const seletor = (rotulo, valor, opcoes, focusKey, aoMudar) => campo({ rotulo, tipo: "select", valor, opcoes, dataset: { focusKey }, aoMudar });
+    const opcoesTrecho = [
+      ...trechosDisponiveis(layout, ponta).map((trecho, i) => ({ valor: `livre:${i}`, rotulo: `Criar no trecho livre de ${pct(trecho.from)} a ${pct(trecho.to)}`, trecho })),
+      ...layout.links.filter((l) => [l.a, l.b].some((p) => mesmaBorda(p, ponta))).map((ligacao, i) => {
+        const trecho = mesmaBorda(ligacao.a, ponta) ? ligacao.a : ligacao.b;
+        return { valor: `ligacao:${i}`, rotulo: `Editar ligação ${ligacao.id}, de ${pct(trecho.from)} a ${pct(trecho.to)}`, ligacao };
+      }),
+    ];
+    const opcao = opcoesTrecho.find((o) => o.valor === origemFormulario.trecho) ?? opcoesTrecho[0];
+    origemFormulario.trecho = opcao?.valor ?? null;
+    const atualizar = (nome, valor) => {
+      origemFormulario[nome] = valor;
+      if (nome !== "trecho") origemFormulario.trecho = null;
+      pintarRodape();
+    };
+    return cartao({ titulo: "Editar sem arrastar", filhos: [
+      h("p", { class: "nota" }, "Escolha a origem. O editor permite escolher destino e início/fim dos dois trechos. Para uma ligação existente, use também a lista Ligações."),
+      h("div", { class: "layout__origem" },
+        seletor("Computador de origem", d.peer_id, computadores.map((c) => ({ valor: c.peer_id, rotulo: c.name })), "origem-computador", (valor) => atualizar("peer_id", valor)),
+        seletor("Monitor de origem", m.ref, d.monitors.map((m) => ({ valor: m.ref, rotulo: nomeDoMonitor(m) })), "origem-monitor", (valor) => atualizar("monitor", valor)),
+        seletor("Borda de origem", ponta.edge, Object.entries(BORDAS).map(([valor, rotulo]) => ({ valor, rotulo })), "origem-borda", (valor) => atualizar("edge", valor)),
+        seletor("Trecho da borda", origemFormulario.trecho, opcoesTrecho.length ? opcoesTrecho : [{ valor: "", rotulo: "Nenhum trecho disponível nesta borda" }], "origem-trecho", (valor) => atualizar("trecho", valor)),
+      ),
+      h("div", { class: "linha" },
+        botao({ rotulo: "Abrir trecho selecionado", desabilitado: !opcao, dataset: { focusKey: "origem-editar" }, aoClicar: () => {
+          focoBorda = guardarFoco(no); alvoBorda = "origem-editar";
+          if (opcao?.ligacao) { selecionarLigacao(opcao.ligacao, ponta); return; }
+          const trecho = opcao?.trecho;
+          if (!trecho) { mostrarAvisoTopo("aviso", "Esta borda não tem trecho livre. Escolha outra borda ou edite uma ligação existente."); return; }
+          selecao = { tipo: "borda", ponta: { ...ponta, ...trecho }, linkId: null, destino: destinoPadrao(ponta) };
+          focarPopover = true; pintarCanvas(); pintarPainel(); pintarLigacoes();
+        } }),
+        botao({ rotulo: "Ajustar posição deste computador", dataset: { focusKey: "origem-posicao" }, aoClicar: () => { selecionarDispositivo(d); painel.querySelector("input")?.focus(); } }),
+      ),
+    ] });
+  }
+
+  function posicaoFina(d) {
+    const coordenada = (eixo) => {
+      const id = novoId("posicao");
+      const entrada = h("input", { class: "entrada entrada--mono", id, type: "number", step: layout.snap_px || MALHA_PX, value: d[eixo], dataset: { focusKey: chave("posicao", [d.peer_id, eixo]) } });
+      return { entrada, no: h("div", { class: "campo" }, h("label", { for: id }, `Posição ${eixo.toUpperCase()} (px)`), entrada) };
+    };
+    const x = coordenada("x"); const y = coordenada("y");
+    return h("div", { class: "pilha" }, h("div", { class: "layout__origem" }, x.no, y.no), botao({
+      rotulo: "Aplicar posição", dataset: { focusKey: chave("posicao-aplicar", d.peer_id) },
+      aoClicar: () => {
+        const px = Number(x.entrada.value); const py = Number(y.entrada.value);
+        if (!Number.isFinite(px) || !Number.isFinite(py) || !x.entrada.value || !y.entrada.value) { mostrarAvisoTopo("erro", "Informe coordenadas válidas em pixels."); return; }
+        return moverDispositivo(d, px, py);
+      },
+    }));
+  }
+
   function pintarRodape() {
     const travar = botao({
       rotulo: layout.screen_locked ? "Destravar esta tela" : "Travar nesta tela",
-      atalho: "Win+Alt+L",
+      atalho: recurso("screen_lock") ? "Win+Alt+L" : null,
       desabilitado: !recurso("screen_lock"),
-      "aria-pressed": String(layout.screen_locked),
+      dataset: { focusKey: "layout-travar" },
       aoClicar: () => executar(() => api.lockToScreen({ locked: !layout.screen_locked })),
     });
 
@@ -1018,6 +1189,7 @@ export default function montar({ ir, assinar }) {
 
     trocar(
       areaRodape,
+      formularioOrigem(),
       h(
         "div",
         { class: "layout__rodape" },
@@ -1029,7 +1201,7 @@ export default function montar({ ir, assinar }) {
           h(
             "div",
             { class: "layout__acao" },
-            botao({ rotulo: "Copiar layout para os pares", desabilitado: !recurso("layout_copy"), aoClicar: copiarParaPares }),
+            botao({ rotulo: "Copiar layout para os pares", dataset: { focusKey: "layout-copiar" }, desabilitado: !recurso("layout_copy"), aoClicar: copiarParaPares }),
             !recurso("layout_copy") && indisponivel(),
           ),
         ),
@@ -1040,6 +1212,7 @@ export default function montar({ ir, assinar }) {
   }
 
   async function copiarParaPares() {
+    const foco = guardarFoco(no);
     let r;
     try {
       r = await api.layoutCopyToPeers({ peer_ids: null });
@@ -1048,9 +1221,19 @@ export default function montar({ ir, assinar }) {
       pintarOferta();
       return;
     }
+    if (saiu) return;
+    if (!interacaoAtual(foco, no)) {
+      trocar(avisoTopo, h("p", null, "A oferta foi enviada. Abra o resultado para conferir cada computador."), botao({ rotulo: "Ver resultado da oferta", dataset: { focusKey: "layout-resultado-oferta" }, aoClicar: () => exibirResultadoOferta(r) }));
+      anuncios.status("Oferta enviada. O resultado está disponível nesta página.");
+      return;
+    }
+    await exibirResultadoOferta(r);
+  }
+
+  async function exibirResultadoOferta(r) {
     const ESTADOS = { offered: ["ok", "oferecido"], offline: ["aviso", "offline"], denied: ["erro", "recusado"], unsupported: ["neutro", "sem suporte"] };
     const { promessa } = abrirDialogo({
-      titulo: "Layout oferecido aos pares",
+      titulo: "Layout oferecido aos pares", raizRetorno: no,
       conteudo: h(
         "div",
         { class: "pilha" },
@@ -1089,6 +1272,7 @@ export default function montar({ ir, assinar }) {
       titulo: "Layout de telas",
       descricao: "Posicione o outro computador como ele está na sua mesa para passar o mouse entre as telas.",
     }),
+    anuncios.no,
     corpo,
   );
   carregar();

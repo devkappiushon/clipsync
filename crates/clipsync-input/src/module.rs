@@ -1,6 +1,7 @@
 //! The input module: destination side (Enter / datagrams / Stats), the source-side loopback
 //! driven by `ModuleCommand::InputLoopback` (contract §8 rules 1 to 3) and the continuous
 //! capture derived from `layout.toml` (§12.6 item 2, in `capture.rs`).
+use crate::adapter::lifecycle::LifecycleCursor;
 use crate::adapter::{
     BarrierSpec, CaptureAdapter, CaptureEvent, EmulateAdapter, Hotkey, InputError, Zone, ZoneRef,
     entry_events, same_zones,
@@ -12,11 +13,11 @@ use crate::msg;
 use crate::span::SpanTrack;
 use async_trait::async_trait;
 use clipsync_proto::{
-    Edge, InputDatagram, InputMsg, InputState, LayoutOffer, LoopbackStats, MAX_EVENTS_PER_DATAGRAM,
+    Edge, InputDatagram, InputMsg, InputState, LayoutOffer, LoopbackStats,
     MAX_INPUT_DATAGRAMS_PER_SEC, Module, ModuleCommand, ModuleError, ModuleHost, ModuleInput,
     ModuleKind, ModuleMsg, ModuleReply, ModuleStatus, OfferDevice, OfferEndpoint, OfferLink,
-    OfferOutcome, OfferState, PeerId, PeerInfo, PeerZones, PendingOffer, RejectReason, SendError,
-    ZoneInfo, mono_us,
+    OfferOutcome, OfferState, PeerId, PeerInfo, PeerZones, PendingOffer, ReceiveContext,
+    RejectReason, SendError, ZoneInfo, mono_us,
 };
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -87,6 +88,24 @@ struct OfferJob {
     outcomes: Vec<OfferOutcome>,
     reply: oneshot::Sender<ModuleReply>,
     until: Instant,
+    waiting: usize,
+    rejected: std::collections::HashSet<PeerId>,
+}
+
+struct OfferCompletion {
+    notes: mpsc::UnboundedSender<Note>,
+    peer: PeerId,
+    state: OfferState,
+}
+impl OfferCompletion {
+    fn set(&mut self, state: OfferState) {
+        self.state = state;
+    }
+}
+impl Drop for OfferCompletion {
+    fn drop(&mut self) {
+        let _ = self.notes.send(Note::OfferSent(self.peer, self.state));
+    }
 }
 
 const OFFER_GRACE: Duration = Duration::from_millis(700);
@@ -102,6 +121,7 @@ struct LoopBarrier {
 
 /// Destination-side record of one controlling peer.
 struct Incoming {
+    context: ReceiveContext,
     session: u32,
     active: bool,
     /// Events received (not datagrams).
@@ -118,8 +138,9 @@ struct Incoming {
 }
 
 impl Incoming {
-    fn new(session: u32) -> Self {
+    fn new(session: u32, context: ReceiveContext) -> Self {
         Self {
+            context,
             session,
             active: true,
             received: 0,
@@ -196,6 +217,7 @@ impl Bucket {
 }
 
 enum LoopSignal {
+    Stop,
     Stats(LoopbackStats),
     Rejected(RejectReason),
     PeerDown,
@@ -214,7 +236,23 @@ struct LoopDone {
     reply: oneshot::Sender<ModuleReply>,
 }
 
+struct Entry<'a> {
+    edge: Edge,
+    monitor: Option<&'a str>,
+    pos: f32,
+    back: Option<(f32, f32)>,
+}
+
+#[derive(Default)]
+struct StreamFrontier {
+    connection: u64,
+    closed: Option<u64>,
+    entered: Option<u64>,
+}
+
 struct State {
+    network: crate::network::Network,
+    frontiers: HashMap<PeerId, StreamFrontier>,
     cfg: InputConfig,
     host: Arc<dyn ModuleHost>,
     emu: Box<dyn EmulateAdapter>,
@@ -229,6 +267,7 @@ struct State {
     ignored: u64,
     rate_dropped: u64,
     paused: bool,
+    authority: capture::HostCursor,
     last_event: Option<String>,
     last_block: Option<String>,
     layout: Option<Layout>,
@@ -276,11 +315,16 @@ impl Module for InputModule {
         mut rx: mpsc::Receiver<ModuleInput>,
     ) -> Result<(), ModuleError> {
         let me = *self;
+        let authority = capture::HostCursor::new(host.as_ref());
+        let paused = authority.snapshot.paused || authority.snapshot.stopped;
         let (notes, mut note_rx) = mpsc::unbounded_channel();
         let mut st = State {
+            network: Default::default(),
+            frontiers: HashMap::new(),
             cap_name: me.cap.name(),
             emu_name: me.emu.name(),
             cfg: me.cfg,
+            authority,
             host,
             emu: me.emu,
             emu_started: false,
@@ -291,7 +335,7 @@ impl Module for InputModule {
             ctl: None,
             ignored: 0,
             rate_dropped: 0,
-            paused: false,
+            paused,
             last_event: None,
             last_block: None,
             layout: me.layout,
@@ -315,12 +359,20 @@ impl Module for InputModule {
         st.cap_hooks = st.cap.as_ref().is_some_and(|c| c.holds_hooks());
         st.cap_can_begin = st.cap.as_ref().is_none_or(|c| c.can_begin());
         st.local_zones = st.cap.as_ref().map(|c| c.known_zones()).unwrap_or_default();
+        if paused && st.cap_hooks {
+            st.arm_resume().await;
+        }
         st.start_continuous().await;
         let mut task: Option<JoinHandle<LoopDone>> = None;
         let mut tick = tokio::time::interval(ZONES_POLL);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
+            st.reconcile_host().await;
+            if st.authority.snapshot.stopped {
+                break;
+            }
             tokio::select! {
+                () = st.authority.changed() => {},
                 input = rx.recv() => {
                     let Some(input) = input else { break };
                     match input {
@@ -368,17 +420,75 @@ impl Module for InputModule {
                 }
             }
         }
+        st.release_all().await;
         if let Some(t) = task {
-            t.abort();
+            if let Some(c) = &st.ctl {
+                let _ = c.tx.send(LoopSignal::Stop);
+            }
+            if let Ok(done) = t.await {
+                st.cap = Some(done.cap);
+                let _ = done
+                    .reply
+                    .send(ModuleReply::Error(msg::SESSION_CANCELLED.to_owned()));
+            }
+        }
+        if let Some(j) = st.offer_job.take() {
+            let _ = j
+                .reply
+                .send(ModuleReply::Error(msg::SESSION_CANCELLED.to_owned()));
         }
         st.stop_continuous().await;
-        st.release_all().await;
         let _ = st.emu.stop().await;
+        st.network.stop().await;
         Ok(())
     }
 }
 
 impl State {
+    async fn reconcile_host(&mut self) {
+        let (changed, invalidated) = self.authority.refresh();
+        if !changed {
+            return;
+        }
+        let now = self.authority.snapshot;
+        if invalidated && !self.paused {
+            self.apply_pause(true).await;
+        }
+        let paused = now.paused || now.stopped;
+        if paused != self.paused {
+            self.apply_pause(paused).await;
+        }
+        for peer in self.incoming.keys().copied().collect::<Vec<_>>() {
+            self.reconcile_incoming(peer).await;
+        }
+        self.sync_links().await;
+    }
+
+    async fn apply_pause(&mut self, p: bool) {
+        self.paused = p;
+        self.send_ctl(Ctl::Paused(p));
+        if p {
+            for i in self.incoming.values_mut() {
+                i.active = false;
+            }
+            self.release_all().await;
+            if let Some(c) = &self.ctl {
+                let _ = c.tx.send(LoopSignal::Paused);
+            }
+            // Hooks do not stay installed while paused (§13.2 rule 2g); only the system
+            // hotkey for the way back is left, if the system allows it.
+            if self.cap_hooks {
+                if self.cont.is_some() {
+                    self.stop_continuous().await;
+                }
+                self.arm_resume().await;
+            }
+        } else {
+            self.disarm_resume().await;
+            self.start_continuous().await;
+        }
+    }
+
     async fn finish_loopback(&mut self, d: LoopDone) {
         self.cap = Some(d.cap);
         let reply = match d.outcome {
@@ -403,6 +513,19 @@ impl State {
             Note::Zones(z) => self.on_zones(z).await,
             Note::Hotkey(h) => self.on_hotkey(h).await,
             Note::Ignored => self.ignored += 1,
+            Note::OfferSent(peer, state) => {
+                if let Some(job) = &mut self.offer_job {
+                    if !job.rejected.contains(&peer)
+                        && let Some(o) = job.outcomes.iter_mut().find(|o| o.peer == peer)
+                    {
+                        o.state = state;
+                    }
+                    job.waiting = job.waiting.saturating_sub(1);
+                    if job.waiting == 0 {
+                        job.until = Instant::now() + OFFER_GRACE;
+                    }
+                }
+            }
             Note::Restart => {
                 self.stop_continuous().await;
                 self.start_continuous().await;
@@ -428,6 +551,9 @@ impl State {
     /// Every 2 s, in every platform: the zones the adapter knows (the engine does the same while
     /// it owns the adapter) and whether the links still lead to trusted peers.
     async fn on_tick(&mut self) {
+        for peer in self.incoming.keys().copied().collect::<Vec<_>>() {
+            self.reconcile_incoming(peer).await;
+        }
         let known = self.cap.as_ref().map(|c| c.known_zones());
         if let Some(z) = known {
             self.on_zones(z).await;
@@ -437,6 +563,9 @@ impl State {
 
     /// What a recognized shortcut does (§13.6 item 5).
     async fn on_hotkey(&mut self, h: Hotkey) {
+        if self.host.paused() && h != Hotkey::TogglePause {
+            return;
+        }
         match h {
             Hotkey::GoTo(n) => {
                 let me = self.host.local_id();
@@ -446,12 +575,17 @@ impl State {
                     .and_then(|l| l.devices.iter().find(|d| d.hotkey == Some(n)))
                     .map(|d| d.peer);
                 match target {
-                    Some(peer) if peer == me => self.send_ctl(Ctl::Home),
+                    Some(peer) if peer == me => {
+                        self.send_ctl(Ctl::Home);
+                        if let Some(c) = &self.ctl {
+                            let _ = c.tx.send(LoopSignal::Stop);
+                        }
+                    }
                     Some(peer) => {
                         let (tx, rx) = oneshot::channel();
                         self.switch(peer, tx);
                         let notes = self.notes.clone();
-                        tokio::spawn(async move {
+                        self.network.spawn_for(Duration::from_secs(5), async move {
                             if let Ok(ModuleReply::Error(e)) = rx.await {
                                 let _ = notes.send(Note::Block(e));
                             }
@@ -471,6 +605,9 @@ impl State {
     /// "Travar nesta tela", by command or shortcut.
     fn set_locked(&mut self, on: bool) {
         self.locked = on;
+        if on && let Some(c) = &self.ctl {
+            let _ = c.tx.send(LoopSignal::Stop);
+        }
         self.send_ctl(Ctl::Lock(on));
         self.last_event = Some(if on {
             msg::LOCKED_ON.to_owned()
@@ -545,15 +682,22 @@ impl State {
 
     /// `InputSwitch`: the continuous capture opens the session; the answer comes when the peer
     /// had its chance to refuse.
-    fn switch(&self, to: PeerId, reply: oneshot::Sender<ModuleReply>) {
+    fn switch(&mut self, to: PeerId, reply: oneshot::Sender<ModuleReply>) {
         let Some(cont) = &self.cont else {
             let _ = reply.send(ModuleReply::Error(msg::NOT_LINKED.to_owned()));
             return;
         };
+        if !self.network.has_capacity() {
+            let _ = reply.send(ModuleReply::Error(msg::NETWORK_BUSY.to_owned()));
+            return;
+        }
         let (tx, rx) = oneshot::channel();
         let _ = cont.ctl.send(Ctl::Switch { to, reply: tx });
-        tokio::spawn(async move {
-            let r = match rx.await {
+        self.network.spawn_for(Duration::from_secs(5), async move {
+            let mut reply = reply;
+            let result =
+                tokio::select! { biased; () = reply.closed() => return, result = rx => result };
+            let r = match result {
                 Ok(Ok(())) => ModuleReply::Done,
                 Ok(Err(e)) => ModuleReply::Error(e),
                 Err(_) => ModuleReply::Error(msg::adapter_failed("captura")),
@@ -573,29 +717,58 @@ impl State {
             let _ = reply.send(ModuleReply::Error(msg::NO_LAYOUT.to_owned()));
             return;
         };
+        if !self.network.has_capacity() {
+            let _ = reply.send(ModuleReply::Error(msg::NETWORK_BUSY.to_owned()));
+            return;
+        }
         let mut outcomes = Vec::new();
+        let mut waiting = 0;
         for peer in to {
             let state = match self.peers.get(&peer) {
                 Some(p) if !p.connected => OfferState::Offline,
                 None => OfferState::Offline,
                 Some(p) if p.remote_version < LAYOUT_PROTOCOL => OfferState::Unsupported,
                 Some(_) => {
-                    let m = ModuleMsg::Input(InputMsg::LayoutOffer(offer.clone()));
-                    match self.host.send_reliable(peer, m).await {
-                        Ok(()) => OfferState::Offered,
-                        Err(SendError::RemoteTooOld) => OfferState::Unsupported,
-                        Err(SendError::NotConnected) => OfferState::Offline,
-                        Err(_) => OfferState::Denied,
+                    if self.network.has_capacity()
+                        && let Some(context) = self.host.peer_input_context(peer)
+                    {
+                        let host = self.host.clone();
+                        let offer = offer.clone();
+                        let mut completion = OfferCompletion {
+                            notes: self.notes.clone(),
+                            peer,
+                            state: OfferState::Denied,
+                        };
+                        self.network.spawn(async move {
+                            let state = match host
+                                .send_reliable_on(
+                                    peer,
+                                    context.connection,
+                                    ModuleMsg::Input(InputMsg::LayoutOffer(offer)),
+                                )
+                                .await
+                            {
+                                Ok(()) => OfferState::Offered,
+                                Err(SendError::RemoteTooOld) => OfferState::Unsupported,
+                                Err(SendError::NotConnected) => OfferState::Offline,
+                                Err(_) => OfferState::Denied,
+                            };
+                            completion.set(state);
+                        });
+                        waiting += 1;
                     }
+                    OfferState::Denied
                 }
             };
             outcomes.push(OfferOutcome { peer, state });
         }
-        if outcomes.iter().any(|o| o.state == OfferState::Offered) {
+        if waiting > 0 {
             self.offer_job = Some(OfferJob {
                 outcomes,
                 reply,
-                until: Instant::now() + OFFER_GRACE,
+                waiting,
+                rejected: Default::default(),
+                until: Instant::now() + crate::network::SEND_WAIT + OFFER_GRACE,
             });
         } else {
             let _ = reply.send(ModuleReply::InputOffered(outcomes));
@@ -610,7 +783,7 @@ impl State {
 
     /// `Zones` to a peer that speaks protocol 2 and may control me (§12.10 decision 8). The
     /// host refuses it otherwise, so nothing leaves for older peers or peers without `input_in`.
-    fn announce_zones(&self, info: &PeerInfo) {
+    fn announce_zones(&mut self, info: &PeerInfo) {
         if !info.connected
             || info.remote_version < LAYOUT_PROTOCOL
             || !info.perms.input_in
@@ -621,18 +794,25 @@ impl State {
         let host = self.host.clone();
         let to = info.id;
         let zones = self.local_zones.iter().map(zone_info).collect();
-        tokio::spawn(async move {
-            let m = ModuleMsg::Input(InputMsg::Zones { zones });
-            if let Err(e) = host.send_reliable(to, m).await {
-                tracing::debug!(peer = %to, "zones not sent: {e}");
-            }
-        });
+        let Some(context) = host.peer_input_context(to) else {
+            return;
+        };
+        if !self.network.spawn(async move {
+            host.send_reliable_on(
+                to,
+                context.connection,
+                ModuleMsg::Input(InputMsg::Zones { zones }),
+            )
+            .await
+        }) {
+            self.last_block = Some(msg::NETWORK_BUSY.to_owned());
+        }
     }
 
     /// Monitors changed: every eligible peer hears about it.
-    fn announce_zones_to_all(&self) {
-        for p in self.peers.values() {
-            self.announce_zones(p);
+    fn announce_zones_to_all(&mut self) {
+        for p in self.peers.values().cloned().collect::<Vec<_>>() {
+            self.announce_zones(&p);
         }
     }
 
@@ -701,7 +881,11 @@ impl State {
     /// without links; the loopback owns the adapter while it runs and restarts us after. Paused
     /// with a hook-holding adapter: nothing is installed (§13.2 rule 2g).
     async fn start_continuous(&mut self) {
-        if self.cont.is_some() || (self.paused && self.cap_hooks) {
+        if self.cont.is_some()
+            || self.host.paused()
+            || self.paused
+            || self.authority.snapshot.stopped
+        {
             return;
         }
         if self.derived_links().is_empty() {
@@ -723,6 +907,10 @@ impl State {
                 return;
             }
         };
+        if self.host.paused() {
+            self.cap = Some(cap);
+            return;
+        }
         let targets = self.build_targets(&zones, true);
         if targets.is_empty() {
             self.cap = Some(cap);
@@ -856,6 +1044,10 @@ impl State {
                 None
             }
             ModuleCommand::InputLoopback { to, seconds } => {
+                if self.host.paused() {
+                    let _ = reply.send(ModuleReply::Error(RejectReason::Paused.pt().to_owned()));
+                    return None;
+                }
                 if task.is_some() {
                     let _ = reply.send(ModuleReply::Error(msg::LOOPBACK_BUSY.into()));
                     return None;
@@ -962,12 +1154,14 @@ impl State {
 
     async fn handle(&mut self, input: ModuleInput) {
         match input {
-            ModuleInput::Reliable { from, msg } => {
+            ModuleInput::Reliable { from, msg, context } => {
                 if let ModuleMsg::Input(m) = msg {
-                    self.on_msg(from, m).await;
+                    self.on_msg(from, m, context).await;
                 }
             }
-            ModuleInput::Datagram { from, dg } => self.on_datagram(from, dg).await,
+            ModuleInput::Datagram { from, dg, context } => {
+                self.on_datagram(from, dg, context).await
+            }
             ModuleInput::Rejected { from, reason, .. } => {
                 self.last_block = Some(reason.pt().to_owned());
                 if let Some(c) = self.ctl.as_ref().filter(|c| c.to == from) {
@@ -975,6 +1169,7 @@ impl State {
                 }
                 self.send_ctl(Ctl::Rejected { from, reason });
                 if let Some(j) = &mut self.offer_job {
+                    j.rejected.insert(from);
                     for o in j.outcomes.iter_mut().filter(|o| o.peer == from) {
                         if o.state == OfferState::Offered {
                             o.state = OfferState::Denied;
@@ -983,6 +1178,7 @@ impl State {
                 }
             }
             ModuleInput::PeerUp(info) => {
+                self.reconcile_incoming(info.id).await;
                 self.announce_zones(&info);
                 self.peers.insert(info.id, info);
                 self.sync_links().await;
@@ -990,6 +1186,7 @@ impl State {
             ModuleInput::PeerDown(id) => {
                 self.peers.remove(&id);
                 self.buckets.remove(&id);
+                self.frontiers.remove(&id);
                 if self.incoming.remove(&id).is_some_and(|i| i.active) {
                     self.release_all().await;
                 }
@@ -1001,35 +1198,39 @@ impl State {
                 self.sync_links().await;
             }
             ModuleInput::Paused(p) => {
-                self.paused = p;
-                self.send_ctl(Ctl::Paused(p));
-                if p {
-                    for i in self.incoming.values_mut() {
-                        i.active = false;
-                    }
-                    self.release_all().await;
-                    if let Some(c) = &self.ctl {
-                        let _ = c.tx.send(LoopSignal::Paused);
-                    }
-                    // Hooks do not stay installed while paused (§13.2 rule 2g); only the system
-                    // hotkey for the way back is left, if the system allows it.
-                    if self.cap_hooks && self.cont.is_some() {
-                        self.stop_continuous().await;
-                        self.arm_resume().await;
-                    }
+                if self.authority.observed() {
+                    self.reconcile_host().await;
                 } else {
-                    self.disarm_resume().await;
-                    self.start_continuous().await;
+                    self.apply_pause(p).await;
                 }
             }
             ModuleInput::Command { .. } | ModuleInput::Shutdown => {}
         }
     }
 
-    async fn on_msg(&mut self, from: PeerId, m: InputMsg) {
+    async fn on_msg(&mut self, from: PeerId, m: InputMsg, context: ReceiveContext) {
+        if self
+            .host
+            .peer_input_context(from)
+            .is_none_or(|c| !c.connected || c.connection != context.connection)
+        {
+            self.ignored += 1;
+            return;
+        }
         match m {
             InputMsg::Enter { session, edge, pos } => {
-                self.on_enter(from, session, edge, None, pos, None).await
+                self.on_enter(
+                    from,
+                    session,
+                    Entry {
+                        edge,
+                        monitor: None,
+                        pos,
+                        back: None,
+                    },
+                    context,
+                )
+                .await
             }
             InputMsg::EnterAt {
                 session,
@@ -1037,8 +1238,18 @@ impl State {
                 monitor,
                 pos,
             } => {
-                self.on_enter(from, session, edge, monitor.as_deref(), pos, None)
-                    .await
+                self.on_enter(
+                    from,
+                    session,
+                    Entry {
+                        edge,
+                        monitor: monitor.as_deref(),
+                        pos,
+                        back: None,
+                    },
+                    context,
+                )
+                .await
             }
             InputMsg::EnterSpan {
                 session,
@@ -1051,10 +1262,13 @@ impl State {
                 self.on_enter(
                     from,
                     session,
-                    edge,
-                    monitor.as_deref(),
-                    pos,
-                    Some((back_from, back_to)),
+                    Entry {
+                        edge,
+                        monitor: monitor.as_deref(),
+                        pos,
+                        back: Some((back_from, back_to)),
+                    },
+                    context,
                 )
                 .await
             }
@@ -1094,11 +1308,15 @@ impl State {
                 self.last_event = Some(msg::offer_from(&name));
             }
             InputMsg::Leave { session } => {
-                if let Some(i) = self
-                    .incoming
-                    .get_mut(&from)
-                    .filter(|i| i.session == session)
-                {
+                if let Some(index) = context.stream {
+                    let f = self.frontier(from, context.connection);
+                    f.closed = Some(f.closed.map_or(index, |old| old.max(index)));
+                }
+                if let Some(i) = self.incoming.get_mut(&from).filter(|i| {
+                    i.session == session
+                        && i.context.connection == context.connection
+                        && i.context.stream < context.stream
+                }) {
                     i.active = false;
                     self.release_all().await;
                     let name = self.peer_name(from);
@@ -1123,12 +1341,16 @@ impl State {
                     Some(i) => {
                         let stats = i.stats();
                         let host = self.host.clone();
-                        tokio::spawn(async move {
-                            let m = ModuleMsg::Input(InputMsg::Stats(stats));
-                            if let Err(e) = host.send_reliable(from, m).await {
-                                tracing::warn!("could not send input stats: {e}");
-                            }
-                        });
+                        if !self.network.spawn(async move {
+                            host.send_reliable_on(
+                                from,
+                                context.connection,
+                                ModuleMsg::Input(InputMsg::Stats(stats)),
+                            )
+                            .await
+                        }) {
+                            self.last_block = Some(msg::NETWORK_BUSY.to_owned());
+                        }
                     }
                     None => self.ignored += 1,
                 }
@@ -1157,22 +1379,53 @@ impl State {
         &mut self,
         from: PeerId,
         session: u32,
-        edge: Edge,
-        monitor: Option<&str>,
-        pos: f32,
-        back: Option<(f32, f32)>,
+        entry: Entry<'_>,
+        context: ReceiveContext,
     ) {
+        let Entry {
+            edge,
+            monitor,
+            pos,
+            back,
+        } = entry;
         if session == 0 {
             self.ignored += 1;
             return;
         }
-        if self.paused {
+        if !self.authorized(from, context) {
             self.ignored += 1;
-            self.refuse(from, session, RejectReason::Paused);
+            let reason = if self.paused || self.host.paused() {
+                RejectReason::Paused
+            } else {
+                RejectReason::NotAuthorized
+            };
+            self.refuse_on(from, session, context.connection, reason);
             return;
         }
+        let Some(index) = context.stream else {
+            self.ignored += 1;
+            return;
+        };
+        let frontier = self.frontier(from, context.connection);
+        if frontier.closed.is_some_and(|n| index <= n)
+            || frontier.entered.is_some_and(|n| index <= n)
+        {
+            self.ignored += 1;
+            return;
+        }
+        frontier.entered = Some(index);
         if self.incoming.get(&from).is_some_and(|i| i.active) {
             self.release_all().await;
+        }
+        if !self.authorized(from, context) {
+            self.release_all().await;
+            self.refuse_on(
+                from,
+                session,
+                context.connection,
+                RejectReason::NotAuthorized,
+            );
+            return;
         }
         if !self.emu_started {
             match self.emu.start().await {
@@ -1183,12 +1436,22 @@ impl State {
                         InputError::PermissionDenied => msg::PORTAL_DENIED.to_owned(),
                         _ => msg::EMULATOR_FAILED.to_owned(),
                     });
-                    self.refuse(from, session, RejectReason::ApplyFailed);
+                    self.refuse_on(from, session, context.connection, RejectReason::ApplyFailed);
                     return;
                 }
             }
         }
-        self.incoming.insert(from, Incoming::new(session));
+        if !self.authorized(from, context) {
+            self.release_all().await;
+            self.refuse_on(
+                from,
+                session,
+                context.connection,
+                RejectReason::NotAuthorized,
+            );
+            return;
+        }
+        self.incoming.remove(&from);
         let zone = monitor.and_then(|m| find_zone(&self.local_zones, m));
         let placed = match zone {
             Some(z) => self.emu.enter(z, &self.local_zones, edge, pos).await,
@@ -1198,12 +1461,23 @@ impl State {
             Err(InputError::Locked) => {
                 self.incoming.remove(&from);
                 self.release_all().await;
-                self.refuse(from, session, RejectReason::Locked);
+                self.refuse_on(from, session, context.connection, RejectReason::Locked);
                 return;
             }
             Err(e) => tracing::warn!("entry positioning failed: {e}"),
             Ok(()) => {}
         }
+        if !self.authorized(from, context) {
+            self.release_all().await;
+            self.refuse_on(
+                from,
+                session,
+                context.connection,
+                RejectReason::NotAuthorized,
+            );
+            return;
+        }
+        self.incoming.insert(from, Incoming::new(session, context));
         if let Some(span) = back {
             let entry_zone = zone
                 .or_else(|| self.local_zones.first())
@@ -1217,34 +1491,96 @@ impl State {
         self.last_event = Some(msg::control_started(&name));
     }
 
-    /// `Refused` to the source, only when it speaks protocol 3 (a v2 peer has no such message).
-    fn refuse(&self, to: PeerId, session: u32, reason: RejectReason) {
-        self.send_v3(to, InputMsg::Refused { session, reason });
+    fn frontier(&mut self, peer: PeerId, connection: u64) -> &mut StreamFrontier {
+        let f = self.frontiers.entry(peer).or_default();
+        if f.connection != connection {
+            *f = StreamFrontier {
+                connection,
+                ..Default::default()
+            };
+        }
+        f
     }
-
-    /// A reliable message that only protocol 3 peers understand.
-    fn send_v3(&self, to: PeerId, m: InputMsg) {
+    fn authorized(&self, from: PeerId, context: ReceiveContext) -> bool {
+        !self.paused
+            && !self.host.paused()
+            && self
+                .host
+                .peer_input_context(from)
+                .is_some_and(|c| c.permits(context))
+    }
+    async fn reconcile_incoming(&mut self, from: PeerId) {
+        let invalid = self
+            .incoming
+            .get(&from)
+            .is_some_and(|i| !self.authorized(from, i.context));
+        if invalid && let Some(i) = self.incoming.remove(&from) {
+            if i.active {
+                self.release_all().await;
+            }
+            self.refuse_on(
+                from,
+                i.session,
+                i.context.connection,
+                RejectReason::NotAuthorized,
+            );
+        }
+    }
+    fn refuse_on(&mut self, to: PeerId, session: u32, connection: u64, reason: RejectReason) {
+        let host = self.host.clone();
+        let v3 = host
+            .peers()
+            .iter()
+            .any(|p| p.id == to && p.remote_version >= SPAN_PROTOCOL);
+        if !self.network.spawn(async move {
+            if v3 {
+                host.send_reliable_on(
+                    to,
+                    connection,
+                    ModuleMsg::Input(InputMsg::Refused { session, reason }),
+                )
+                .await
+            } else {
+                host.reject_input_on(to, connection, reason).await
+            }
+        }) {
+            self.last_block = Some(msg::NETWORK_BUSY.into());
+        }
+    }
+    fn send_v3(&mut self, to: PeerId, connection: u64, m: InputMsg) {
         if !self
-            .peers
-            .get(&to)
-            .is_some_and(|p| p.remote_version >= SPAN_PROTOCOL)
+            .host
+            .peers()
+            .iter()
+            .any(|p| p.id == to && p.remote_version >= SPAN_PROTOCOL)
         {
             return;
         }
         let host = self.host.clone();
-        tokio::spawn(async move {
-            if let Err(e) = host.send_reliable(to, ModuleMsg::Input(m)).await {
-                tracing::debug!(peer = %to, "input reply not sent: {e}");
-            }
-        });
+        if !self.network.spawn(async move {
+            host.send_reliable_on(to, connection, ModuleMsg::Input(m))
+                .await
+        }) {
+            self.last_block = Some(msg::NETWORK_BUSY.into());
+        }
     }
 
-    async fn on_datagram(&mut self, from: PeerId, dg: InputDatagram) {
+    async fn on_datagram(&mut self, from: PeerId, dg: InputDatagram, context: ReceiveContext) {
+        self.reconcile_incoming(from).await;
+        if !self.authorized(from, context) {
+            self.ignored += 1;
+            return;
+        }
         let Some(inc) = self.incoming.get_mut(&from) else {
             self.ignored += 1;
             return;
         };
-        if !inc.active || inc.session != dg.session || self.paused {
+        if !inc.active
+            || inc.session != dg.session
+            || self.paused
+            || inc.context.connection != context.connection
+            || inc.context.input_epoch != context.input_epoch
+        {
             self.ignored += 1;
             return;
         }
@@ -1284,17 +1620,25 @@ impl State {
                 // The screen locked in the middle of the session: the source gets the cursor back.
                 self.incoming.remove(&from);
                 self.release_all().await;
-                self.refuse(from, session, RejectReason::Locked);
+                self.refuse_on(from, session, context.connection, RejectReason::Locked);
                 return;
             }
             tracing::warn!("emit failed: {e}");
+        }
+        if !self.authorized(from, context) {
+            self.reconcile_incoming(from).await;
+            return;
         }
         if let Some(pos) = returned {
             if let Some(i) = self.incoming.get_mut(&from) {
                 i.active = false;
             }
             self.release_all().await;
-            self.send_v3(from, InputMsg::Returned { session, pos });
+            self.send_v3(
+                from,
+                context.connection,
+                InputMsg::Returned { session, pos },
+            );
             let name = self.peer_name(from);
             self.last_event = Some(msg::returned_from(&name));
         }
@@ -1425,122 +1769,231 @@ async fn drive(
     session_cell: &AtomicU32,
     signals: &mut mpsc::UnboundedReceiver<LoopSignal>,
 ) -> Result<LoopbackStats, String> {
+    let mut authority = capture::HostCursor::new(host.as_ref());
+    authority.refresh();
+    if host.paused() || authority.snapshot.paused || authority.snapshot.stopped {
+        return Err(RejectReason::Paused.pt().to_owned());
+    }
+    let mut lifecycle = LifecycleCursor::new(cap);
     let specs: Vec<BarrierSpec> = barriers.iter().map(|b| b.spec.clone()).collect();
     let mut ev_rx = cap.start(&specs).await.map_err(|e| match e {
         InputError::PermissionDenied => msg::PORTAL_DENIED.to_owned(),
         other => msg::adapter_failed(&other.to_string()),
     })?;
     let deadline = Instant::now() + Duration::from_secs(u64::from(seconds));
-    let mut session = 0u32;
+    let context = host
+        .peer_input_context(to)
+        .ok_or_else(|| msg::PEER_OFFLINE.to_owned())?;
+    let mut session = 0;
+    let mut seq = 0;
     let mut active = false;
-    let mut seq = 0u32;
-    let mut queue: VecDeque<CaptureEvent> = VecDeque::new();
-    let mut failure: Option<String> = None;
-
-    'outer: loop {
-        let ev = if let Some(e) = queue.pop_front() {
-            e
-        } else {
-            tokio::select! {
-                e = ev_rx.recv() => match e { Some(e) => e, None => break },
-                s = signals.recv() => {
-                    match s {
-                        Some(LoopSignal::Rejected(r)) => failure = Some(r.pt().to_owned()),
-                        Some(LoopSignal::PeerDown) => failure = Some(msg::PEER_OFFLINE.to_owned()),
-                        Some(LoopSignal::Paused) => failure = Some(RejectReason::Paused.pt().to_owned()),
-                        Some(LoopSignal::Stats(_)) | None => {}
-                    }
-                    if failure.is_some() { break 'outer; }
-                    continue;
-                }
-                () = tokio::time::sleep_until(deadline) => break,
+    lifecycle.refresh();
+    let mut snapshot_ready = lifecycle
+        .snapshot
+        .as_ref()
+        .is_some_and(|s| s.allows_capture());
+    let mut release_all = false;
+    let mut opening: Option<crate::network::Sending> = None;
+    let mut queue = VecDeque::new();
+    let mut failure = None;
+    loop {
+        let (_, invalidated) = authority.refresh();
+        if invalidated || authority.snapshot.paused || authority.snapshot.stopped {
+            release_all = true;
+            failure = Some(RejectReason::Paused.pt().to_owned());
+            break;
+        }
+        if host
+            .peer_input_context(to)
+            .is_none_or(|c| !c.connected || c.connection != context.connection)
+        {
+            release_all = true;
+            failure = Some(msg::PEER_OFFLINE.to_owned());
+            break;
+        }
+        lifecycle.refresh();
+        if lifecycle.pending_invalidation
+            || lifecycle
+                .snapshot
+                .as_ref()
+                .is_some_and(|s| !s.allows_capture())
+        {
+            release_all = true;
+            failure = Some(msg::SOURCE_SCREEN_LOCKED.to_owned());
+            break;
+        }
+        let mut replay = false;
+        let ev = tokio::select! {
+            biased;
+            s = signals.recv() => {
+                failure = match s {
+                    Some(LoopSignal::Stats(_)) => continue,
+                    Some(LoopSignal::Rejected(r)) => Some(r.pt().to_owned()),
+                    Some(LoopSignal::PeerDown) => Some(msg::PEER_OFFLINE.to_owned()),
+                    Some(LoopSignal::Paused) => Some(RejectReason::Paused.pt().to_owned()),
+                    Some(LoopSignal::Stop) | None => Some(msg::SESSION_CANCELLED.to_owned()),
+                };
+                break;
             }
+            () = authority.changed() => continue,
+            () = lifecycle.changed() => continue,
+            ev = ev_rx.recv() => match ev { Some(ev) => ev, None => { failure = Some(msg::SESSION_CANCELLED.to_owned()); break; } },
+            result = async { match opening.as_mut() { Some(f) => f.await, None => Ok(()) } }, if opening.is_some() => {
+                let (_, invalidated) = authority.refresh();
+                if invalidated || authority.snapshot.paused || authority.snapshot.stopped {
+                    release_all = true;
+                    failure = Some(RejectReason::Paused.pt().to_owned());
+                    break;
+                }
+                lifecycle.refresh();
+                if lifecycle.pending_invalidation || lifecycle.snapshot.as_ref().is_some_and(|s| !s.allows_capture()) {
+                    release_all = true;
+                    failure = Some(msg::SOURCE_SCREEN_LOCKED.to_owned());
+                    break;
+                }
+                opening = None;
+                match result { Ok(()) => active = true, Err(e) => { failure = Some(e.to_string()); break; } }
+                continue;
+            }
+            _ = std::future::ready(()), if active && !queue.is_empty() => { if let Some(ev) = queue.pop_front() { replay = true; ev } else { continue } },
+            () = tokio::time::sleep_until(deadline) => break,
         };
+        let (_, invalidated) = authority.refresh();
+        if invalidated || authority.snapshot.paused || authority.snapshot.stopped {
+            release_all = true;
+            failure = Some(RejectReason::Paused.pt().to_owned());
+            break;
+        }
+        lifecycle.refresh();
+        if lifecycle.pending_invalidation
+            || lifecycle
+                .snapshot
+                .as_ref()
+                .is_some_and(|s| !s.allows_capture())
+        {
+            release_all = true;
+            failure = Some(msg::SOURCE_SCREEN_LOCKED.to_owned());
+            break;
+        }
         match ev {
+            CaptureEvent::Activated { .. } if !snapshot_ready => continue,
             CaptureEvent::Activated { barrier, pos, .. } => {
+                if session != 0 {
+                    failure = Some(msg::SESSION_CANCELLED.to_owned());
+                    break;
+                }
                 session = new_session();
                 session_cell.store(session, Ordering::SeqCst);
-                seq = 0;
-                active = true;
-                let (edge, pos) = match barriers.get(barrier) {
-                    Some(b) => (b.peer_edge, map_pos(b.local, b.remote, pos)),
-                    None => (Edge::Left, pos),
-                };
-                let m = ModuleMsg::Input(InputMsg::Enter { session, edge, pos });
-                if let Err(e) = host.send_reliable(to, m).await {
-                    failure = Some(e.to_string());
+                let (edge, pos) = barriers.get(barrier).map_or((Edge::Left, pos), |b| {
+                    (b.peer_edge, map_pos(b.local, b.remote, pos))
+                });
+                let host = host.clone();
+                opening = Some(Box::pin(async move {
+                    tokio::time::timeout(
+                        crate::network::SEND_WAIT,
+                        host.send_reliable_on(
+                            to,
+                            context.connection,
+                            ModuleMsg::Input(InputMsg::Enter { session, edge, pos }),
+                        ),
+                    )
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(SendError::Transport(
+                            "input opening deadline exceeded".into(),
+                        ))
+                    })
+                }));
+            }
+            CaptureEvent::Input { t_mono_us, ev } if opening.is_some() => {
+                if queue.len() == 256 {
+                    failure = Some(msg::OPEN_BUFFER_FULL.to_owned());
                     break;
                 }
+                queue.push_back(CaptureEvent::Input { t_mono_us, ev });
             }
             CaptureEvent::Input { t_mono_us, ev } if active => {
-                let mut events = vec![ev];
-                while events.len() < MAX_EVENTS_PER_DATAGRAM {
-                    match ev_rx.try_recv() {
-                        Ok(CaptureEvent::Input { ev, .. }) => events.push(ev),
-                        Ok(other) => {
-                            queue.push_back(other);
-                            break;
-                        }
-                        Err(_) => break,
+                let (t_mono_us, ev) = if !replay && !queue.is_empty() {
+                    let oldest = queue.pop_front();
+                    queue.push_back(CaptureEvent::Input { t_mono_us, ev });
+                    match oldest {
+                        Some(CaptureEvent::Input { t_mono_us, ev }) => (t_mono_us, ev),
+                        _ => continue,
                     }
-                }
-                let dg = InputDatagram {
-                    session,
-                    seq,
-                    t_mono_us,
-                    events,
+                } else {
+                    (t_mono_us, ev)
                 };
+                let _ = host.send_datagram(
+                    to,
+                    InputDatagram {
+                        session,
+                        seq,
+                        t_mono_us,
+                        events: vec![ev],
+                    },
+                );
                 seq = seq.wrapping_add(1);
-                if let Err(e) = host.send_datagram(to, dg) {
-                    tracing::warn!("datagram not sent: {e}");
-                }
             }
             CaptureEvent::Input { .. } => {}
-            CaptureEvent::Deactivated => {
-                if active {
-                    break;
-                }
-            }
+            CaptureEvent::Deactivated => break,
             CaptureEvent::Error(e) => {
                 failure = Some(msg::adapter_failed(&e));
                 break;
             }
             CaptureEvent::SessionLocked(true) => {
-                // The explicit test obeys the same source lock as continuous capture. Stop
-                // before consuming the queued input after this event, even within a batch.
-                if session != 0 {
-                    let _ = host
-                        .send_reliable(to, ModuleMsg::Input(InputMsg::ReleaseAll { session }))
-                        .await;
-                }
+                release_all = true;
                 failure = Some(msg::SOURCE_SCREEN_LOCKED.to_owned());
                 break;
             }
-            // Unlocking never starts a new test; shortcuts and zone changes are not followed.
-            CaptureEvent::Hotkey(_)
-            | CaptureEvent::ZonesChanged(_)
-            | CaptureEvent::SessionLocked(false) => {}
+            CaptureEvent::SessionLocked(false) => snapshot_ready = true,
+            CaptureEvent::Hotkey(_) | CaptureEvent::ZonesChanged(_) => {}
         }
     }
-
+    // No network progress is required to hand the physical device back.
     let _ = cap.release().await;
+    drop(opening);
+    // A producer may be waiting inside send; wake it before awaiting its join.
+    ev_rx.close();
+    let _ = cap.stop().await;
+    drop(ev_rx);
+    queue.clear();
+    if session != 0 {
+        let _ = tokio::time::timeout(crate::network::SEND_WAIT, async {
+            host.send_reliable_on(
+                to,
+                context.connection,
+                ModuleMsg::Input(InputMsg::Leave { session }),
+            )
+            .await?;
+            if release_all {
+                host.send_reliable_on(
+                    to,
+                    context.connection,
+                    ModuleMsg::Input(InputMsg::ReleaseAll { session }),
+                )
+                .await?;
+            }
+            Ok::<(), SendError>(())
+        })
+        .await;
+    }
     if let Some(f) = failure {
-        if session != 0 {
-            let _ = host
-                .send_reliable(to, ModuleMsg::Input(InputMsg::Leave { session }))
-                .await;
-        }
         return Err(f);
     }
     if session == 0 {
         return Err(msg::NO_ACTIVATION.to_owned());
     }
-    let _ = host
-        .send_reliable(to, ModuleMsg::Input(InputMsg::Leave { session }))
-        .await;
-    host.send_reliable(to, ModuleMsg::Input(InputMsg::StatsRequest { session }))
-        .await
-        .map_err(|e| e.to_string())?;
+    tokio::time::timeout(
+        crate::network::SEND_WAIT,
+        host.send_reliable_on(
+            to,
+            context.connection,
+            ModuleMsg::Input(InputMsg::StatsRequest { session }),
+        ),
+    )
+    .await
+    .map_err(|_| msg::NO_STATS.to_owned())?
+    .map_err(|e| e.to_string())?;
     let wait = Instant::now() + STATS_WAIT;
     tokio::select! {
         s = signals.recv() => match s {
@@ -1548,7 +2001,7 @@ async fn drive(
             Some(LoopSignal::Rejected(r)) => Err(r.pt().to_owned()),
             Some(LoopSignal::PeerDown) => Err(msg::PEER_OFFLINE.to_owned()),
             Some(LoopSignal::Paused) => Err(RejectReason::Paused.pt().to_owned()),
-            None => Err(msg::NO_STATS.to_owned()),
+            Some(LoopSignal::Stop) | None => Err(msg::SESSION_CANCELLED.to_owned()),
         },
         () = tokio::time::sleep_until(wait) => Err(msg::NO_STATS.to_owned()),
     }
@@ -1557,4 +2010,10 @@ async fn drive(
 /// A comparable summary of a set of targets: a retarget only happens when it changes.
 fn targets_key(targets: &[Target]) -> String {
     format!("{targets:?}")
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod backpressure {
+    include!("../tests/support/module_backpressure.rs");
 }

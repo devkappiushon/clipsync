@@ -136,6 +136,32 @@ pub struct WinError {
     pub code: u32,
 }
 
+// Only the two documented flags are evidence. Windows 7's inverted flags are outside the
+// application's Windows 10+ support. Unknown/malformed responses must never unlock capture.
+#[cfg(any(windows, test))]
+pub(crate) fn invalid_wts_info() -> WinError {
+    WinError {
+        call: "WTSSessionInfoEx",
+        code: 13,
+    }
+}
+#[cfg(any(windows, test))]
+pub(crate) fn validate_wts_size(bytes: u32, required: usize) -> Result<(), WinError> {
+    if usize::try_from(bytes).is_ok_and(|bytes| bytes >= required) {
+        Ok(())
+    } else {
+        Err(invalid_wts_info())
+    }
+}
+#[cfg(any(windows, test))]
+pub(crate) fn decode_wts_lock(level: u32, flags: i32) -> Result<bool, WinError> {
+    match (level, flags) {
+        (1, 0) => Ok(true),
+        (1, 1) => Ok(false),
+        _ => Err(invalid_wts_info()),
+    }
+}
+
 #[cfg(windows)]
 mod api {
     use super::{Modifier, Monitor, Notice, RawEvent, Synth, Verdict, WinButton, WinError, ffi};
@@ -224,6 +250,11 @@ mod api {
         ffi::input_desktop_is_default()
     }
 
+    /// Current local WTS session lock state. Unavailable/unknown is an error, never unlocked.
+    pub fn session_locked() -> Result<bool, WinError> {
+        ffi::session_locked()
+    }
+
     /// The KLID of the current keyboard layout (`00010416` is Português (Brasil) ABNT2), for the
     /// diagnostic only.
     pub fn keyboard_layout() -> Option<String> {
@@ -251,7 +282,7 @@ mod api {
 pub use api::{
     CursorPark, Hooks, ResumeHotkey, Watcher, button_down, cursor_pos, hotkey_registrable,
     input_desktop_is_default, keyboard_layout, modifier_down, monitors, process_handle_count, send,
-    virtual_screen,
+    session_locked, virtual_screen,
 };
 
 struct Redacted;
@@ -307,6 +338,30 @@ mod tests {
                 }
             )
             .contains("120")
+        );
+    }
+}
+
+#[cfg(test)]
+mod wts_snapshot_tests {
+    #[test]
+    fn only_explicit_wts_lock_and_unlock_are_accepted() {
+        assert!(matches!(super::decode_wts_lock(1, 0), Ok(true)));
+        assert!(matches!(super::decode_wts_lock(1, 1), Ok(false)));
+        for (level, flag) in [(1, -1), (1, 2), (0, 0), (2, 1)] {
+            assert!(super::decode_wts_lock(level, flag).is_err());
+        }
+    }
+    #[test]
+    fn short_or_empty_wts_buffers_are_rejected_before_field_reads() {
+        for bytes in [0, 1, 127] {
+            assert!(super::validate_wts_size(bytes, 128).is_err());
+        }
+        assert!(super::validate_wts_size(128, 128).is_ok());
+        assert!(super::validate_wts_size(256, 128).is_ok());
+        assert_eq!(
+            super::invalid_wts_info().to_string(),
+            "win32 WTSSessionInfoEx: 13"
         );
     }
 }

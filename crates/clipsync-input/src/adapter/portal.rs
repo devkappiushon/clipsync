@@ -264,7 +264,9 @@ impl CaptureAdapter for PortalCapture {
             .map_err(map_err)?;
         let stream = UnixStream::from(fd);
         let (tx, rx) = mpsc::channel(4096);
-        let tx_events = tx.clone();
+        // Publish lock state before any producer can enqueue activation/input, also avoiding
+        // waiting on a full event queue before start() has returned its receiver.
+        self.lock_watch = Some(LockWatch::start(Some(tx.clone())).await);
         let (ready_tx, ready_rx) = oneshot::channel();
         let (stop_tx, stop_rx) = oneshot::channel::<()>();
         let active = self.active.clone();
@@ -296,8 +298,6 @@ impl CaptureAdapter for PortalCapture {
             .await
             .map_err(map_err)?;
         self.watch_zones();
-        // A locked screen is the logind's `LockedHint`; a lock already on is reported at once.
-        self.lock_watch = Some(LockWatch::start(Some(tx_events)).await);
         Ok(rx)
     }
 

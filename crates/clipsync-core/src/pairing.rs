@@ -332,6 +332,7 @@ async fn host_with(
     confirm: impl FnOnce(&PairPrompt) -> PairDecision + Send + 'static,
     #[allow(unused_mut, unused_variables)] mut hooks: HostHooks,
 ) -> Result<PairOutcome, CoreError> {
+    let _operation = p.reserve_operation(false)?;
     let cfg = p.load_config()?;
     let identity = p.load_identity()?;
     let server = tls::server_config(&identity, PinVerifier::new(VerifyMode::Pairing), ALPN_PAIR)?;
@@ -464,6 +465,7 @@ async fn join_with(
     confirm: impl FnOnce(&PairPrompt) -> PairDecision + Send + 'static,
     #[allow(unused_mut, unused_variables)] mut hooks: JoinHooks,
 ) -> Result<PairOutcome, CoreError> {
+    let _operation = p.reserve_operation(false)?;
     let cfg = p.load_config()?;
     let identity: Identity = p.load_identity()?;
     let any: IpAddr = if addr.is_ipv4() {

@@ -177,3 +177,29 @@
     flex-wrap: wrap;
   }
 }
+
+.clipboard__modo-escolha,
+.clipboard__interruptores,
+.clipboard__item-acoes {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.clipboard__modo-escolha > .segmentado {
+  flex: 0 1 auto;
+}
+
+.clipboard__item-acoes {
+  flex-wrap: wrap;
+}
+
+@container (max-width: 400px) {
+  .clipboard__interruptores {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .clipboard__interruptores .opcao {
+    width: 100%;
+  }
+}

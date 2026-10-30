@@ -4,15 +4,26 @@ Instruções para agentes de código (Codex e outros) neste repositório. Leia i
 
 ## O projeto
 
-ClipSync compartilha teclado, mouse e área de transferência entre os computadores do usuário, num app só, sem servidor central, para substituir o Input Leap. Rust (workspace com 8 crates), app de desktop em Tauri 2, Linux (GNOME Wayland) e Windows. Versão publicada mais nova: **v0.3.1**.
+ClipSync compartilha teclado, mouse e área de transferência entre os computadores do usuário, num app só, sem servidor central, para substituir o Input Leap. Rust (workspace com 8 crates), app de desktop em Tauri 2, Linux (GNOME Wayland) e Windows. Versão deste checkout: **v0.4.0**. Consulte Releases para publicação e `docs/pendencias-v0.4.0.md` para os aceites ainda pendentes.
 
 ## Comece por aqui
 
-1. `docs/handoff-codex.md`: história de S1 a S7, arquitetura, estado atual, o problema aberto ("o mouse não passa") e os próximos passos. **Leia primeiro.**
-2. `docs/contrato.md`: contrato vinculante por fatia (§11 S5 Windows e release, §12 S6 interface, §13 S7 layout de telas). Mudança de comportamento, API pública, protocolo ou dependência é mudança de contrato: registre na seção da fatia, no mesmo trabalho.
-3. `docs/workboard.md`: commits, critérios e pendências por fatia.
-4. `docs/seguranca.md` (revisões de segurança) e `docs/verdicts.md` (vereditos de critério): uma seção nova por rodada, nunca reescrever as antigas.
-5. `docs/contexto-equipe.md`: entrada comum dos andares, objetivo atual, fonte de verdade e limites de atuação. Todos os andares compartilham o mesmo diretório; combine posse de arquivos com o Maestro antes de editar.
+1. `CONTEXTO.md` (topo): estado atual e pendências. O bloco automático de 07:54 é histórico anterior à S7.
+2. `docs/workboard.md`, seção "Estado atual".
+3. `docs/contexto-equipe.md`: entrada comum dos andares no Maestri, objetivo atual, fonte de verdade e limites de atuação.
+4. `docs/contrato.md` §15 (S9, vigente), §14 (S8, histórico) e a seção da área que você vai tocar (§11 Windows e release, §12 interface, §13 layout de telas). Mudança de comportamento, API pública, protocolo ou dependência é mudança de contrato: registre na seção da fatia, no mesmo trabalho.
+5. `docs/handoff-codex.md`: história de S1 a S7, anterior à S8.
+6. `docs/seguranca.md` (revisões de segurança) e `docs/verdicts.md` (vereditos de critério): a última rodada de cada um; seção nova por rodada, nunca reescrever as antigas.
+
+## Trabalho no Maestri
+
+1. **Identidade:** rode `maestri list` antes de agir e use o nome que aparece em `You:`. Nome de sessão antiga não vale.
+2. **Notas:** as notas do andar (feature-spec, workboard) trazem a tarefa e apontam para `docs/contexto-equipe.md`. Escreva só na sua seção, com `maestri note edit`. Nunca `note write` em nota compartilhada, nunca `note delete`. A fonte de verdade são os arquivos de `docs/`, não as notas.
+3. **Terminais:** fale com o seu coordenador por `maestri ask` e acompanhe com `maestri check`, sem reenviar o pedido. Não recrute, não reinicie papéis e não crie andares.
+4. **Portais:** a interface só se vê pelos portais do Maestri (`maestri portal ...`) ou por AT-SPI (`docs/teste-app-real.md`). Medida de layout sai de `portal evaluate` (`getBoundingClientRect`, `scrollWidth`), com viewport e cenário anotados. Fluxo que muda o estado do simulador usa portal próprio. Simulador não prova Windows nem Linux físicos.
+5. **Runtime:** o Maestro central é dono do runtime. O endereço reservado é `http://127.0.0.1:5174`; confirme o estado atual com o Maestro, pois a existência de um portal não prova servidor ativo. Não suba outro servidor. O `servir-ui-dev.py` é para quem trabalha fora do Maestri.
+6. **Um editor por arquivo:** todos os andares usam o mesmo checkout. Combine a posse com o Maestro antes de editar. Arquivo sujo de outro autor: avise o Maestro central antes. Não edite `.maestri/` (gerado) nem as instruções globais de `~/.agents` e `~/.codex`.
+7. **Histórico:** `docs/verdicts.md` e `docs/seguranca.md` ganham seção nova por rodada; o contrato muda por entrada nova de versão; nada antigo é reescrito.
 
 ## Como o usuário quer que você trabalhe
 
@@ -33,21 +44,25 @@ ClipSync compartilha teclado, mouse e área de transferência entre os computado
 ```sh
 export PATH=$HOME/.cargo/bin:$PATH        # o cargo vem do rustup (toolchain 1.99.1)
 cargo fmt --all --check
-cargo clippy --all-targets -- -D warnings  # sem --workspace: o default-members exclui o app
-cargo test                                 # idem
+cargo clippy --workspace --exclude clipsync-app --all-targets --locked -- -D warnings
+cargo test --workspace --exclude clipsync-app --locked
 # checagem do Windows sem Windows (compila e passa o clippy; não roda teste):
 CC_x86_64_pc_windows_gnu=true AR_x86_64_pc_windows_gnu=true \
   cargo clippy --target x86_64-pc-windows-gnu -p clipsync-input -p clipsync-win --all-targets -- -D warnings
+node --test crates/clipsync-app/ui-dev/testes/*.test.mjs  # opcional, sem npm; o CI não roda
 scripts/conferir-unsafe.sh                 # unsafe só no ffi.rs (também roda no CI)
 scripts/conferir-privacidade.sh            # nada de log de tecla no código dos hooks (também roda no CI)
-python3 -I scripts/servir-ui-dev.py        # interface com simulador em http://127.0.0.1:5174
+python3 -I scripts/servir-ui-dev.py        # interface com simulador em http://127.0.0.1:5174 (fora do Maestri)
 ```
 
 - O app Tauri (`crates/clipsync-app`) **não compila aqui** (faltam os headers do WebKitGTK e não há sudo). Ele compila e testa só no CI.
+- Os `default-members` do `Cargo.toml` não incluem o app nem o `clipsync-ui`; por isso os comandos locais são explícitos com `--exclude clipsync-app`, senão os testes da lógica das telas não rodam.
+- O CI usa `--workspace` sem `--exclude` porque lá o app compila; não copie o comando do CI para uso local.
+- `node --test` é checagem local opcional do simulador, sem `npm`; o CI não roda Node.
 - Testes `cfg(windows)` (hooks, SendInput, desktop seguro) só rodam no CI do Windows.
-- CI: `.github/workflows/ci.yml` (ubuntu-latest e windows-latest; fmt, clippy e test com `--workspace --locked`, mais os dois scripts).
+- CI: `.github/workflows/ci.yml` (ubuntu-latest e windows-latest; fmt só no job Linux; clippy e test nos dois com `--workspace --locked`; mais os dois scripts).
 - **Nunca crie `target/` em `/tmp`.** Para conferir o lockfile de um commit, use `git archive` numa pasta e `cargo metadata --offline --locked`, que não compila.
-- Cenários do simulador da interface: tabela em `crates/clipsync-app/ui/README.md` (`?cenario=padrao`, `vazio`, `erro`, `estados`, `pareamento`, `sem-perfil`, `windows`, `windows-recusa`; `&tema=claro|escuro`; `&plataforma=windows`).
+- Cenários do simulador da interface: a tabela completa, com `?cenario=...`, `&tema=` e `&plataforma=windows`, está em `crates/clipsync-app/ui/README.md`.
 
 ## Invariantes que não podem quebrar
 
@@ -57,7 +72,7 @@ python3 -I scripts/servir-ui-dev.py        # interface com simulador em http://1
 4. **Protocolo**: variante nova só no fim do enum (postcard). `PROTOCOL_VERSION = 3`, `MIN_PROTOCOL_VERSION = 1`. Mensagem nova confere a versão do par e dá `RemoteTooOld` para par antigo. Campo novo em struct JSON do controle leva `#[serde(default)]`.
 5. **Lints do workspace**: `unwrap`, `expect`, `panic`, `todo`, `unimplemented` e `dbg!` proibidos; `clippy -D warnings` nos dois sistemas.
 6. **Interface** (`crates/clipsync-app/ui`): sem `innerHTML`, sem `style=`, todo `<script>` com `src`, nenhum travessão em texto, fontes só locais (Inter, Geist, Geist Mono), texto vindo do par só por `textContent`. Recurso que não existe numa plataforma aparece desabilitado com "indisponível nesta versão". O simulador mora em `ui-dev/`, fora do pacote. Crédito discreto "feito por montesouza.dev".
-7. **App**: a interface fala com o agente só pelo comando `clipsync` (`Ui::call`) e pelos eventos `clipsync://event`. Capabilities mínimas: `allow-clipsync`, `core:event:allow-listen` e `core:event:allow-unlisten`.
+7. **App**: a interface fala com o agente só pelo comando `clipsync` (`Ui::call`) e pelos eventos `clipsync://event`. Capabilities mínimas: `allow-clipsync`, `core:event:allow-listen` e `core:event:allow-unlisten`. A exceção de zoom S9 (§15.5) permite também `core:webview:allow-set-webview-zoom`, somente para o invocador main e sem acesso remoto; não ampliar outras permissões.
 
 ## Release
 

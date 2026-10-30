@@ -1,0 +1,18 @@
+{
+  "changed": true,
+  "modules": { "input": false, "clipboard": true },
+  "effects": {
+    "pause": "confirmed",
+    "pause_persisted": true,
+    "stop": "confirmed",
+    "config_saved": true,
+    "start": "owned_ready",
+    "lock_restore": "not_needed"
+  },
+  "observed": {
+    "agent": "in_app",
+    "paused": true,
+    "screen_locked": null,
+    "modules": { "input": false, "clipboard": true }
+  }
+}

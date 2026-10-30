@@ -22,6 +22,7 @@ pub struct AppState {
     paused: AtomicBool,
     quitting: AtomicBool,
     notify: Mutex<NotifyPrefs>,
+    block_notice_at: Mutex<Option<std::time::Instant>>,
 }
 
 impl AppState {
@@ -33,6 +34,7 @@ impl AppState {
             paused: AtomicBool::new(false),
             quitting: AtomicBool::new(false),
             notify: Mutex::new(NotifyPrefs::default()),
+            block_notice_at: Mutex::new(None),
         }
     }
 
@@ -91,6 +93,22 @@ impl AppState {
 
     pub fn set_notify_prefs(&self, prefs: NotifyPrefs) {
         *self.notify.lock().unwrap_or_else(PoisonError::into_inner) = prefs;
+    }
+
+    /// Reserva a tentativa antes de notificar; erro de show não reabre a janela.
+    pub fn allow_block_notice(&self, now: std::time::Instant) -> bool {
+        let mut last = self
+            .block_notice_at
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if last.is_some_and(|sent| {
+            now.checked_duration_since(sent).unwrap_or_default()
+                < std::time::Duration::from_secs(30)
+        }) {
+            return false;
+        }
+        *last = Some(now);
+        true
     }
 
     /// Verdade só para o primeiro chamador: o encerramento roda uma vez.

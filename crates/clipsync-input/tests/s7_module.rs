@@ -282,20 +282,54 @@ async fn a_locked_destination_refuses_the_span_and_the_source_says_why() {
 
 #[tokio::test]
 async fn a_paused_destination_refuses_with_the_paused_text() {
-    let (hub, _d, a, b) = pair(0.0, 1.0).await;
-    // the destination module is paused but the hub still lets the Enter through
-    b.tx.send(ModuleInput::Paused(true)).await.unwrap();
-    status(&b).await;
+    let hub = MemHub::new();
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = hub.add_node("b", INPUT);
+    layout_ab(node_id("a"), b.id, 0.0, 1.0, 0)
+        .write(&dir.path().join("layout.toml"))
+        .unwrap();
+    let a = spawn_src_with(&hub, "a", dir.path(), false, true);
+    hub.link(a.id, b.id, CONTROL, CONTROL);
+    status(&a).await;
     a.cap.activate(0, 0.75);
+    // Preserve the original post-admission refusal case: hold an authorized Enter,
+    // then change the authoritative pause before the destination module consumes it.
+    let admitted = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let event = b.rx.recv().await.unwrap();
+            if matches!(
+                &event,
+                ModuleInput::Reliable {
+                    msg: ModuleMsg::Input(InputMsg::EnterSpan { .. }),
+                    ..
+                }
+            ) {
+                break event;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    hub.set_paused(b.id, true);
+    let (cap, _) = FakeCapture::new(vec![zone(1920, 1080)]);
+    let (emu, emu_handle) = FakeEmulate::new();
+    let module = build_with_adapters(InputConfig::default(), Box::new(cap), Box::new(emu));
+    let task = tokio::spawn(module.run(b.host, b.rx));
+    b.tx.send(admitted).await.unwrap();
     until("source gave the cursor back", || a.cap.released() >= 1).await;
-    assert_eq!(b.emu.emitted(), 0);
+    assert_eq!(emu_handle.emitted(), 0);
     let s = status(&a).await;
     assert_eq!(
         s.last_block.as_deref(),
         Some("b está pausado: o controle voltou para esta máquina"),
         "{s:?}"
     );
-    drop(hub);
+    b.tx.send(ModuleInput::Shutdown).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 }
 
 // ---- (b) the way back
@@ -612,8 +646,12 @@ async fn a_locked_source_closes_the_session_and_blocks_activation() {
         .is_none()
     );
     // and works again after the unlock
+    let before_unlock = a.cap.starts();
     a.cap.session_locked(false);
-    status(&a).await;
+    until("fresh producer after unlock", || {
+        a.cap.starts() > before_unlock
+    })
+    .await;
     a.cap.activate(0, 0.75);
     assert!(
         wait_input(&mut b, 2000, |m| matches!(m, InputMsg::EnterSpan { .. })
@@ -764,8 +802,8 @@ async fn when_the_system_refuses_the_resume_hotkey_the_tray_stays_as_the_way_bac
 }
 
 #[tokio::test]
-async fn an_adapter_without_hooks_keeps_its_session_while_paused() {
-    // the Wayland portal: a new capture session is a new dialog, so pausing does not drop it
+async fn an_adapter_without_hooks_stops_its_producer_while_paused() {
+    // S9 stops the producer. PortalCapture::stop preserves its portal session, not its producer.
     let d = tempfile::tempdir().unwrap();
     write_layout(
         d.path(),
@@ -778,8 +816,10 @@ async fn an_adapter_without_hooks_keeps_its_session_while_paused() {
     until("capture started", || a.cap.started()).await;
     hub.set_paused(a.id, true);
     status(&a).await;
-    assert!(a.cap.started());
+    until("producer stopped while paused", || !a.cap.started()).await;
     assert!(!a.cap.resume_watching());
+    hub.set_paused(a.id, false);
+    until("fresh producer after resume", || a.cap.started()).await;
     let _ = b;
 }
 
@@ -902,4 +942,50 @@ async fn switch_supported_follows_can_begin_and_the_shortcut_is_refused_too() {
     // the default adapter can begin
     let (_hub2, _d2, a2, _b2) = pair(0.0, 1.0).await;
     assert!(input_state(&a2).await.switch_supported);
+}
+
+#[tokio::test]
+async fn unlock_while_producer_is_stopped_requires_a_new_snapshot_and_activation() {
+    for manual in [false, true] {
+        let (hub, _dir, a, mut b) = src_with_raw_dest(0.0, 1.0, 0).await;
+        a.cap.activate(0, 0.75);
+        assert!(
+            wait_input(&mut b, 2000, |m| matches!(m, InputMsg::EnterSpan { .. })
+                .then_some(()))
+            .await
+            .is_some()
+        );
+        a.cap.session_locked(true);
+        until("source released for lock", || a.cap.released() > 0).await;
+        if manual {
+            command(&a.tx, ModuleCommand::InputLock { locked: true }).await;
+        } else {
+            hub.set_paused(a.id, true);
+        }
+        until("producer stopped", || !a.cap.started()).await;
+        // No producer exists to observe this change. FakeCapture now stores a snapshot, just
+        // as the real adapters must query when they next start; it emits no event while stopped.
+        a.cap.session_locked(false);
+        a.cap.activate(0, 0.75); // stale event from the old activation generation
+        if manual {
+            command(&a.tx, ModuleCommand::InputLock { locked: false }).await;
+        } else {
+            hub.set_paused(a.id, false);
+        }
+        until("producer resumed", || a.cap.started()).await;
+        assert!(
+            wait_input(&mut b, 150, |m| matches!(m, InputMsg::EnterSpan { .. })
+                .then_some(()))
+            .await
+            .is_none()
+        );
+        a.cap.activate(0, 0.75);
+        assert!(
+            wait_input(&mut b, 2000, |m| matches!(m, InputMsg::EnterSpan { .. })
+                .then_some(()))
+            .await
+            .is_some()
+        );
+        a.tx.send(ModuleInput::Shutdown).await.unwrap();
+    }
 }

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::clip::ClipMsg;
 use crate::control::{ModuleCommand, ModuleReply};
@@ -83,6 +83,54 @@ pub enum ModuleError {
     Other(String),
 }
 
+/// Local admission metadata. Never serialized or supplied by the remote peer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReceiveContext {
+    pub connection: u64,
+    pub input_epoch: u64,
+    pub stream: Option<u64>,
+}
+
+/// Authoritative snapshot from the host, independent of queued PeerUp/Paused notifications.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PeerInputContext {
+    pub connection: u64,
+    pub input_epoch: u64,
+    pub input_in: bool,
+    pub paused: bool,
+    pub connected: bool,
+}
+
+impl PeerInputContext {
+    pub fn permits(self, received: ReceiveContext) -> bool {
+        self.connected
+            && self.input_in
+            && !self.paused
+            && self.connection == received.connection
+            && self.input_epoch == received.input_epoch
+    }
+}
+
+/// Local lifecycle authority, retained independently of module data queues. No wire fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostLifecycle {
+    pub paused: bool,
+    /// Every pause invalidates old producers, even when Resume overwrites the latest state.
+    pub pause_generation: u64,
+    /// Terminal: a later Resume cannot reopen this host.
+    pub stopped: bool,
+}
+
+impl Default for HostLifecycle {
+    fn default() -> Self {
+        Self {
+            paused: true,
+            pause_generation: 0,
+            stopped: true,
+        }
+    }
+}
+
 #[async_trait::async_trait]
 pub trait ModuleHost: Send + Sync + 'static {
     fn local_id(&self) -> PeerId;
@@ -90,7 +138,29 @@ pub trait ModuleHost: Send + Sync + 'static {
     /// All trusted peers, connected or not.
     fn peers(&self) -> Vec<PeerInfo>;
     fn paused(&self) -> bool;
-    /// One `Frame::Module` on a new QUIC uni stream. Checks authorize_outbound first.
+    /// Core and MemHub always provide a snapshot. None is the legacy notification-only path.
+    /// Peer/connection changes also wake this receiver; inspect peer_input_context for authority.
+    fn lifecycle_receiver(&self) -> Option<watch::Receiver<HostLifecycle>> {
+        None
+    }
+
+    fn peer_input_context(&self, peer: PeerId) -> Option<PeerInputContext>;
+    /// Input jobs cannot migrate to a replacement connection.
+    async fn send_reliable_on(
+        &self,
+        to: PeerId,
+        connection: u64,
+        msg: ModuleMsg,
+    ) -> Result<(), SendError>;
+    /// The existing v1 rejection frame, including for peers without v3 Refused.
+    async fn reject_input_on(
+        &self,
+        to: PeerId,
+        connection: u64,
+        reason: RejectReason,
+    ) -> Result<(), SendError>;
+    /// One module frame. Core bounds opening/writing/finish together to 2 seconds and resets
+    /// unfinished streams on cancellation. Success is not acknowledgement of remote application.
     async fn send_reliable(&self, to: PeerId, msg: ModuleMsg) -> Result<(), SendError>;
     /// QUIC datagram. Checks authorize_outbound_datagram and size.
     fn send_datagram(&self, to: PeerId, dg: InputDatagram) -> Result<(), SendError>;
@@ -106,11 +176,13 @@ pub enum ModuleInput {
     Reliable {
         from: PeerId,
         msg: ModuleMsg,
+        context: ReceiveContext,
     },
     /// Already authorized by core.
     Datagram {
         from: PeerId,
         dg: InputDatagram,
+        context: ReceiveContext,
     },
     Rejected {
         from: PeerId,

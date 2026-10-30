@@ -3,13 +3,15 @@
 /* Botão: .btn--primario | --secundario | --perigo | --discreto */
 
 .btn {
+  max-width: 100%;
+  overflow-wrap: anywhere;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--s-2);
   min-height: 40px;
   padding: var(--s-2) var(--s-3);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--control-border);
   border-radius: var(--raio);
   background: var(--panel);
   color: var(--text);
@@ -37,12 +39,21 @@
 }
 
 .btn--perigo {
-  background: var(--err);
+  background: transparent;
   border-color: var(--err);
+  color: var(--err);
+}
+
+.dialogo .btn--perigo {
+  background: var(--err);
   color: var(--err-text);
 }
 
 .btn--perigo:hover:not(:disabled) {
+  background: var(--err-soft);
+}
+
+.dialogo .btn--perigo:hover:not(:disabled) {
   background: var(--err);
   filter: brightness(0.92);
 }
@@ -157,6 +168,7 @@ kbd {
 /* Cartão */
 
 .cartao {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
@@ -196,6 +208,7 @@ kbd {
 }
 
 .opcao__texto {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--s-1);
@@ -218,7 +231,7 @@ kbd {
   width: 40px;
   height: 24px;
   margin: 0;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--control-border);
   border-radius: var(--raio);
   background: var(--line);
   cursor: pointer;
@@ -280,10 +293,11 @@ kbd {
 }
 
 .entrada {
+  min-width: 0;
   width: 100%;
   min-height: 40px;
   padding: var(--s-2) var(--s-3);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--control-border);
   border-radius: var(--raio);
   background: var(--panel);
   color: var(--text);
@@ -312,6 +326,8 @@ kbd {
 
 .segmentado {
   display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
   gap: var(--s-1);
   padding: var(--s-1);
   border: 1px solid var(--line);
@@ -333,6 +349,7 @@ kbd {
 }
 
 .segmentado__opcao span {
+  border: 1px solid transparent;
   display: flex;
   align-items: center;
   min-height: 32px;
@@ -357,6 +374,9 @@ kbd {
 }
 
 .segmentado__opcao input:checked + span {
+  border-color: currentColor;
+  text-decoration: underline;
+  text-underline-offset: 3px;
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 600;
@@ -370,6 +390,9 @@ kbd {
 /* Tabela */
 
 .tabela {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
 }
 
@@ -511,5 +534,35 @@ kbd {
   .girador {
     animation-duration: 1.6s !important;
     animation-iteration-count: infinite !important;
+  }
+}
+
+.btn__rotulo {
+  min-width: 0;
+}
+
+.interruptor[aria-busy="true"],
+.segmentado[aria-busy="true"] {
+  cursor: progress;
+}
+
+.segmentado__opcao {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (max-width: 640px) {
+  .cartao {
+    padding: var(--s-3);
+  }
+
+  .cartao--plano {
+    padding: 0;
+  }
+
+  .segmentado__opcao span {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    padding-inline: var(--s-2);
   }
 }

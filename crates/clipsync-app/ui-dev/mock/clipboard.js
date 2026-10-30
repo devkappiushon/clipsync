@@ -64,14 +64,6 @@ registrar({
     return { preview: (textos.get(id) ?? "").slice(0, 200) };
   },
 
-  clipboard_set_mode: async ({ mode } = {}) => {
-    if (mode === "confirm") throw erro("unavailable", "O modo com confirmação é indisponível nesta versão.");
-    if (mode !== "auto" && mode !== "manual") throw erro("bad_request", "Modo inválido: use auto ou manual.", { field: "mode" });
-    await atraso(400);
-    estado.clipboard.mode = mode;
-    return { mode, restart_needed: estado.agente === "external" };
-  },
-
   clipboard_copy_item: ({ id } = {}) => {
     const encontrado = achar(id);
     if (encontrado.state !== "in_inbox" && encontrado.state !== "rejected") {

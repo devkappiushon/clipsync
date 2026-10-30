@@ -16,6 +16,7 @@ pub mod diag;
 pub mod events;
 pub mod input;
 pub mod layout;
+pub mod modules;
 pub mod msg;
 pub mod onboarding;
 pub mod pairing;
@@ -82,6 +83,9 @@ pub(crate) struct Ctx {
     pub(crate) opts: UiOptions,
     events: broadcast::Sender<UiEvent>,
     pub(crate) agent: tokio::sync::Mutex<agent::Slot>,
+    pub(crate) mutation: tokio::sync::Mutex<()>,
+    pub(crate) jobs: Mutex<Vec<JoinHandle<()>>>,
+    pub(crate) pause_warning: Mutex<status::PauseWarning>,
     /// Made by `onboarding_start`, written by `onboarding_create`.
     pub(crate) pending_identity: Mutex<Option<Identity>>,
     /// `ui.toml`, read once at start; `prefs_set` keeps it in step with the file.
@@ -144,6 +148,9 @@ impl Ui {
             opts,
             events,
             agent: tokio::sync::Mutex::new(agent::Slot::Stopped),
+            mutation: tokio::sync::Mutex::new(()),
+            jobs: Mutex::new(Vec::new()),
+            pause_warning: Mutex::new(status::PauseWarning::default()),
             pending_identity: Mutex::new(None),
             prefs: Mutex::new(stored_prefs),
             peers_lock: tokio::sync::Mutex::new(()),
@@ -166,7 +173,15 @@ impl Ui {
     /// The single entry: the JSON of a `UiRequest`. Wrong shape = `bad_request`; unknown `cmd`
     /// = `unknown_command`.
     pub async fn call(&self, req: serde_json::Value) -> Result<serde_json::Value, UiError> {
-        let req = api::parse(req)?;
+        let is_modules = matches!(
+            req.get("cmd").and_then(serde_json::Value::as_str),
+            Some("modules_set" | "clipboard_set_mode")
+        );
+        let req = api::parse(req).map_err(|error| {
+            if is_modules {
+                error.with_details(serde_json::json!({"effects": modules::Effects::default(), "observed": modules::Observed::default()}))
+            } else { error }
+        })?;
         api::route(&self.ctx, req).await
     }
 
@@ -179,6 +194,11 @@ impl Ui {
         if let Some(p) = lock(&self.ctx.poller).take() {
             p.abort();
         }
+        let jobs = std::mem::take(&mut *lock(&self.ctx.jobs));
+        for job in jobs {
+            let _ = job.await;
+        }
+        let _mutation = self.ctx.mutation.lock().await;
         agent::shutdown(&self.ctx).await;
     }
 

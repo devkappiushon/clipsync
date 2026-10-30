@@ -9,6 +9,14 @@ Veredito da primeira rodada (histórico): BLOQUEADO por S1-01.
 Contagem da primeira rodada: 1 BLOCKER · 0 alta · 1 média · 7 baixas · 5 informativos.
 Estado agora: **0 BLOCKER · 0 alta · 0 média · 5 baixas abertas · 6 informativos** (4 achados corrigidos e verificados).
 
+> **Índice de rodadas** (navegação; o texto abaixo não foi alterado)
+> - S1 (2026-10-27): auditoria, achados e reverificação em `c1ed65d`.
+> - S5 · Windows (2026-10-27).
+> - S6 · webview e superfície (parcial, `32d7916`) e S6 · final (`415caf2` e `7c770ef`).
+> - S7 · decisão unsafe (`ed26b66`), revisão do `ffi.rs` (`f80445d`, `c1047f6`) e S7 · final (`8cc14c4`); S7-08 fechado no adendo de 2026-10-28, ao fim do arquivo.
+> - S8 · diagnóstico e configuração da travessia e adendo de geometria (2026-10-28).
+> - SEG · fecho da rodada pós-v0.3.1 (2026-10-28), ao fim do arquivo: veredito independente, H-01 e B-02 novos, históricos separados e limites.
+
 ## Reverificação (commit c1ed65d)
 
 - **S1-01 · CORRIGIDO, verificado.** `clipsync_proto::validate_device_name` (`proto/src/wire.rs:201`) é a regra única: vazio, > 64 bytes, `is_control` (C0, DEL, C1 incluindo U+0085 e U+009B) e caracteres de formatação (U+061C, U+200B-200F, U+2028/2029, U+202A-202E, U+2060-2064, U+2066-2069, U+FEFF). Usada em `Hello::validate` e em `profile::valid_name`; teste `validate_device_name_rejects_control_and_bidi` passa. CLI: `text::clean` em `pair.rs:35/82/96`, `cmds.rs` (status, peers, inbox) e `text::delivery`; `Código:` é a última linha antes de `[s/N]`.
@@ -731,3 +739,41 @@ O revisor não recompilou Tauri, não executou hooks/SendInput no Windows, não 
 - Os controles continuam exigindo clique explícito e bloqueando disparos concorrentes de salvar/testar. A simplificação da prévia preserva os nomes como texto. As flags de capacidade do simulador agora consideram módulo ligado e agente disponível; não ampliam permissões nem entram no app empacotado.
 
 **Evidência própria desta reverificação:** `node crates/clipsync-app/ui-dev/testes/travessia.test.mjs` terminou com **17 tests; 17 pass; 0 fail**, incluindo alturas distintas, cantos mortos, arredondamento e a distinção entre recusa anterior à escrita e persistência indeterminada. `git diff --check` terminou com código 0 e saída vazia. Não repeti a suíte Rust nem o clippy. O Maestro informou validação de conflito pelo portal, suíte Rust completa e clippy Linux/Windows; essas execuções não são evidência própria deste revisor. Tauri, Windows físico e travessia real continuam fora da aprovação.
+
+
+## S7-08 · fechamento do hook recriado durante a parada (2026-10-28)
+
+**Adendo de fechamento, sem reescrever a entrada histórica acima.** A entrada S7-08 da revisão 8cc14c4 continua registrada como BAIXO aberto; esta seção fecha o achado no escopo inspecionado e preserva o texto anterior.
+
+- **Escopo inspecionado:** `crates/clipsync-input/src/adapter/win/capture.rs`, `recreate_hooks` (:482), `stop()` (:675) e `Drop` (:700-711), além do teste `a_lost_hook_is_not_recreated_while_stopping` (:839). Confere com o veredito de 2026-10-28 em `docs/verdicts.md:4263` ("fechado nesta base", com `capture.rs:482`, `:689` e `:710`).
+- **Guarda:** `recreate_hooks` retorna `false` sem criar hook quando `shared.stop` está ligada, antes de `end_locally` e do `take` (:485-489). A parada liga a flag, tira os hooks, faz `join` no worker e tira de novo os hooks que o worker tenha instalado nesse intervalo (:682-690); o `Drop` repete a sequência (:704-711).
+- **Limite:** a verificação é por leitura do código e pelo teste citado, que roda apenas no Windows/CI; não executei Windows, hooks reais nem o teste nesta máquina Linux. O limite aceito na v1.32, §13.6 e §13.13.21 (sem teste completo do trabalhador com plataforma falsa) continua valendo.
+
+## SEG · fecho da rodada pós-v0.3.1 (2026-10-28)
+
+**Adendo novo, sem reescrever as seções anteriores.** Este registro é documental e registra a consolidação do andar SEG & COMPLIANCE, cuja fonte integral é `/tmp/clipsync-seguranca-fecho-final.txt`; a consolidação lida está nas linhas 50-74. As reproduções de H-01 e B-02 estão atribuídas, nessa consolidação, aos logs `/tmp/clipsync-revisor-h01.log` e `/tmp/clipsync-revisor-b02.log`. A evidência, as execuções e o veredito são do andar SEG; não são execução desta escrita.
+
+### Veredito e escopo
+
+O andar SEG concluiu a rodada com o veredito independente **APROVA COM RESSALVAS**. A aprovação é do relatório, não do comportamento físico, do release nem da conformidade legal. Nenhum BLOCKER foi demonstrado no recorte; isso não garante ausência de BLOCKER no produto.
+
+### Achados novos, não corrigidos
+
+- **H-01 · MAJOR, novo e não corrigido.** Retirar `input_in` não limpa a sessão nem as teclas já emuladas como pressionadas. A reprodução do andar SEG usou adaptadores fake (`FakeEmulate`/`MemHub`, 2 testes) e exigiu pareamento, permissão anterior, sessão ativa e tecla pressionada. O efeito físico, de botão ou de cursor não foi comprovado. O plano futuro é invalidar a sessão e liberar os pressionados ao perder autorização, com resposta compatível com a versão e regressão da transição. Não associar este achado ao incidente do mouse, que pertence ao andar TESTES.
+- **B-02 · MAJOR, novo e não corrigido.** O envio confiável espera crédito ou escrita QUIC sem prazo, com a conexão viva. A reprodução do andar SEG usou loopback com dois agentes e perfis temporários: 1122 envios concluídos, o seguinte passou de 5 s e outro ficou pendente por mais de 15 s. O plano futuro é prazo e cancelamento, liberar o controle local independentemente do `Leave` e regressões sob contrapressão.
+
+### Históricos separados
+
+S5-01 (o cliente de pipe não autentica o servidor antes do payload) e S5-03 com a contraparte Linux (marcadores de conteúdo sensível não lidos antes de enviar a par autorizado) continuam como históricos separados, sem reabertura nesta rodada. H-02 amplia a precondição da S5-01, por leitura, e não duplica o ataque.
+
+### MINOR, hipóteses e NIT
+
+H-03, B-01, B-03, B-05, B-07 e B-09 são MINOR de robustez e ciclo de vida, com leitura ou reprodução parcial no andar SEG. B-06 e B-08 continuam hipóteses. B-04 é NIT de endurecimento de privacidade no Linux. Nenhum desses itens é tratado aqui como corrigido ou fechado.
+
+### Retirados e refutados
+
+Foram retirados e refutados nesta rodada os falsos positivos de testes JSON antigos e tags postcard, a H-04 (herança de autorização por nome) e a H-05 (bypass por versão). S1-08, S5-02, S5-07, S5-09, S6-09 e S7-08 não devem ser reabertos por essas generalizações.
+
+### Limites
+
+A rodada não teve Windows, Tauri, Wayland ou portais reais; não cobriu ACL/DACL efetiva, pipe entre contas, hooks/SendInput, gerenciadores de clipboard ou notificação, instaladores, rede física nem auditoria de CVE. Nenhuma pendência manual foi fechada.

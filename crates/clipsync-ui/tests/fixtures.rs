@@ -18,16 +18,33 @@ use serde_json::Value;
 fn same<T: DeserializeOwned + Serialize>(name: &str, original: &Value) {
     let parsed: T = serde_json::from_value(original.clone())
         .unwrap_or_else(|e| panic!("{name}.json does not fit its type: {e}"));
+    let mut expected = original.clone();
+    // Os JSON antigos continuam como entrada; só a saída ganha defaults aditivos B01.
+    if name == "event_peer_blocked" {
+        block_defaults(&mut expected["data"]);
+    }
+    if name == "diagnostics_get" {
+        for block in expected["blocks"].as_array_mut().unwrap() {
+            block_defaults(block);
+        }
+    }
     assert_eq!(
         &serde_json::to_value(&parsed).unwrap(),
-        original,
+        &expected,
         "{name}.json: the type writes something else (a field omitted or renamed?)"
     );
+}
+
+fn block_defaults(value: &mut Value) {
+    let fields = value.as_object_mut().unwrap();
+    fields.entry("occurrences").or_insert(Value::from(1u64));
+    fields.entry("last_unix_ms").or_insert(Value::from(0u64));
 }
 
 /// The type each command answers with (Vector's layout and input commands have their own).
 fn check(name: &str, v: &Value) {
     match name {
+        "modules_set" => same::<clipsync_ui::modules::Reply>(name, v),
         "app_state" => same::<status::AppState>(name, v),
         "agent_start" | "agent_stop" => same::<agent::AgentReply>(name, v),
         "pause_set" => same::<status::PausedReply>(name, v),

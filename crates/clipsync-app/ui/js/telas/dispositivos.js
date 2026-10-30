@@ -3,14 +3,15 @@
 
 import { api } from "../api.js";
 import { area, aviso, cabecalho, estadoVazio, indisponivel } from "../areas.js";
-import { botao, cartao, confirmar, interruptor, tabela } from "../componentes.js";
+import { abrirDialogo, botao, cartao, confirmar, interruptor, tabela } from "../componentes.js";
+import { criarAnunciador, guardarFoco, restaurarFoco } from "../acessibilidade.js";
 import { h, trocar } from "../dom.js";
 import { indicarParNoLayout, obterApp, observarApp, recurso } from "../estado.js";
 import { INDISPONIVEL, formatarMomento, mensagemDe, seloDispositivo } from "../formatar.js";
 
 import { resumoTravessia } from "../travessia-vista.js";
 
-const EVENTOS = ["peer_connected", "peer_disconnected", "peer_blocked", "resync"];
+const EVENTOS = ["agent_state", "peer_connected", "peer_disconnected", "peer_blocked", "resync"];
 
 function rotuloClipboard({ clipboard_in, clipboard_out }) {
   if (clipboard_in && clipboard_out) return "envia e recebe";
@@ -39,15 +40,18 @@ export default function montar({ ir, assinar }) {
   let dispositivos = [];
   let painelChave = null;
   let orientacaoInput = null;
+  const anuncios = criarAnunciador();
   const travessia = h("div");
-  const pintarTravessia = () => trocar(travessia, resumoTravessia(obterApp(), { peerId: selecionado, ir, configurar: () => { indicarParNoLayout(selecionado); ir("layout"); } }));
+  const pintarTravessia = () => trocar(travessia, resumoTravessia(obterApp(), { peerId: selecionado, peerNome: dispositivos.find((d) => d.peer_id === selecionado)?.name, ir, configurar: () => { indicarParNoLayout(selecionado); ir("layout"); } }));
   const painel = h("div", { class: "dispositivos__painel" });
   // Tabela à esquerda, painel do selecionado à direita; sem dispositivo não há painel e a tabela ocupa tudo.
   const colunas = h("div", { class: "colunas dispositivos__colunas" });
-  const botaoParear = () => botao({ rotulo: "Parear novo dispositivo", variante: "primario", icone: "mais", aoClicar: () => ir("pareamento") });
+  const botaoParear = () => botao({ rotulo: "Parear novo dispositivo", dataset: { focusKey: "dispositivos-parear" }, variante: "primario", icone: "mais", aoClicar: () => ir("pareamento") });
 
   const lista = area({
     linhas: 4,
+    rotulo: "Computadores pareados",
+    fallback: () => no.querySelector("tbody tr") ?? no.querySelector("button"),
     buscar: () => api.devicesList(),
     pintar: (dados) => {
       dispositivos = dados.devices;
@@ -66,7 +70,7 @@ export default function montar({ ir, assinar }) {
     },
   });
 
-  function pintarTabela({ agent_running, devices }) {
+  function pintarTabela({ devices }) {
     const vazio = estadoVazio({ titulo: "Nenhum dispositivo pareado", texto: passosVazio(), acao: botaoParear() });
     if (devices.length === 0) return vazio;
 
@@ -76,7 +80,7 @@ export default function montar({ ir, assinar }) {
         {
           chave: "name",
           rotulo: "Nome",
-          render: (d) => h("span", { class: "dispositivos__nome" }, h("strong", null, d.name), h("span", { class: "mono muted" }, d.short)),
+          render: (d) => h("span", { class: "dispositivos__nome" }, h("strong", null, d.name), h("span", { class: "mono muted" }, d.short), obterApp()?.traversal?.peers?.find((p) => p.peer_id === d.peer_id)?.protocol_warning && h("span", { class: "selo selo--aviso" }, "protocolo antigo")),
         },
         { chave: "state", rotulo: "Estado", render: (d) => seloDispositivo(d.state) },
         { chave: "addr", rotulo: "Endereço", tipo: "mono", render: (d) => d.addr ?? h("span", { class: "muted" }, "sem endereço") },
@@ -88,7 +92,7 @@ export default function montar({ ir, assinar }) {
               "span",
               { class: "dispositivos__permissoes-celula" },
               h("span", null, `clipboard: ${rotuloClipboard(d.perms)}`),
-              h("span", null, `controle: ${d.perms.input_in ? "controla" : "não controla"}`),
+              h("span", null, `controle deste computador: ${d.perms.input_in ? "permitido" : "não permitido"}`),
             ),
         },
       ],
@@ -105,10 +109,10 @@ export default function montar({ ir, assinar }) {
       },
     });
 
+    for (const tr of grade.querySelectorAll("tbody tr")) tr.dataset.focusKey = `dispositivo:${tr.dataset.chave}`;
     return h(
       "div",
       { class: "pilha" },
-      !agent_running && aviso("aviso", h("p", null, "O agente está parado: a lista vem do arquivo de pares e todos aparecem offline.")),
       cartao({ plano: true, filhos: [grade] }),
     );
   }
@@ -119,69 +123,83 @@ export default function montar({ ir, assinar }) {
       return;
     }
     const app = obterApp();
-    const erroPainel = h("p", { class: "campo__erro", role: "alert", hidden: true });
+    const erroPainel = h("p", { class: "campo__erro", hidden: true });
     const mostrarErro = (erro) => {
       erroPainel.textContent = mensagemDe(erro);
       erroPainel.hidden = false;
+      anuncios.erro(erroPainel.textContent);
     };
 
     async function gravarPermissoes(mudanca, confirmacao = false) {
-      erroPainel.hidden = true;
-      const perms = { ...dispositivo.perms, ...mudanca };
+      if (dispositivos.find((d) => d.peer_id === dispositivo.peer_id)?.state === "blocked") throw new Error("Repareie o computador para editar permissões.");
+      const foco = guardarFoco(no);
+      return lista.proteger(async () => {
+        erroPainel.hidden = true;
+        const perms = { ...dispositivo.perms, ...mudanca };
       try {
         const { device } = await api.deviceSetPerms({ peer_id: dispositivo.peer_id, perms, acknowledge_full_trust: confirmacao });
         dispositivo.perms = device.perms;
         if (mudanca.input_in === true) orientacaoInput = dispositivo.peer_id;
-        lista.recarregar({ silencioso: true });
+        anuncios.status("Permissões atualizadas.");
+        await lista.recarregar({ silencioso: true });
       } catch (erro) {
         mostrarErro(erro);
         throw erro;
+      } finally {
+        queueMicrotask(() => restaurarFoco(foco, no));
       }
+      });
     }
 
     const clipboardLocal = app?.modules?.clipboard === true;
     const clipboardRemoto = dispositivo.remote_modules.clipboard === true;
     const inputLocal = recurso("input");
     const inputRemoto = dispositivo.remote_modules.input === true;
-    const motivoClipboard = !clipboardLocal ? "O módulo de clipboard está desligado nesta máquina." : !clipboardRemoto ? "O par não tem o módulo de clipboard." : null;
-    const motivoInput = !inputLocal ? INDISPONIVEL : !inputRemoto ? "O par não tem o módulo de teclado e mouse." : null;
+    const bloqueado = dispositivo.state === "blocked" ? "Computador bloqueado. Use Reparear para renovar a confiança." : null;
+    const motivoClipboard = bloqueado ?? (!clipboardLocal ? "O módulo de clipboard está desligado nesta máquina." : !clipboardRemoto ? "O par não tem o módulo de clipboard." : null);
+    const motivoInput = bloqueado ?? (!inputLocal ? INDISPONIVEL : !inputRemoto ? "O par não tem o módulo de teclado e mouse." : null);
 
     const permissoes = h(
       "div",
       { class: "dispositivos__permissoes" },
       interruptor({
-        rotulo: "Pode me enviar clipboard",
+        rotulo: "Pode me enviar clipboard", chaveFoco: `permissao:${dispositivo.peer_id}:clipboard-in`,
         descricao: motivoClipboard,
         marcado: dispositivo.perms.clipboard_in,
         desabilitado: motivoClipboard !== null,
         aoMudar: (valor) => gravarPermissoes({ clipboard_in: valor }),
       }),
       interruptor({
-        rotulo: "Pode receber meu clipboard",
+        rotulo: "Pode receber meu clipboard", chaveFoco: `permissao:${dispositivo.peer_id}:clipboard-out`,
         descricao: motivoClipboard,
         marcado: dispositivo.perms.clipboard_out,
         desabilitado: motivoClipboard !== null,
         aoMudar: (valor) => gravarPermissoes({ clipboard_out: valor }),
       }),
       interruptor({
-        rotulo: "Pode controlar meu teclado e mouse",
+        rotulo: `${dispositivo.name} pode controlar o teclado e mouse deste computador`, chaveFoco: `permissao:${dispositivo.peer_id}:input-in`,
         descricao: motivoInput,
         marcado: dispositivo.perms.input_in,
         desabilitado: motivoInput !== null,
         aoMudar: async (valor) => {
           if (!valor) return gravarPermissoes({ input_in: false });
-          const confirmado = await confirmar({
-            titulo: `Deixar ${dispositivo.name} controlar esta máquina?`,
-            mensagem: "Confiança total: esse dispositivo poderá digitar e clicar qualquer coisa aqui enquanto estiver autorizado. Você pode desligar quando quiser.",
-            rotuloConfirmar: "Conceder controle",
+          const { promessa } = abrirDialogo({
+            titulo: `Deixar ${dispositivo.name} controlar este computador?`,
+            conteudo: h("p", null, "Confiança total: esse computador poderá digitar e clicar qualquer coisa aqui enquanto estiver autorizado. Conceda no computador que receberá o controle."),
+            raizRetorno: no,
+            acoes: [
+              { rotulo: "Cancelar", valor: "cancelar", foco: true },
+              { rotulo: "Conceder controle", valor: "conceder", variante: "primario" },
+            ],
           });
+          const confirmado = (await promessa) === "conceder";
           if (!confirmado) throw new Error("cancelado");
           return gravarPermissoes({ input_in: true }, true);
         },
       }),
       interruptor({
-        rotulo: "É controlada por esta máquina",
-        descricao: INDISPONIVEL,
+        rotulo: `Controlar ${dispositivo.name} a partir deste computador`,
+        descricao: `Autorize a entrada em ${dispositivo.name}, na tela Dispositivos dele. ${INDISPONIVEL}`,
         marcado: false,
         desabilitado: true,
       }),
@@ -196,7 +214,7 @@ export default function montar({ ir, assinar }) {
       !recurso("peer_pause") && notaPausa,
       botao({ rotulo: "Reparear", icone: "atualizar", aoClicar: () => ir("pareamento") }),
       botao({
-        rotulo: "Revogar",
+        rotulo: "Revogar", dataset: { focusKey: `revogar:${dispositivo.peer_id}` },
         variante: "perigo",
         icone: "descartar",
         aoClicar: async () => {
@@ -206,16 +224,22 @@ export default function montar({ ir, assinar }) {
             rotuloConfirmar: "Revogar",
             perigo: true,
             digitar: dispositivo.name,
-            aoConfirmar: () => api.deviceRevoke({ peer_id: dispositivo.peer_id, typed_name: dispositivo.name }),
+            raizRetorno: no,
+            fallback: () => no.querySelector("tbody tr") ?? no.querySelector("button"),
+            aoConfirmar: async () => {
+              await api.deviceRevoke({ peer_id: dispositivo.peer_id, typed_name: dispositivo.name });
+              selecionado = null;
+              await lista.recarregar({ silencioso: true });
+              anuncios.status("Computador revogado.");
+            },
           });
           if (!ok) return;
-          selecionado = null;
-          lista.recarregar({ silencioso: true });
         },
       }),
       h("p", { class: "nota" }, "Revogar pede o nome da máquina digitado para confirmar e apaga a chave dela daqui."),
     );
 
+    const focoPainel = guardarFoco(painel);
     trocar(painel, 
       cartao({
         filhos: [
@@ -229,7 +253,7 @@ export default function montar({ ir, assinar }) {
           ),
           h(
             "details",
-            { class: "dispositivos__detalhes" },
+            { class: "dispositivos__detalhes", dataset: { focusKey: `detalhes:${dispositivo.peer_id}` } },
             h("summary", null, "Detalhes do par"),
             h(
               "dl",
@@ -238,6 +262,8 @@ export default function montar({ ir, assinar }) {
               h("dd", { class: "mono" }, dispositivo.addr ?? "sem endereço"),
               h("dt", null, "Protocolo do par"),
               h("dd", { class: "mono" }, dispositivo.remote_version ?? "desconhecida"),
+              obterApp()?.traversal?.peers?.find((p) => p.peer_id === dispositivo.peer_id)?.protocol_warning && h("dt", null, "Compatibilidade"),
+              obterApp()?.traversal?.peers?.find((p) => p.peer_id === dispositivo.peer_id)?.protocol_warning && h("dd", null, obterApp().traversal.peers.find((p) => p.peer_id === dispositivo.peer_id).protocol_warning),
               h("dt", null, "Pareado em"),
               h("dd", null, formatarMomento(dispositivo.paired_at)),
               h("dt", null, "Módulos do par"),
@@ -246,17 +272,22 @@ export default function montar({ ir, assinar }) {
               h("dd", null, indisponivel()),
             ),
           ),
-          orientacaoInput === dispositivo.peer_id && aviso("info", h("p", null, "Controle permitido para entrar aqui. Configure a passagem no computador que tem o mouse físico."), botao({ rotulo: "Configurar passagem", aoClicar: () => { indicarParNoLayout(dispositivo.peer_id); ir("layout"); } })),
+          orientacaoInput === dispositivo.peer_id && aviso("info", h("p", null, `Controle permitido para entrar aqui. Em ${dispositivo.name}, configure a saída do computador que tem o mouse físico.`), botao({ rotulo: "Configurar saída deste computador", aoClicar: () => { indicarParNoLayout(dispositivo.peer_id); ir("layout"); } })),
           h("h3", null, "Permissões"),
           permissoes,
           acoes,
         ],
       }),
     );
+    restaurarFoco(focoPainel, no);
   }
 
   const cancelar = assinar(EVENTOS, () => lista.recarregar({ silencioso: true }));
-  const cancelarApp = observarApp(pintarTravessia);
+  const cancelarApp = observarApp(() => {
+    pintarTravessia();
+    painelChave = null;
+    lista.recarregar({ silencioso: true });
+  });
 
   const no = h(
     "div",
@@ -266,10 +297,11 @@ export default function montar({ ir, assinar }) {
       descricao: "Quem pode enviar, quem pode receber e quem pode controlar esta máquina.",
       acoes: [botaoParear()],
     }),
+    anuncios.no,
     travessia,
     colunas,
   );
   colunas.append(lista.no, painel);
 
-  return { no, desmontar: () => { cancelar(); cancelarApp(); } };
+  return { no, desmontar: () => { lista.desmontar(); cancelar(); cancelarApp(); } };
 }

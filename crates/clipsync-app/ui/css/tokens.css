@@ -10,6 +10,7 @@
   --muted: #5b6270;
   --line: #dfe3ea;
   --line-strong: #c3c9d4;
+  --control-border: #737f90;
 
   --accent: #1f4e8c;
   --accent-hover: #1a427a;
@@ -67,6 +68,7 @@
     --muted: #9aa3b2;
     --line: #2a3039;
     --line-strong: #3a4250;
+  --control-border: #758196;
 
     --accent: #7fb0f0;
     --accent-hover: #98c0f4;
@@ -97,6 +99,7 @@
   --muted: #9aa3b2;
   --line: #2a3039;
   --line-strong: #3a4250;
+  --control-border: #758196;
 
   --accent: #7fb0f0;
   --accent-hover: #98c0f4;

@@ -13,7 +13,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient, ServerOptions};
 #[cfg(unix)]
@@ -69,10 +69,7 @@ pub async fn write_message<T: Serialize, W: AsyncWrite + Unpin>(
 
 /// Sends `req` to the agent of profile `p`. `CoreError::AgentNotRunning` when nobody listens on the socket.
 pub async fn request(p: &Profile, req: ControlRequest) -> Result<ControlResponse, CoreError> {
-    let mut stream = match tokio::time::timeout(CONNECT_TIMEOUT, connect(&p.socket_path())).await {
-        Err(_) => return Err(CoreError::AgentNotRunning),
-        Ok(s) => s?,
-    };
+    let mut stream = connect_bounded(connect(&p.socket_path())).await?;
     let exchange = async {
         write_message(&mut stream, &req, MAX_FRAME_BYTES).await?;
         read_message::<ControlResponse, _>(&mut stream, MAX_FRAME_BYTES).await
@@ -85,6 +82,18 @@ pub async fn request(p: &Profile, req: ControlRequest) -> Result<ControlResponse
                 "timeout waiting for the agent",
             ))
         })?
+}
+
+async fn connect_bounded<T>(
+    connection: impl Future<Output = Result<T, CoreError>>,
+) -> Result<T, CoreError> {
+    match tokio::time::timeout(CONNECT_TIMEOUT, connection).await {
+        Err(_) => Err(CoreError::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "tempo esgotado conectando ao agente",
+        ))),
+        Ok(result) => result,
+    }
 }
 
 /// What the agent implements; `serve` does the socket work around it.
@@ -202,14 +211,32 @@ pub struct ControlListener {
 /// another agent rewrote is left alone).
 struct Published {
     socket: std::path::PathBuf,
+    #[cfg(unix)]
+    identity: (u64, u64),
     #[cfg(windows)]
     name: String,
+}
+
+impl Published {
+    fn is_current(&self) -> bool {
+        #[cfg(unix)]
+        {
+            std::fs::symlink_metadata(&self.socket)
+                .is_ok_and(|m| (m.dev(), m.ino()) == self.identity)
+        }
+        #[cfg(windows)]
+        {
+            matches!(read_pipe_name(&self.socket), Ok(Some(n)) if n == self.name)
+        }
+    }
 }
 
 impl Drop for Published {
     fn drop(&mut self) {
         #[cfg(unix)]
-        let _ = std::fs::remove_file(&self.socket);
+        if self.is_current() {
+            let _ = std::fs::remove_file(&self.socket);
+        }
         #[cfg(windows)]
         if matches!(read_pipe_name(&self.socket), Ok(Some(n)) if n == self.name) {
             let _ = std::fs::remove_file(&self.socket);
@@ -224,17 +251,20 @@ pub async fn bind(socket: &Path) -> Result<ControlListener, CoreError> {
     // Only "nobody answers" proves the socket is stale. Any other connect error (a full backlog, say)
     // means a live agent may be there, and its socket must not be deleted.
     if socket.exists() {
-        match UnixStream::connect(socket).await {
+        match connect_bounded(async { UnixStream::connect(socket).await.map_err(CoreError::from) })
+            .await
+        {
             Ok(_) => return Err(CoreError::AgentAlreadyRunning),
-            Err(e) if is_absent(&e) => std::fs::remove_file(socket)?,
-            Err(e) => return Err(e.into()),
+            Err(CoreError::Io(e)) if is_absent(&e) => std::fs::remove_file(socket)?,
+            Err(e) => return Err(e),
         }
     }
-    let listener = bind_private(socket)?;
+    let (listener, identity) = bind_private(socket)?;
     Ok(ControlListener {
         listener,
         published: Published {
             socket: socket.to_path_buf(),
+            identity,
         },
     })
 }
@@ -266,23 +296,37 @@ pub async fn bind(socket: &Path) -> Result<ControlListener, CoreError> {
 }
 
 impl ControlListener {
-    /// Answers requests until `shutdown` completes, then unpublishes the socket.
-    #[cfg(unix)]
+    /// Confirma a publicação deste listener, não a resposta de outro processo.
+    pub fn is_current(&self) -> bool {
+        self.published.is_current()
+    }
+
+    pub fn belongs_to(&self, socket: &Path) -> bool {
+        self.published.socket == socket && self.is_current()
+    }
+
+    /// Answers requests until `shutdown` completes, then unpublishes the endpoint.
     pub async fn serve(
-        self,
+        mut self,
         handler: Arc<dyn ControlHandler>,
         shutdown: impl Future<Output = ()> + Send,
     ) -> Result<(), CoreError> {
-        let ControlListener {
-            listener,
-            published,
-        } = self;
+        self.serve_reserved(handler, shutdown).await
+    }
+
+    /// Stops accepting without releasing the endpoint while the agent cleans up modules.
+    #[cfg(unix)]
+    pub(crate) async fn serve_reserved(
+        &mut self,
+        handler: Arc<dyn ControlHandler>,
+        shutdown: impl Future<Output = ()> + Send,
+    ) -> Result<(), CoreError> {
         let mut tasks = tokio::task::JoinSet::new();
         tokio::pin!(shutdown);
         loop {
             tokio::select! {
                 () = &mut shutdown => break,
-                accepted = listener.accept() => match accepted {
+                accepted = self.listener.accept() => match accepted {
                     Ok((stream, _)) => { tasks.spawn(serve_one(stream, handler.clone())); }
                     Err(e) => tracing::warn!(error = %e, "control socket accept failed"),
                 },
@@ -290,25 +334,17 @@ impl ControlListener {
             }
         }
         tasks.abort_all();
-        drop(published);
+        while tasks.join_next().await.is_some() {}
         Ok(())
     }
 
-    /// Answers requests until `shutdown` completes, then unpublishes the pipe name.
     #[cfg(windows)]
-    pub async fn serve(
-        self,
+    pub(crate) async fn serve_reserved(
+        &mut self,
         handler: Arc<dyn ControlHandler>,
         shutdown: impl Future<Output = ()> + Send,
     ) -> Result<(), CoreError> {
-        let ControlListener {
-            name,
-            server,
-            published,
-        } = self;
-        let served = accept_pipes(&name, server, handler, shutdown).await;
-        drop(published);
-        served
+        accept_pipes(&self.name, &mut self.server, handler, shutdown).await
     }
 }
 
@@ -325,7 +361,7 @@ pub async fn serve(
 #[cfg(windows)]
 async fn accept_pipes(
     name: &str,
-    mut server: tokio::net::windows::named_pipe::NamedPipeServer,
+    server: &mut tokio::net::windows::named_pipe::NamedPipeServer,
     handler: Arc<dyn ControlHandler>,
     shutdown: impl Future<Output = ()> + Send,
 ) -> Result<(), CoreError> {
@@ -342,18 +378,19 @@ async fn accept_pipes(
             connected = server.connect() => match connected {
                 // The next instance exists before this one is handed off: clients see "busy", never "absent".
                 Ok(()) => {
-                    let client = std::mem::replace(&mut server, next_instance()?);
+                    let client = std::mem::replace(server, next_instance()?);
                     tasks.spawn(serve_one(client, handler.clone()));
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "control pipe connect failed");
-                    server = next_instance()?;
+                    *server = next_instance()?;
                 }
             },
             Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
         }
     }
     tasks.abort_all();
+    while tasks.join_next().await.is_some() {}
     Ok(())
 }
 
@@ -387,15 +424,17 @@ async fn serve_one<S: AsyncRead + AsyncWrite + Unpin>(
 /// Binds under a temporary name, restricts it to 0600, then links it to `socket`: the final name never
 /// exists with a wider mode, and `hard_link` fails if another agent got there first.
 #[cfg(unix)]
-fn bind_private(socket: &Path) -> Result<UnixListener, CoreError> {
+fn bind_private(socket: &Path) -> Result<(UnixListener, (u64, u64)), CoreError> {
     let tmp = socket.with_extension(format!("tmp-{}", std::process::id()));
     let _ = std::fs::remove_file(&tmp);
     let listener = UnixListener::bind(&tmp)?;
+    let metadata = std::fs::symlink_metadata(&tmp)?;
+    let identity = (metadata.dev(), metadata.ino());
     let linked = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
         .and_then(|()| std::fs::hard_link(&tmp, socket));
     let _ = std::fs::remove_file(&tmp);
     match linked {
-        Ok(()) => Ok(listener),
+        Ok(()) => Ok((listener, identity)),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
             Err(CoreError::AgentAlreadyRunning)
         }
@@ -423,5 +462,16 @@ mod tests {
             assert!(!is_pipe_name(bad), "{bad}");
         }
         assert!(!is_pipe_name(&format!("{a}\n")));
+    }
+}
+
+#[cfg(test)]
+mod connect_tests {
+    #[tokio::test]
+    async fn timeout_de_conexao_nao_prova_ausencia() {
+        let result = super::connect_bounded::<()>(std::future::pending()).await;
+        assert!(
+            matches!(result, Err(crate::CoreError::Io(e)) if e.kind() == std::io::ErrorKind::TimedOut)
+        );
     }
 }

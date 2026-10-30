@@ -10,6 +10,7 @@
     "windows": [
       {
         "label": "main",
+        "zoomHotkeysEnabled": true,
         "title": "ClipSync",
         "width": 1280,
         "height": 800,

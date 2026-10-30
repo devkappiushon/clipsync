@@ -135,8 +135,10 @@ pub(crate) async fn create(ctx: &Ctx, args: OnboardingCreateArgs) -> Result<Crea
             msg::RECREATE_CONFIRM,
         ));
     }
+    let operation = ctx.profile.reserve_operation(true)?;
     // The running agent holds the old identity: an in_app one stops, an external one is not
     // ours (`agent_external`).
+    agent::retain_operation(ctx, operation.clone()).await;
     agent::stop(ctx).await?;
     if ctx.profile.is_initialized() {
         // S6-02: every peer pinned the old key, and the old grants (input_in included) must not
@@ -158,7 +160,7 @@ pub(crate) async fn create(ctx: &Ctx, args: OnboardingCreateArgs) -> Result<Crea
         .listen
         .unwrap_or_else(|| SocketAddr::from((Ipv4Addr::UNSPECIFIED, args.port)));
     let kept = identity.clone();
-    let written = ctx.profile.init_with(
+    let written = ctx.profile.init_with_reserved(
         InitOptions {
             device_name: args.name.clone(),
             modules: set,
@@ -166,6 +168,7 @@ pub(crate) async fn create(ctx: &Ctx, args: OnboardingCreateArgs) -> Result<Crea
             fake_adapters: ctx.opts.fake_adapters,
         },
         identity,
+        &operation,
     );
     let identity = match written {
         Ok(i) => i,
@@ -176,7 +179,17 @@ pub(crate) async fn create(ctx: &Ctx, args: OnboardingCreateArgs) -> Result<Crea
         }
     };
     // The profile exists now; a failed start shows in app_state and agent_state.
-    if let Err(e) = agent::start(ctx).await {
+    let started = async {
+        let listener = clipsync_core::control::bind(&ctx.profile.socket_path()).await?;
+        let startup = clipsync_core::agent::Startup::with_listener(
+            &ctx.profile,
+            operation.clone(),
+            listener,
+        )?;
+        agent::start_reserved(ctx, startup, None).await
+    }
+    .await;
+    if let Err(e) = started {
         tracing::warn!(code = %e.code, "{}", e.message);
     }
     Ok(Created {

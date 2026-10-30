@@ -76,6 +76,118 @@ pub struct PeerBlocked {
     pub module: Option<ModuleName>,
     pub reason: String,
     pub at_unix_ms: u64,
+    #[serde(default = "one")]
+    pub occurrences: u64,
+    #[serde(default)]
+    pub last_unix_ms: u64,
+}
+
+fn one() -> u64 {
+    1
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct BlockKey {
+    peer: Option<PeerId>,
+    module: Option<ModuleKind>,
+    reason: String,
+}
+impl From<&BlockRecord> for BlockKey {
+    fn from(block: &BlockRecord) -> Self {
+        Self {
+            peer: block.peer,
+            module: block.module,
+            reason: block.reason.clone(),
+        }
+    }
+}
+fn block_delta(was: &[BlockRecord], now: &BlockRecord) -> u64 {
+    let previous = was
+        .iter()
+        .find(|old| old.peer == now.peer && old.module == now.module && old.reason == now.reason);
+    match previous {
+        Some(old) if old.at_unix_ms == now.at_unix_ms && now.occurrences >= old.occurrences => {
+            now.occurrences - old.occurrences
+        }
+        _ => now.occurrences,
+    }
+}
+
+const BLOCK_WINDOW: std::time::Duration = std::time::Duration::from_secs(30);
+const BLOCK_DIVERSITY: usize = 20;
+#[derive(Default)]
+struct BlockNotifications {
+    last_sent: Option<tokio::time::Instant>,
+    pending_occurrences: u64,
+    pending_keys: Vec<BlockKey>,
+    pending_peers: Vec<PeerId>,
+    keys_overflow: bool,
+    peers_overflow: bool,
+}
+impl BlockNotifications {
+    fn clear_pending(&mut self) {
+        self.pending_occurrences = 0;
+        self.pending_keys.clear();
+        self.pending_peers.clear();
+        self.keys_overflow = false;
+        self.peers_overflow = false;
+    }
+    fn observe<'a>(&mut self, deltas: impl Iterator<Item = (&'a BlockRecord, u64)>, enabled: bool) {
+        if !enabled {
+            self.clear_pending();
+            return;
+        }
+        for (block, count) in deltas {
+            if count == 0 {
+                continue;
+            }
+            self.pending_occurrences = self.pending_occurrences.saturating_add(count);
+            let key = BlockKey::from(block);
+            if !self.pending_keys.contains(&key) {
+                if self.pending_keys.len() < BLOCK_DIVERSITY {
+                    self.pending_keys.push(key);
+                } else {
+                    self.keys_overflow = true;
+                }
+            }
+            if let Some(peer) = block.peer
+                && !self.pending_peers.contains(&peer)
+            {
+                if self.pending_peers.len() < BLOCK_DIVERSITY {
+                    self.pending_peers.push(peer);
+                } else {
+                    self.peers_overflow = true;
+                }
+            }
+        }
+    }
+    fn flush(&mut self, now: tokio::time::Instant, enabled: bool) -> Option<Notification> {
+        if !enabled {
+            self.clear_pending();
+            return None;
+        }
+        if self.pending_occurrences == 0
+            || self.last_sent.is_some_and(|last| {
+                now.checked_duration_since(last).unwrap_or_default() < BLOCK_WINDOW
+            })
+        {
+            return None;
+        }
+        let notice = Notification {
+            kind: NotificationKind::Block,
+            title: msg::NOTIFY_BLOCK.into(),
+            body: msg::notify_block_summary(
+                self.pending_occurrences,
+                self.pending_keys.len(),
+                self.pending_peers.len(),
+                self.keys_overflow,
+                self.peers_overflow,
+            ),
+        };
+        self.last_sent = Some(now);
+        self.clear_pending();
+        Some(notice)
+    }
 }
 
 /// No preview: content never travels in an event.
@@ -285,7 +397,27 @@ impl Snapshot {
 
     /// Blocks in `now` that this look did not have, oldest first.
     fn new_blocks<'a>(&self, now: &'a Snapshot) -> impl Iterator<Item = &'a BlockRecord> {
-        fresh(&self.blocks, &now.blocks)
+        self.new_block_deltas(now).map(|(block, _)| block)
+    }
+
+    fn new_block_deltas<'a>(
+        &self,
+        now: &'a Snapshot,
+    ) -> impl Iterator<Item = (&'a BlockRecord, u64)> {
+        now.blocks.iter().rev().filter_map(|block| {
+            let delta = block_delta(&self.blocks, block);
+            (delta > 0).then_some((block, delta))
+        })
+    }
+
+    fn retain_unobserved(&mut self, previous: &Snapshot) {
+        if !self.live {
+            self.blocks = previous.blocks.clone();
+            self.removals = previous.removals.clone();
+        }
+        if self.inbox.is_none() {
+            self.inbox = previous.inbox.clone();
+        }
     }
 
     /// `layout_changed` (zones, offer) and `screen_lock_changed`, when both looks have an
@@ -367,14 +499,13 @@ impl Snapshot {
                 module: b.module.map(ModuleName::from),
                 reason: clean(&b.reason),
                 at_unix_ms: b.at_unix_ms,
+                occurrences: b.occurrences,
+                last_unix_ms: if b.last_unix_ms == 0 {
+                    b.at_unix_ms
+                } else {
+                    b.last_unix_ms
+                },
             };
-            if notify.block {
-                out.push(UiEvent::Notification(Notification {
-                    kind: NotificationKind::Block,
-                    title: msg::NOTIFY_BLOCK.to_string(),
-                    body: msg::notify_block(ev.name.as_deref(), &ev.reason),
-                }));
-            }
             out.push(UiEvent::PeerBlocked(ev));
         }
         if let (Some(was), Some(is)) = (&self.inbox, &now.inbox) {
@@ -417,6 +548,7 @@ fn layout_rev(ctx: &Ctx) -> u64 {
 /// `Ui::start`, so a change made right after `start` is never swallowed by the baseline.
 pub(crate) async fn poll(ctx: Weak<Ctx>, first: Snapshot) {
     let mut last = first;
+    let mut block_notifications = BlockNotifications::default();
     loop {
         let Some(every) = ctx.upgrade().map(|c| c.opts.poll) else {
             return;
@@ -424,16 +556,14 @@ pub(crate) async fn poll(ctx: Weak<Ctx>, first: Snapshot) {
         tokio::time::sleep(every).await;
         let Some(c) = ctx.upgrade() else { return };
         let mut now = Snapshot::take(&c).await;
-        if !now.live {
-            // No agent this tick: keep the ring, so the same blocks are not new next time.
-            now.blocks = std::mem::take(&mut last.blocks);
-            now.removals = std::mem::take(&mut last.removals);
-        }
-        if now.inbox.is_none() {
-            // A box that could not be read this tick is not a box emptied.
-            now.inbox = last.inbox.take();
-        }
+        now.retain_unobserved(&last);
         let notify = lock(&c.prefs).notifications;
+        block_notifications.observe(last.new_block_deltas(&now), notify.block);
+        if let Some(notification) =
+            block_notifications.flush(tokio::time::Instant::now(), notify.block)
+        {
+            c.emit(UiEvent::Notification(notification));
+        }
         let layout_rev = || layout_rev(&c);
         for ev in last
             .diff(&now, notify)
@@ -444,5 +574,195 @@ pub(crate) async fn poll(ctx: Weak<Ctx>, first: Snapshot) {
         }
         last = now;
         drop::<Arc<Ctx>>(c);
+    }
+}
+
+#[cfg(test)]
+mod block_notice_tests {
+    use super::*;
+    fn block(reason: &str, count: u64) -> BlockRecord {
+        BlockRecord {
+            peer: Some(PeerId([1; 32])),
+            peer_name: Some("nome".into()),
+            module: Some(ModuleKind::Input),
+            reason: reason.into(),
+            at_unix_ms: 10,
+            last_unix_ms: 20,
+            occurrences: count,
+        }
+    }
+    fn snapshot(blocks: Vec<BlockRecord>) -> Snapshot {
+        Snapshot {
+            agent: AgentStateData {
+                agent: AgentMode::InApp,
+                error: None,
+            },
+            paused: false,
+            live: true,
+            connected: BTreeMap::new(),
+            blocks,
+            removals: vec![],
+            inbox: None,
+            input: None,
+            traversal: crate::traversal::Traversal::default(),
+        }
+    }
+    #[test]
+    fn unchanged_name_and_order_do_not_make_new_groups() {
+        let was = snapshot(vec![block("A", 2), block("B", 3)]);
+        let mut renamed = block("A", 2);
+        renamed.peer_name = Some("renomeado".into());
+        renamed.last_unix_ms = 99;
+        let now = snapshot(vec![block("B", 3), renamed]);
+        assert_eq!(was.new_blocks(&now).count(), 0);
+    }
+    #[test]
+    fn growth_reports_only_changed_group() {
+        let was = snapshot(vec![block("A", 2), block("B", 3)]);
+        let now = snapshot(vec![block("B", 3), block("A", 5)]);
+        assert_eq!(was.new_blocks(&now).count(), 1);
+    }
+    #[test]
+    fn peer_blocked_does_not_make_its_own_notification() {
+        let was = snapshot(vec![]);
+        let now = snapshot(vec![block("A", 1), block("B", 1)]);
+        let events = was.diff(&now, Notifications::default());
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, UiEvent::PeerBlocked(_)))
+                .count(),
+            2
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e,UiEvent::Notification(n) if n.kind==NotificationKind::Block))
+                .count(),
+            0
+        );
+    }
+    #[test]
+    fn monotonic_window_flushes_pending_on_empty_tick() {
+        let start = tokio::time::Instant::now();
+        let mut notices = BlockNotifications::default();
+        let empty = snapshot(vec![]);
+        let first = snapshot(vec![block("A", 1)]);
+        notices.observe(empty.new_block_deltas(&first), true);
+        assert!(notices.flush(start, true).is_some());
+        let grown = snapshot(vec![block("A", 4)]);
+        notices.observe(first.new_block_deltas(&grown), true);
+        assert_eq!(notices.pending_occurrences, 3);
+        assert!(
+            notices
+                .flush(start + std::time::Duration::from_millis(29_999), true)
+                .is_none()
+        );
+        // Resync só pede leitura; não substitui o estado de avisos do poll.
+        let _ = UiEvent::resync();
+        notices.observe(grown.new_block_deltas(&grown), true);
+        let summary = notices.flush(start + BLOCK_WINDOW, true).unwrap();
+        assert!(summary.body.contains("3 ocorrências observadas"));
+        assert!(notices.flush(start + BLOCK_WINDOW, true).is_none());
+        assert!(notices.last_sent.is_some());
+    }
+    #[test]
+    fn absent_agent_retains_baseline_without_replaying_groups() {
+        let previous = snapshot(vec![block("A", 9)]);
+        let mut absent = snapshot(vec![]);
+        absent.live = false;
+        absent.retain_unobserved(&previous);
+        assert_eq!(previous.blocks.len(), 1);
+        assert_eq!(previous.new_blocks(&absent).count(), 0);
+        let returned = snapshot(vec![block("A", 9)]);
+        assert_eq!(absent.new_blocks(&returned).count(), 0);
+    }
+    #[test]
+    fn preference_discards_pending_without_reset_or_replay() {
+        let start = tokio::time::Instant::now();
+        let mut notices = BlockNotifications::default();
+        let first = block("A", 1);
+        notices.observe(std::iter::once((&first, 1)), true);
+        assert!(notices.flush(start, true).is_some());
+        notices.observe(std::iter::once((&first, 4)), true);
+        notices.observe(std::iter::once((&first, 8)), false);
+        assert_eq!(notices.pending_occurrences, 0);
+        assert_eq!(notices.last_sent, Some(start));
+        let baseline = snapshot(vec![block("A", 13)]);
+        notices.observe(baseline.new_block_deltas(&baseline), true);
+        assert!(notices.flush(start + BLOCK_WINDOW, true).is_none());
+        notices.observe(std::iter::once((&first, 1)), true);
+        assert!(
+            notices
+                .flush(start + std::time::Duration::from_secs(2), true)
+                .is_none()
+        );
+        let summary = notices.flush(start + BLOCK_WINDOW, true).unwrap();
+        assert!(summary.body.contains("1 ocorrências observadas"));
+    }
+    #[test]
+    fn recreation_and_saturation_never_underflow_or_invent_delta() {
+        let old = vec![block("A", 9)];
+        assert_eq!(block_delta(&old, &block("A", 2)), 2);
+        let mut recreated = block("A", 10);
+        recreated.at_unix_ms = 3;
+        assert_eq!(block_delta(&old, &recreated), 10);
+        assert_eq!(
+            block_delta(&[block("A", u64::MAX - 1)], &block("A", u64::MAX)),
+            1
+        );
+        assert_eq!(
+            block_delta(&[block("A", u64::MAX)], &block("A", u64::MAX)),
+            0
+        );
+    }
+    #[test]
+    fn diversity_and_occurrences_stay_bounded_and_honest() {
+        let mut notices = BlockNotifications::default();
+        for n in 0..21u8 {
+            let mut entry = block(&format!("causa{n}"), 1);
+            entry.peer = Some(PeerId([n; 32]));
+            notices.observe(std::iter::once((&entry, u64::MAX)), true);
+        }
+        assert_eq!(notices.pending_occurrences, u64::MAX);
+        assert_eq!(notices.pending_keys.len(), 20);
+        assert_eq!(notices.pending_peers.len(), 20);
+        assert!(notices.keys_overflow && notices.peers_overflow);
+        let summary = notices.flush(tokio::time::Instant::now(), true).unwrap();
+        assert!(summary.body.contains("pelo menos 21 causas"));
+        assert!(summary.body.contains("pelo menos 21 dispositivos"));
+        assert!(summary.body.contains("ocorrências observadas"));
+        let mut local = block("local", 1);
+        local.peer = None;
+        notices.observe(std::iter::once((&local, 1)), true);
+        assert!(notices.pending_peers.is_empty());
+    }
+    #[test]
+    fn removal_stays_independent_of_block_aggregation() {
+        let old = snapshot(vec![]);
+        let mut now = snapshot(vec![block("A", 1)]);
+        now.removals.push(RemovalRecord {
+            at_unix_ms: 1,
+            peer: PeerId([2; 32]),
+            peer_name: "removido".into(),
+        });
+        let events = old.diff(&now, Notifications::default());
+        assert!(events.iter().any(
+            |e| matches!(e,UiEvent::Notification(n) if n.kind==NotificationKind::DeviceRemoved)
+        ));
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e,UiEvent::Notification(n) if n.kind==NotificationKind::Block))
+        );
+        let UiEvent::PeerBlocked(group) = events
+            .iter()
+            .find(|e| matches!(e, UiEvent::PeerBlocked(_)))
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(group.occurrences, 1);
+        assert_eq!(group.last_unix_ms, 20);
     }
 }

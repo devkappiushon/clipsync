@@ -1,6 +1,6 @@
 # 0003 · Pareamento por comparação numérica com compromisso
 
-Estado: aceita (2026-10-27) · Autor: Keel · Contrato: `docs/contrato.md` §3, §4 (`PairMsg`) e §5 regra 3 · Evidência: `/tmp/clipsync-spike-base/RELATORIO.md`
+Estado: aceita (2026-10-27) · Autor: Keel · Contrato: `docs/contrato.md` §3, §4 (`PairMsg`) e §5 regra 3 · Evidência: `/tmp/clipsync-spike-base/RELATORIO.md` (log efêmero, não preservado)
 
 ## Contexto
 

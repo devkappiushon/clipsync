@@ -2,6 +2,9 @@
 // Cada domínio (mock/*.js) registra seus comandos com registrar() e guarda dados em `estado`.
 
 const ATRASO_MS = 160;
+// Controle DEV: só o despacho muda; os handlers continuam somando seus próprios atrasos.
+const latenciaPedida = new URLSearchParams(location.search).get("latencia");
+const LATENCIA_DESPACHO = ["160", "500", "1400"].includes(latenciaPedida) ? Number(latenciaPedida) : ATRASO_MS;
 
 export const cenario = new URLSearchParams(location.search).get("cenario") ?? "padrao";
 // ?cenario=windows (ou ?plataforma=windows) simula o PC Windows da S7: dois monitores, um com escala 1,5, e o input ligado.
@@ -32,6 +35,8 @@ export function emitir(event, data = {}) {
 // Comandos que não passam pelo agente (perfil, peers.toml e ui.toml): respondem com o agente parado ou com falha.
 const SEMPRE_RESPONDEM = new Set([
   "app_state",
+  "modules_set",
+  "clipboard_set_mode",
   "agent_start",
   "agent_stop",
   "onboarding_start",
@@ -49,7 +54,10 @@ export async function invoke(nome, { req }) {
   if (!req || typeof req.cmd !== "string") throw erro("bad_request", "Pedido malformado.");
   const tratador = comandos.get(req.cmd);
   if (!tratador) throw erro("unknown_command", `Comando ${req.cmd} desconhecido.`);
-  await atraso();
+  await atraso(LATENCIA_DESPACHO);
+  const mutacao = ["agent_start", "agent_stop", "onboarding_create", "clipboard_set_mode", "pair_host_start", "pair_join_start", "pair_code_matches", "pair_finish", "pair_cancel", "lock_to_screen"].includes(req.cmd)
+    || (req.cmd === "pause_set" && req.args?.paused !== true);
+  if (estado.modulosOcupados && mutacao) throw erro("profile_busy", "Reconfiguração do perfil em andamento.");
   if (!agenteDePe() && !SEMPRE_RESPONDEM.has(req.cmd)) {
     throw erro("agent_not_running", "O agente não está rodando. Inicie o agente e tente de novo.");
   }

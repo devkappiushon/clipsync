@@ -1,6 +1,6 @@
 # 0002 · Transporte: QUIC com TLS 1.3 mútuo
 
-Estado: aceita (2026-10-27) · Autor: Keel · Contrato: `docs/contrato.md` §4 e §5 · Evidência: `/tmp/clipsync-spike-base/RELATORIO.md` (spike do Rivet)
+Estado: aceita (2026-10-27) · Autor: Keel · Contrato: `docs/contrato.md` §4 e §5 · Evidência: `/tmp/clipsync-spike-base/RELATORIO.md` (spike do Rivet; log efêmero, não preservado)
 
 ## Contexto
 

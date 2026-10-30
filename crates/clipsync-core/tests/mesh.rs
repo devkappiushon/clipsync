@@ -121,6 +121,7 @@ impl Module for Probe {
                 ModuleInput::Reliable {
                     from,
                     msg: ModuleMsg::Input(InputMsg::StatsRequest { session }),
+                    ..
                 } if self.echo => {
                     let stats = LoopbackStats {
                         session,
@@ -130,7 +131,7 @@ impl Module for Probe {
                         .send_reliable(from, ModuleMsg::Input(InputMsg::Stats(stats)))
                         .await;
                 }
-                ModuleInput::Datagram { from, dg } if self.echo => {
+                ModuleInput::Datagram { from, dg, .. } if self.echo => {
                     let _ = host.send_datagram(from, dg);
                 }
                 other => {
@@ -515,9 +516,10 @@ async fn mesh_changed_key_is_blocked_with_constant_reason() {
     stop(ra).await;
 }
 
-/// L6: every refusal of `authorize_inbound` lands in `recent_blocks`, newest first, capped, without content.
+/// B01: repeated refusals on real QUIC form one group, without content.
+/// Distinct-key cap/LRU: transport::block_groups_tests::arrival_lru_preserves_other_causes_and_ignores_names_and_wall_clock.
 #[tokio::test(flavor = "multi_thread")]
-async fn mesh_inbound_refusals_are_recorded_newest_first_and_capped() {
+async fn mesh_inbound_refusals_are_grouped_and_redacted() {
     let dir = tempfile::tempdir().unwrap();
     let (a, b) = (node(&dir, "a"), node(&dir, "b"));
     trust(&a, &b, "b", ALL);
@@ -543,10 +545,12 @@ async fn mesh_inbound_refusals_are_recorded_newest_first_and_capped() {
     wait_until("B records the refusals", || async {
         status(&b.profile)
             .await
-            .is_some_and(|s| s.recent_blocks.len() == MAX_RECENT_BLOCKS)
+            .is_some_and(|s| s.recent_blocks.len() == 1 && s.recent_blocks[0].occurrences == 23)
     })
     .await;
     let s = status(&b.profile).await.unwrap();
+    assert_eq!(s.recent_blocks.len(), 1);
+    assert_eq!(s.recent_blocks[0].occurrences, 23);
     for r in &s.recent_blocks {
         assert_eq!((r.peer, r.peer_name.as_deref()), (Some(a.id), Some("a")));
         assert_eq!(
@@ -557,12 +561,8 @@ async fn mesh_inbound_refusals_are_recorded_newest_first_and_capped() {
             )
         );
     }
-    assert!(
-        s.recent_blocks
-            .windows(2)
-            .all(|w| w[0].at_unix_ms >= w[1].at_unix_ms),
-        "newest first"
-    );
+    assert!(s.recent_blocks[0].at_unix_ms > 0);
+    assert!(s.recent_blocks[0].last_unix_ms >= s.recent_blocks[0].at_unix_ms);
     assert!(!format!("{s:?}").contains(SECRET));
     assert!(!serde_json::to_string(&s).unwrap().contains(SECRET));
     // A was not refused by anyone.
@@ -606,6 +606,7 @@ async fn stream_and_datagram() {
             if let ModuleInput::Reliable {
                 from,
                 msg: ModuleMsg::Input(InputMsg::Stats(s)),
+                ..
             } = input
             {
                 assert_eq!(from, b.id);
@@ -633,7 +634,7 @@ async fn stream_and_datagram() {
             let deadline = tokio::time::Instant::now() + DATAGRAM_WAIT;
             while let Ok(Some(input)) = tokio::time::timeout_at(deadline, ra.input.recv()).await {
                 // Late echoes of an earlier attempt or seq are ignored.
-                if let ModuleInput::Datagram { from, dg } = input
+                if let ModuleInput::Datagram { from, dg, .. } = input
                     && dg.seq == seq
                 {
                     assert_eq!(from, b.id);

@@ -586,3 +586,27 @@
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
+
+/* Ações principais vêm antes da prévia alta, na mesma ordem do DOM. */
+.layout__simples { grid-column: 1 / -1; }
+.layout__simples .layout__configurar { grid-template-columns: minmax(0, 1fr); }
+.layout__origem { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: var(--s-2); }
+.layout__origem .entrada { min-width: 0; width: 100%; }
+.layout__origem button, .layout__trecho .entrada { min-height: 2rem; }
+.layout__previa-borda { stroke: var(--accent); stroke-width: 6; stroke-dasharray: 8 4; }
+.layout__dispositivo:focus-visible .layout__monitor { stroke: var(--focus); stroke-width: 5; stroke-dasharray: 9 3; }
+.layout__borda:focus-visible { stroke: var(--focus); stroke-width: 3; stroke-dasharray: 5 3; }
+.layout__posicoes .btn[aria-pressed="true"] { text-decoration: underline; text-underline-offset: 0.25em; border-width: 2px; }
+.layout__popover { max-width: 100%; }
+@container (min-width: 35rem) {
+  .layout__simples .layout__configurar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+@container (min-width: 50rem) {
+  .layout__simples { grid-column: 1 / -1; }
+  .layout__principal { grid-column: 1 / -1; }
+}
+@container (max-width: 34.99rem) {
+  .layout__popover-area { position: static; padding: 0; }
+  .layout__popover { width: 100%; max-height: none; }
+  .layout__atalho, .layout__pct { min-width: 0; max-width: 100%; }
+}

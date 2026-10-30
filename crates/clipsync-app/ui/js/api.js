@@ -78,6 +78,7 @@ export const api = {
   // 7 preferências
   prefsGet: comando("prefs_get"),
   prefsSet: comando("prefs_set"),
+  modulesSet: comando("modules_set"),
 };
 
 /** Escuta os eventos do agente. fn recebe { event, data }. Devolve (promessa de) a função que cancela. */

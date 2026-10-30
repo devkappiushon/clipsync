@@ -32,7 +32,9 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::RemoteDesktop::{
-    NOTIFY_FOR_THIS_SESSION, WTSRegisterSessionNotification, WTSUnRegisterSessionNotification,
+    NOTIFY_FOR_THIS_SESSION, WTS_CURRENT_SESSION, WTSFreeMemory, WTSINFOEX_LEVEL1_W, WTSINFOEXW,
+    WTSQuerySessionInformationW, WTSRegisterSessionNotification, WTSSessionInfoEx,
+    WTSUnRegisterSessionNotification,
 };
 use windows::Win32::System::StationsAndDesktops::{
     CloseDesktop, DESKTOP_CONTROL_FLAGS, DESKTOP_READOBJECTS, GetUserObjectInformationW, HDESK,
@@ -68,7 +70,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_WTSSESSION_CHANGE, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_OVERLAPPED, WS_POPUP,
 };
-use windows::core::PCWSTR;
+use windows::core::{PCWSTR, PWSTR};
 
 fn werr(call: &'static str, e: &windows::core::Error) -> WinError {
     WinError {
@@ -213,6 +215,57 @@ pub(crate) fn input_desktop_is_default() -> bool {
         )
     };
     got.is_ok() && utf16_until_nul(&name).eq_ignore_ascii_case("Default")
+}
+
+/// Owns the allocation returned by WTS, including early-error paths after the query.
+struct WtsBuffer(PWSTR);
+impl Drop for WtsBuffer {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: this non-null allocation is returned by WTSQuerySessionInformationW,
+            // owned solely by this guard and freed exactly once with its matching API.
+            unsafe { WTSFreeMemory(self.0.0.cast()) };
+        }
+    }
+}
+
+pub(crate) fn session_locked() -> Result<bool, WinError> {
+    let mut buffer = PWSTR::null();
+    let mut bytes = 0;
+    // SAFETY: local/current session only; buffer and bytes are initialized writable outputs.
+    // The returned allocation is immediately adopted by WtsBuffer and never escapes this call.
+    let result = unsafe {
+        WTSQuerySessionInformationW(
+            None,
+            WTS_CURRENT_SESSION,
+            WTSSessionInfoEx,
+            &mut buffer,
+            &mut bytes,
+        )
+    };
+    let guard = WtsBuffer(buffer);
+    result.map_err(|e| werr("WTSQuerySessionInformationW", &e))?;
+    if guard.0.is_null() {
+        return Err(crate::invalid_wts_info());
+    }
+    crate::validate_wts_size(bytes, std::mem::size_of::<WTSINFOEXW>())?;
+    let base = guard.0.0.cast::<u8>();
+    let level_pointer = base
+        .wrapping_add(std::mem::offset_of!(WTSINFOEXW, Level))
+        .cast::<u32>();
+    // SAFETY: the successful allocation is non-null and at least size_of<WTSINFOEXW>();
+    // Level is an initialized u32 field at this offset. Unaligned read avoids alignment assumptions.
+    let level = unsafe { level_pointer.read_unaligned() };
+    if level != 1 {
+        return Err(crate::invalid_wts_info());
+    }
+    let offset = std::mem::offset_of!(WTSINFOEXW, Data)
+        + std::mem::offset_of!(WTSINFOEX_LEVEL1_W, SessionFlags);
+    let flags_pointer = base.wrapping_add(offset).cast::<i32>();
+    // SAFETY: Level==1 selects WTSINFOEX_LEVEL1_W. The validated allocation contains its
+    // initialized SessionFlags field at this offset; no account/name/padding fields are read.
+    let flags = unsafe { flags_pointer.read_unaligned() };
+    crate::decode_wts_lock(level, flags)
 }
 
 // ---------------------------------------------------------------------------------------------

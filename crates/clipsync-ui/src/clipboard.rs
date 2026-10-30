@@ -13,8 +13,8 @@ use clipsync_proto::{
 use serde::{Deserialize, Serialize};
 
 use crate::api::{self, ClipMode, ClipboardModeArgs, ItemArgs, SendNowArgs, code};
-use crate::status::{self, AgentMode};
-use crate::{Ctx, UiError, agent, clean, msg};
+use crate::status;
+use crate::{Ctx, UiError, clean, msg};
 
 /// `clipboard_preview` shows at most this many characters.
 const PREVIEW_CHARS: usize = 200;
@@ -120,12 +120,16 @@ pub struct Preview {
     pub preview: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModeReply {
     pub mode: ClipMode,
     /// The agent runs in a terminal (external): it reads the mode when restarted there.
     pub restart_needed: bool,
+    #[serde(default)]
+    pub effects: Option<crate::modules::Effects>,
+    #[serde(default)]
+    pub observed: Option<crate::modules::Observed>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,18 +280,7 @@ pub(crate) async fn preview(ctx: &Ctx, args: ItemArgs) -> Result<Preview, UiErro
 /// Writes `[clipboard] mode`. The in_app agent restarts to read it; an external one is told
 /// to restart (`restart_needed`); a stopped one reads it when it starts.
 pub(crate) async fn set_mode(ctx: &Ctx, args: ClipboardModeArgs) -> Result<ModeReply, UiError> {
-    require_clipboard(ctx)?;
-    let text = match args.mode {
-        ClipMode::Auto => "auto",
-        ClipMode::Manual => "manual",
-    };
-    ctx.profile.set_clipboard_mode(text)?;
-    let restarted = agent::restart(ctx).await?;
-    let external = !restarted && status::observe(ctx).await.agent == AgentMode::External;
-    Ok(ModeReply {
-        mode: args.mode,
-        restart_needed: external,
-    })
+    crate::modules::apply_mode(ctx, args.mode).await
 }
 
 /// Only an item `in_inbox` or refused as old (Stale) that still holds its text. Works paused

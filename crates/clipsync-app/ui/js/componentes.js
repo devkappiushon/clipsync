@@ -1,21 +1,20 @@
 // Componentes da interface. Toda ação assíncrona passa por comCarregamento:
-// o botão fica desabilitado, mostra o indicador e volta ao normal no fim.
+// o botão permanece focável, impede reentrada e mostra o indicador até concluir.
 
+import { ocupar, criarEscolhaAssincrona, guardarFoco, restaurarFoco, criarAnunciador } from "./acessibilidade.js";
 import { h, novoId } from "./dom.js";
 import { icone } from "./icones.js";
 
 export async function comCarregamento(botao, tarefa) {
-  if (botao.getAttribute("aria-busy") === "true") return undefined;
-  botao.disabled = true;
-  botao.setAttribute("aria-busy", "true");
+  const liberar = ocupar(botao);
+  if (!liberar) return undefined;
   try {
     return await tarefa();
   } catch (erro) {
     console.error("falha em ação assíncrona", erro);
     return undefined;
   } finally {
-    botao.disabled = false;
-    botao.removeAttribute("aria-busy");
+    liberar();
   }
 }
 
@@ -50,32 +49,37 @@ export function cartao({ titulo, acoes, plano = false, filhos = [] }) {
 }
 
 /** Interruptor com rótulo e descrição. aoMudar(marcado) pode ser assíncrono; se lançar, o interruptor volta ao valor anterior (quem chamou mostra o erro). */
-export function interruptor({ rotulo, descricao, marcado = false, desabilitado = false, aoMudar }) {
+export function interruptor({ rotulo, descricao, marcado = false, desabilitado = false, aoMudar, chaveFoco }) {
   const id = novoId("interruptor");
   const idDescricao = `${id}-d`;
   const entrada = h("input", {
     class: "interruptor",
     type: "checkbox",
     role: "switch",
+    dataset: chaveFoco ? { focusKey: chaveFoco } : undefined,
     id,
     checked: marcado,
     disabled: desabilitado,
     "aria-describedby": descricao ? idDescricao : null,
   });
-  entrada.addEventListener("change", async () => {
-    if (!aoMudar) return;
-    const valor = entrada.checked;
-    entrada.disabled = true;
-    entrada.setAttribute("aria-busy", "true");
-    try {
-      await aoMudar(valor);
-    } catch {
-      entrada.checked = !valor;
-    } finally {
-      entrada.disabled = desabilitado;
-      entrada.removeAttribute("aria-busy");
-    }
+  const escolher = criarEscolhaAssincrona({
+    valor: marcado,
+    aplicar: (valor) => { entrada.checked = valor; },
+    disponivel: () => !entrada.disabled,
+    aoMudar,
+    aoOcupar: (ocupado) => {
+      entrada.toggleAttribute("aria-busy", ocupado);
+      if (ocupado) {
+        entrada.setAttribute("aria-busy", "true");
+        entrada.setAttribute("aria-disabled", "true");
+      } else entrada.removeAttribute("aria-disabled");
+    },
   });
+  entrada.addEventListener("click", (evento) => {
+    if (entrada.getAttribute("aria-busy") === "true") evento.preventDefault();
+  });
+  entrada.addEventListener("change", () => { escolher(entrada.checked).catch(() => {}); });
+
   return h(
     "div",
     { class: "opcao" },
@@ -94,7 +98,7 @@ export function campo({ rotulo, valor = "", tipo = "texto", opcoes = [], ajuda, 
 
   let controle;
   if (tipo === "select") {
-    controle = h("select", comuns, opcoes.map((o) => h("option", { value: o.valor, selected: o.valor === valor }, o.rotulo)));
+    controle = h("select", { ...comuns, ...resto }, opcoes.map((o) => h("option", { value: o.valor, selected: o.valor === valor }, o.rotulo)));
   } else {
     controle = h("input", { ...comuns, type: "text", value: valor, placeholder, autocomplete: "off", spellcheck: "false", ...resto });
   }
@@ -113,20 +117,33 @@ export function campo({ rotulo, valor = "", tipo = "texto", opcoes = [], ajuda, 
 }
 
 /** Seletor segmentado: grupo de opções exclusivas, navegável por setas. Opção com `desabilitada: true` fica visível e inerte. */
-export function segmentado({ rotulo, opcoes, valor, aoMudar }) {
+export function segmentado({ rotulo, opcoes, valor, aoMudar, chaveFoco }) {
   const nome = novoId("segmentado");
-  const grupo = h(
-    "div",
-    { class: "segmentado", role: "radiogroup", "aria-label": rotulo },
-    opcoes.map((o) =>
-      h(
-        "label",
-        { class: "segmentado__opcao" },
-        h("input", { type: "radio", name: nome, value: o.valor, checked: o.valor === valor, disabled: o.desabilitada === true, onChange: () => aoMudar?.(o.valor) }),
-        h("span", null, o.rotulo),
-      ),
-    ),
-  );
+  const entradas = opcoes.map((o) => h("input", {
+    type: "radio", name: nome, value: o.valor, checked: o.valor === valor, disabled: o.desabilitada === true,
+    dataset: chaveFoco ? { focusKey: `${chaveFoco}:${o.valor}` } : undefined,
+  }));
+  const grupo = h("div", { class: "segmentado", role: "radiogroup", "aria-label": rotulo },
+    opcoes.map((o, i) => h("label", { class: "segmentado__opcao" }, entradas[i], h("span", null, o.rotulo))));
+  const escolher = criarEscolhaAssincrona({
+    valor, aoMudar,
+    disponivel: (proximo) => entradas.some((entrada) => entrada.value === proximo && !entrada.disabled),
+    aplicar: (atual) => entradas.forEach((entrada) => { entrada.checked = entrada.value === atual; }),
+    aoOcupar: (ocupado) => {
+      if (ocupado) grupo.setAttribute("aria-busy", "true");
+      else grupo.removeAttribute("aria-busy");
+      for (const entrada of entradas) {
+        if (ocupado) entrada.setAttribute("aria-disabled", "true");
+        else entrada.removeAttribute("aria-disabled");
+      }
+    },
+  });
+  grupo.addEventListener("click", (evento) => {
+    if (grupo.getAttribute("aria-busy") === "true") evento.preventDefault();
+  });
+  for (const entrada of entradas) entrada.addEventListener("change", () => {
+    if (entrada.checked) escolher(entrada.value).catch(() => {});
+  });
   return grupo;
 }
 
@@ -198,9 +215,12 @@ export function esqueleto({ linhas = 3, largura = "100%" } = {}) {
  * Se aoClicar lançar, o diálogo continua aberto e mostra a `message` do erro.
  * Devolve { promessa, dialogo }, para o chamador poder habilitar ou desabilitar ações.
  */
-export function abrirDialogo({ titulo, conteudo, acoes, largo = false }) {
+export function abrirDialogo({ titulo, conteudo, acoes, largo = false, fallback, raizRetorno }) {
+  const raiz = raizRetorno ?? document.activeElement?.closest(".pagina") ?? document.body;
+  const foco = guardarFoco(raiz);
+  const anuncios = criarAnunciador();
   const idTitulo = novoId("dialogo-titulo");
-  const areaErro = h("p", { class: "dialogo__erro", role: "alert", hidden: true });
+  const areaErro = h("p", { class: "dialogo__erro", hidden: true });
   let ocupado = false;
 
   const botoes = acoes.map((a) =>
@@ -210,17 +230,27 @@ export function abrirDialogo({ titulo, conteudo, acoes, largo = false }) {
       desabilitado: a.desabilitado ?? false,
       autofocus: a.foco ? "" : null,
       aoClicar: async () => {
+        if (ocupado) return;
         ocupado = true;
         areaErro.hidden = true;
+        anuncios.limpar();
+        const anteriores = botoes.map((b) => b.getAttribute("aria-disabled"));
+        botoes.forEach((b) => b.setAttribute("aria-disabled", "true"));
         try {
           if (a.aoClicar) await a.aoClicar();
         } catch (erro) {
           ocupado = false;
           areaErro.textContent = typeof erro?.message === "string" && erro.message ? erro.message : "Não foi possível concluir. Tente de novo.";
           areaErro.hidden = false;
+          anuncios.erro(areaErro.textContent);
           return;
+        } finally {
+          ocupado = false;
+          botoes.forEach((b, i) => {
+            if (anteriores[i] === null) b.removeAttribute("aria-disabled");
+            else b.setAttribute("aria-disabled", anteriores[i]);
+          });
         }
-        ocupado = false;
         dialogo.close(a.valor);
       },
     }),
@@ -229,7 +259,7 @@ export function abrirDialogo({ titulo, conteudo, acoes, largo = false }) {
   const dialogo = h(
     "dialog",
     { class: `dialogo${largo ? " dialogo--largo" : ""}`, "aria-labelledby": idTitulo },
-    h("div", { class: "dialogo__corpo" }, h("h2", { id: idTitulo }, titulo), conteudo, areaErro),
+    h("div", { class: "dialogo__corpo" }, h("h2", { id: idTitulo }, titulo), conteudo, areaErro, anuncios.no),
     h("div", { class: "dialogo__acoes" }, botoes),
   );
   dialogo.botoes = botoes;
@@ -242,6 +272,11 @@ export function abrirDialogo({ titulo, conteudo, acoes, largo = false }) {
       const valor = dialogo.returnValue || null;
       dialogo.remove();
       resolver(valor);
+      // Espera também o finally do botão acionador e a atualização de quem aguardava o modal.
+      queueMicrotask(() => restaurarFoco(foco, raiz, {
+        aposDialogo: dialogo,
+        fallback: fallback ?? (() => raiz.querySelector("[data-focus-fallback], h1, h2")),
+      }));
     });
   });
   document.body.append(dialogo);
@@ -253,7 +288,7 @@ export function abrirDialogo({ titulo, conteudo, acoes, largo = false }) {
  * Confirmação simples. Com `digitar`, o botão só habilita quando o texto digitado for igual.
  * Resolve true ao confirmar, false ao cancelar ou fechar.
  */
-export async function confirmar({ titulo, mensagem, rotuloConfirmar = "Confirmar", rotuloCancelar = "Cancelar", perigo = false, digitar, aoConfirmar }) {
+export async function confirmar({ titulo, mensagem, rotuloConfirmar = "Confirmar", rotuloCancelar = "Cancelar", perigo = false, digitar, aoConfirmar, fallback, raizRetorno }) {
   const conteudo = h("div", { class: "pilha" }, h("p", null, mensagem));
   let entrada = null;
   if (digitar) {
@@ -264,6 +299,8 @@ export async function confirmar({ titulo, mensagem, rotuloConfirmar = "Confirmar
   const { promessa, dialogo } = abrirDialogo({
     titulo,
     conteudo,
+    fallback,
+    raizRetorno,
     acoes: [
       { rotulo: rotuloCancelar, valor: "cancelar", foco: !!perigo },
       { rotulo: rotuloConfirmar, valor: "confirmar", variante: perigo ? "perigo" : "primario", foco: !perigo && !digitar, desabilitado: !!digitar, aoClicar: aoConfirmar },

@@ -1,5 +1,7 @@
 # Telas do ClipSync (protótipo Figma e base da UI Tauri)
 
+> Especificação da S6. O fluxo atual de configuração da passagem está na §14.3 do contrato e em `crates/clipsync-app/ui/README.md`. Os atalhos desta página são os da especificação; na v0.3.1 valem Win+Alt+1 a 9, L e P, e C e V aparecem indisponíveis.
+
 Desktop 1280×800, temas claro e escuro. Sistema: Inter no corpo, Geist nos títulos, Geist Mono em códigos, ids e valores de tabela (`tabular-nums`). Atalhos sempre com a tecla Windows como modificador, escrita "Win" (no Linux a mesma tecla é a Super; nunca o símbolo de command da Apple): padrão `Win+Alt+<tecla>`. Escala de 8 pt. Um raio de borda (8 px) e uma elevação. Paleta: fundo neutro, texto alto contraste, um acento azul-escuro para ação primária, verde e vermelho só para estado, sempre com ícone ou texto junto. Sem roxo, sem emoji como ícone, sem travessão em texto de interface, sem kicker decorativo. Foco visível em tudo. Textos em português, preparados para tradução. O que não tem backend na versão atual aparece desabilitado com o texto "indisponível nesta versão", nunca escondido (contrato §12.2 regra 6).
 
 ## Estrutura comum
@@ -52,3 +54,71 @@ Conferido com captura: as 9 telas claras. 01b, 03, 05, 06 e 07 pela captura do M
 Ajustes aplicados no arquivo em 2026-10-27 pelo plugin Scripter, com o script `docs/telas/figma-ajustes.js`: `Win+Alt` em todas as teclas de atalho, malha de 16 px no canvas de 04 Layout de telas, quebra de linha do rótulo "É controlada por esta máquina" em 02 e rótulo do notebook encurtado em 04. Conferido por captura do portal (tela 04). O protótipo HTML em `docs/telas/index.html` tem as mesmas mudanças.
 
 Tema escuro: os 9 quadros escuros ("· Escuro", em y = 900) foram criados em 2026-10-27 pelo plugin Scripter com `docs/telas/figma-escuro.js`, religando as cores para a coleção "Cor escuro". Conferido por captura do portal (05 Clipboard · Escuro). Nada pendente no Figma. Parou no limite do MCP do Figma: o plano Starter dá 20 chamadas por mês, todas usadas em 2026-10-27. Caminho sem esperar o mês virar: abrir o arquivo no Figma, rodar o plugin Scripter e colar o script do tema escuro.
+
+## Revisão de UX/UI pós-v0.3.1 (2026-10-28)
+
+**Adendo novo, sem alterar a especificação acima.** A revisão do andar UX & UI, com fonte integral em `/tmp/clipsync-uxui-fecho-final.txt` (consolidado nas linhas 24-56), tem veredito **PRECISA REVISAR** no recorte de clareza e recuperação da interface. A base é `d41aa65`, com o Figma e o simulador vistos em portais separados. A evidência é do andar UX & UI. Não é veto retroativo ao release publicado nem veredito de travessia física; nenhum BLOCKER foi demonstrado nessa leitura limitada.
+
+### Seis P1 · propostas para implementação futura
+
+Os seis itens abaixo são propostas para uma implementação futura, não mudanças feitas nesta revisão.
+
+- **P1 · A1/R1.** Preferências promete alterar módulos, mas não há controle lá; quem desliga clipboard ou input fica sem saída. Evidência: `onboarding.js:198`, `travessia-vista.js:12-19` e `prefs.rs:85-93`; no cenário `?cenario=input-desligado#/dispositivos`, "Abrir preferências" não leva a um controle de módulo. Refazer o perfil não é troca inofensiva: recria a identidade e exige novo pareamento, então não é o caminho para trocar um interruptor.
+- **P1 · A2.** A permissão de controle não diz qual máquina concede; o painel é igual nos dois lados, então é possível conceder do lado errado. Evidência: `pareamento.js:327-373` e `dispositivos.js:167-187`; `devices.rs:61-77` não traz o que o par concedeu.
+- **P1 · R2.** O selo de atalhos "ativos nesta máquina" aparece sem ligação local, porque deriva de capacidade. Evidência: `preferencias.js:102` e `status.rs:112-124` (`cfg!(windows) && input_live`); em `?cenario=sem-ligacao&plataforma=windows#/preferencias`, o selo aparece sem passagem configurada.
+- **P1 · M1.** Na máquina que recebe o controle, o botão leva a configurar o Layout local, que grava a ligação invertida. Evidência: `pareamento.js:410-411` e `dispositivos.js:249`; o texto manda configurar no computador com o mouse físico, mas o CTA abre o Layout desta máquina.
+- **P1 · M2.** A prévia da posição não diz de que lado o mouse sai nem de que lado entra; em `padrao#/layout`, "Atualizar passagem: eDP-1 para HDMI-1" só troca o monitor em "À direita", e "À esquerda", "Acima" e "Abaixo" repetem o mesmo texto. A diagonal de "Abaixo" é medida do Lens, não reproduzida.
+- **P1 · M3.** Em 960x632, "Ligar nessa posição" fica abaixo da dobra: em `windows#/layout`, o main tem `scrollHeight` 1127 e o botão top 934, 302 px abaixo da dobra, enquanto o canvas manda clicar nele.
+
+### P2 e P3
+
+- **P2 · R3.** Texto de Linux no onboarding do Windows: `?cenario=sem-perfil&plataforma=windows#/onboarding/2` mostra "portal InputCapture" e "X11 ou pelo portal".
+- **P2 · Pixel-1 / m9.** O rótulo do layout cobre o monitor vizinho: medida [642,253 269×17] sobre HDMI-1 [528,258 180×101]; m9 é o mesmo defeito, com 8 px em 960.
+- **P2 · Pixel-2.** O Diagnóstico rola a janela inteira: viewport 1280×792, documento 911, e `scrollTo(0,600)` desloca a lateral de 0 para -119.
+- **P2 · M4.** Recuperação com três avisos e estado contraditório depois de "Iniciar agente"; reproduzido só no simulador, onde o app real pode ajustar o estado pelo `peer_connected`.
+- **P2 · M6.** Atalho recusado anunciado no botão pausado: em `windows-recusa`, a lateral oferece "Retomar tudo Win+Alt+P", mas o aviso de recusa só existe em Preferências.
+- **P3 · A3, A4, A5 e m1-m13.** A3 é endereço:porta (`pairing.rs:125-142`); A4 é confirmação ao vivo na revisão do andar, e depois de criar o perfil, Voltar e "Criar perfil e continuar" abre "Refazer o perfil desta máquina?"; A5 é a terminologia; m1-m13 incluem o m9.
+
+**Divergência de severidade:** o Pixel classificou PUI-03 e PUI-04 como P1; o consolidado manteve P2. PUI-05, PUI-06, PUI-07 e PUI-11 são preservação da v0.3.1, não defeito.
+
+### Acessibilidade
+
+A consolidação tem 42 entradas brutas (17 do Access, 12 do Meridian e 13 do Echo), conferidas ID a ID; os seis P1 de acessibilidade são a lista deduplicada por fluxo, não o total bruto, e listas duplicadas não devem ser somadas. Reproduzidos pelo Argus: P1-1, P1-3, P1-4 e N1; P1-2 não foi reproduzido no "Pausar tudo".
+
+### O que preservar
+
+**O que não regredir:** posição com "Ligar nessa posição"; estado da passagem por par; aviso de protocolo; orientação a quem só recebe; teste explicado; Ajustes avançados; versão real na lateral.
+
+**O que não copiar do Figma antigo:** clipboard ligado por padrão; "É controlada por esta máquina" no sentido inverso; borda obrigatória com "Salvar layout"; "QUIC com mTLS" no onboarding; dados fictícios.
+
+**Limites:** temas escuros restantes; onboarding em 960; frame Componentes do Figma sem captura válida; prova assistiva e teste físico Windows/Linux não verificados; M4 só no simulador.
+
+## S9 · estados das telas (2026-10-30)
+
+**Adendo novo, sem alterar a especificação acima nem a revisão de 28/10.** Registra o efeito das fatias C01, B09 e B01 da S9 nas telas, conforme `docs/contrato.md` §15.7, §15.8 e §15.10. Descreve comportamento de interface; o aceite de produto continua separado, com app Tauri real, leitor assistivo, zoom e travessia física pendentes (§15.4 item 7 e §15.6).
+
+### 1. Onboarding, passo "O que sincronizar" (C01)
+
+Com perfil já criado, o passo mostra o aviso de que a máquina já tem perfil, que os módulos podem ser revisados sem alterar identidade, pares ou permissões, e o botão passa a ser "Aplicar módulos e continuar", usando a mesma edição de Preferências. Criar o perfil continua sendo recriação de identidade, com novo pareamento, e não é o caminho para trocar um interruptor (§15.7 item 4). Depois de aplicar, a reconsulta atualiza o estado e não retoma o agente: retomar segue explícito.
+
+### 5. Clipboard (B09)
+
+O seletor de modo ganha a frase que faltava: se a troca reiniciar o agente deste app, a malha fica pausada até "Retomar tudo". O aviso é anterior à troca, não posterior. Com agente externo, a tela salva a configuração e pede o reinício externo, sem afirmar que o modo já vale no processo em execução.
+
+Aviso de pausa pendente: o topo do conteúdo, acima da tela aberta, mostra texto persistente quando `app_state.pause_warning` vem preenchido, distinguindo "aplicada em memória, não salva" de "não confirmada". `paused: null` é estado não observado, nunca retomado por dedução. Aviso antigo não é apagado por polling nem por resposta anterior à falha atual.
+
+### 6. Diagnóstico, bloco "Últimos bloqueios" (B01)
+
+A tabela passa a ter primeira ocorrência, última ocorrência e ocorrências observadas, agrupadas pelo agente por par, módulo e motivo, com no máximo 20 grupos. Repetição soma na contagem em vez de criar linha nova; chegada nova move o grupo para o topo; causa nova expulsa o último. `occurrences` ausente vale 1, `last_unix_ms` ausente cai para `at_unix_ms` e contagem acima do inteiro seguro do JavaScript aparece como "pelo menos N". Aviso de bloqueio tem cadência própria da casca, com resumo após pelo menos 30 s monotônicos, e o bloco continua mostrando a história mesmo com a notificação desligada. No simulador, `?cenario=b01-grupos` mostra legado sem agregação, grupos repetidos, causa geral sem par e contador no teto.
+
+### 7. Preferências (C01 e B09)
+
+Novo cartão "Módulos", com os dois interruptores, "Aplicar módulos" e resumo dos efeitos devolvidos pelo agente. `changed: false` aparece como "já estavam configurados assim". Erro mostra a mensagem do agente com os efeitos e o estado observado, e o botão só volta depois de reconsulta. Aplicar com o agente próprio reinicia pausado e restaura a trava desta tela; retomar é ação explícita. Cada atalho da lista mostra disponibilidade e motivo observados, sem prometer registro ou atividade dos hooks.
+
+### O que segue sem aprovação
+
+**Pareamento:** o round4, com foco na espera, anúncio terminal e caminho de corrigir endereço, foi aprovado pelos revisores nativos, com relatório nos ledgers. A especificação da seção 3 desta página continua sendo o alvo de produto; aprovação de revisão não é prova em portal, app real ou duas máquinas.
+
+**B07:** o ciclo de vida da captura independente dos dados continua em revisão, sem aceite. Nenhuma tela deve ser descrita como prova desse comportamento.
+
+**Limites:** o simulador escreve `effects`, `observed`, `recent_blocks` e `pause_warning` à mão. `?cenario=b01-grupos` cobre repetições e contador no teto, mas não a agregação dinâmica, a cadência de 30 s nem o teto de 20 grupos; nenhum cenário reinicia processo. Medição de portal, zoom real, leitor assistivo e duas máquinas continuam fora desta rodada.

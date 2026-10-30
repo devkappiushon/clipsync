@@ -1,4 +1,6 @@
 {
   "mode": "manual",
-  "restart_needed": false
+  "restart_needed": false,
+  "effects": null,
+  "observed": null
 }

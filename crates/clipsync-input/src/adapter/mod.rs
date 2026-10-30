@@ -2,6 +2,8 @@
 mod barrier;
 mod entry;
 mod fake;
+pub(crate) mod lifecycle;
+pub use lifecycle::CaptureLifecycle;
 pub(crate) mod outputs;
 #[cfg(target_os = "linux")]
 mod portal;
@@ -111,6 +113,9 @@ pub trait CaptureAdapter: Send + 'static {
     /// session exists, else a quiet estimate; empty when there is none.
     fn known_zones(&self) -> Vec<Zone> {
         Vec::new()
+    }
+    fn lifecycle_receiver(&self) -> Option<tokio::sync::watch::Receiver<CaptureLifecycle>> {
+        None
     }
     /// Installs barriers and starts delivering events. A portal dialog may appear here.
     async fn start(

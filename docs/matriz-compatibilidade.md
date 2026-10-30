@@ -1,5 +1,7 @@
 # Matriz de compatibilidade
 
+> Evidência dos spikes de 2026-10-27. Os logs em `/tmp/clipsync-spike-*` não foram preservados. Esta matriz não cobre a v0.3.x; o estado atual do produto está no README e em `CONTEXTO.md`.
+
 Classificação: **validada** (visto funcionar nesta máquina, com log) · **parcial** (parte provada, parte pendente) · **não testada** · **falhou**.
 Cada célula aponta a evidência. Nada aqui vale para outra máquina até rodar lá.
 

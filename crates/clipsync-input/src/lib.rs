@@ -8,6 +8,7 @@ pub mod keymap;
 pub mod layout;
 mod module;
 pub mod msg;
+mod network;
 pub mod probe;
 mod self_test;
 mod span;
@@ -42,7 +43,7 @@ pub const SUPPORTED: bool = cfg!(any(target_os = "linux", windows));
 /// `ModuleError::Config` (contract §12.6 item 3).
 pub fn build(cfg: InputConfig, profile_dir: &Path) -> Result<Box<dyn Module>, ModuleError> {
     let cap: Box<dyn CaptureAdapter> = match cfg.capture {
-        AdapterChoice::Fake => Box::new(FakeCapture::new(vec![fake_zone()]).0),
+        AdapterChoice::Fake => Box::new(FakeCapture::standalone(vec![fake_zone()])),
         AdapterChoice::Portal => portal_capture()?,
         AdapterChoice::Windows => windows_capture()?,
         AdapterChoice::Auto if cfg!(windows) => windows_capture()?,
@@ -104,3 +105,7 @@ fn windows_capture() -> Result<Box<dyn CaptureAdapter>, ModuleError> {
 fn windows_emulate() -> Result<Box<dyn EmulateAdapter>, ModuleError> {
     Err(ModuleError::Adapter(msg::UNAVAILABLE_ON_PLATFORM.into()))
 }
+
+#[cfg(test)]
+#[path = "../tests/support/stop_capture.rs"]
+mod stop_capture;

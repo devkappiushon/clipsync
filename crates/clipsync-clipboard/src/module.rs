@@ -18,6 +18,8 @@ const ACK_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(50);
 const READ_RETRIES: usize = 3;
 const INBOX_SWEEP: Duration = Duration::from_secs(5);
+/// Logical steps, not elapsed time: larger remote advances are deliberately incompatible.
+const MAX_REMOTE_AHEAD: u64 = 1_000_000;
 
 // ---- adapter thread (rule 11) ----
 
@@ -371,10 +373,12 @@ impl State {
             ModuleInput::Reliable {
                 from,
                 msg: ModuleMsg::Clip(ClipMsg::Offer(o)),
+                ..
             } => self.on_offer(from, o).await,
             ModuleInput::Reliable {
                 from,
                 msg: ModuleMsg::Clip(ClipMsg::Ack(a)),
+                ..
             } => self.resolve(a.id, from, a.state),
             ModuleInput::Rejected {
                 from,
@@ -437,8 +441,15 @@ impl State {
             ));
             return;
         }
-        let offer = self.new_offer(snap.text);
-        self.last = Some((offer.lamport, self.host.local_id()));
+        let offer = match self.new_offer(snap.text) {
+            Ok(offer) => offer,
+            Err(reason) => {
+                lock(&self.status).last_block = Some(reason.into());
+                return;
+            }
+        };
+        let origin = (offer.lamport, self.host.local_id());
+        self.last = Some(self.last.map_or(origin, |last| last.max(origin)));
         let targets: Vec<PeerInfo> = self
             .host
             .peers()
@@ -459,16 +470,21 @@ impl State {
         }
     }
 
-    fn new_offer(&mut self, text: String) -> ClipOffer {
-        self.lamport_max += 1;
-        ClipOffer {
+    fn new_offer(&mut self, text: String) -> Result<ClipOffer, &'static str> {
+        let next = self
+            .lamport_max
+            .checked_add(1)
+            .filter(|next| *next != u64::MAX)
+            .ok_or(msg::CLOCK_EXHAUSTED)?;
+        self.lamport_max = next;
+        Ok(ClipOffer {
             id: EventId::random(),
             lamport: self.lamport_max,
             mime: MIME_TEXT_UTF8.into(),
             text,
             created_unix_ms: now_unix_ms(),
             ttl_ms: CLIP_TTL_MS,
-        }
+        })
     }
 
     // ---- received offers (rules 5..9) ----
@@ -492,11 +508,23 @@ impl State {
                 .ack(from, id, DeliveryState::Rejected(RejectReason::Duplicate))
                 .await;
         }
-        self.lamport_max = self.lamport_max.max(o.lamport);
         if self.is_paused() {
             return self
                 .ack(from, id, DeliveryState::Rejected(RejectReason::Paused))
                 .await;
+        }
+        // Expired offers retain the existing inbox/TTL behavior, but cannot poison the clock.
+        if o.ttl_ms != 0 {
+            if o.lamport == 0
+                || o.lamport == u64::MAX
+                || o.lamport.saturating_sub(self.lamport_max) > MAX_REMOTE_AHEAD
+            {
+                lock(&self.status).last_block = Some(msg::CLOCK_AHEAD.into());
+                return self
+                    .ack(from, id, DeliveryState::Rejected(RejectReason::Invalid))
+                    .await;
+            }
+            self.lamport_max = self.lamport_max.max(o.lamport);
         }
         let state = if o.ttl_ms == 0 {
             DeliveryState::Expired
@@ -537,7 +565,8 @@ impl State {
         match self.write(o.text.clone(), guard).await {
             WriteResult::Written => {
                 self.current = Some(h);
-                self.last = Some((o.lamport, from));
+                let origin = (o.lamport, from);
+                self.last = Some(self.last.map_or(origin, |last| last.max(origin)));
                 DeliveryState::Applied
             }
             WriteResult::Paused => {
@@ -664,7 +693,14 @@ impl State {
             return;
         }
         // An explicit send is an origin event: it advances the clock but is not a local copy.
-        let offer = self.new_offer(text);
+        let offer = match self.new_offer(text) {
+            Ok(offer) => offer,
+            Err(reason) => {
+                lock(&self.status).last_block = Some(reason.into());
+                let _ = reply.send(ModuleReply::Error(reason.into()));
+                return;
+            }
+        };
         // `Some` = exactly that peer (an unknown one is an error); `None` = every peer we may send to.
         let peers: Vec<PeerInfo> = self
             .host
@@ -757,5 +793,380 @@ impl State {
                 let _ = reply.send(ModuleReply::Error(msg::EMPTY_CLIPBOARD.into()));
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod clock_tests {
+    use super::*;
+    use crate::adapter::{FakeClipboard, FakeClipboardHandle};
+    use clipsync_proto::{MemHub, MemNode, ModuleSet, PeerPerms};
+
+    const BOTH: ModuleSet = ModuleSet {
+        clipboard: true,
+        input: false,
+    };
+    const ALL: PeerPerms = PeerPerms {
+        clipboard_in: true,
+        clipboard_out: true,
+        input_in: false,
+    };
+    const EXHAUSTED: &str = "relógio lógico do clipboard esgotado; nenhuma oferta foi enviada";
+    const AHEAD: &str =
+        "relógio remoto inválido: a janela lógica permite até 1000000 passos de avanço";
+
+    struct Fixture {
+        st: State,
+        remote: MemNode,
+        fake: FakeClipboardHandle,
+        worker: tokio::task::JoinHandle<()>,
+        events: mpsc::Receiver<AdapterEvent>,
+    }
+    impl Fixture {
+        fn new(mode: ClipMode) -> Self {
+            let hub = MemHub::new();
+            let local = hub.add_node("local", BOTH);
+            let remote = hub.add_node("remoto", BOTH);
+            hub.link(local.id, remote.id, ALL, ALL);
+            let (adapter, fake) = FakeClipboard::new();
+            let (cmd_tx, cmd_rx) = std_mpsc::channel();
+            let (ev_tx, events) = mpsc::channel(64);
+            let host = local.host.clone();
+            let worker = tokio::task::spawn_blocking(move || {
+                adapter_thread(Box::new(adapter), cmd_rx, ev_tx, host)
+            });
+            let st = State::new(
+                ClipboardConfig {
+                    mode,
+                    ..ClipboardConfig::default()
+                },
+                "fake".into(),
+                local.host,
+                cmd_tx,
+            );
+            Self {
+                st,
+                remote,
+                fake,
+                worker,
+                events,
+            }
+        }
+        async fn stop(self) {
+            self.st.cmd_tx.send(Cmd::Stop).unwrap();
+            self.worker.await.unwrap();
+        }
+        async fn ack(&mut self) -> DeliveryState {
+            loop {
+                let input = tokio::time::timeout(Duration::from_secs(2), self.remote.rx.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                if let ModuleInput::Reliable {
+                    msg: ModuleMsg::Clip(ClipMsg::Ack(a)),
+                    ..
+                } = input
+                {
+                    return a.state;
+                }
+            }
+        }
+        async fn receive(&mut self, o: ClipOffer) -> DeliveryState {
+            self.st.on_offer(self.remote.id, o).await;
+            self.ack().await
+        }
+    }
+    fn offer(lamport: u64, text: &str) -> ClipOffer {
+        ClipOffer {
+            id: EventId::random(),
+            lamport,
+            mime: MIME_TEXT_UTF8.into(),
+            text: text.into(),
+            created_unix_ms: 0,
+            ttl_ms: CLIP_TTL_MS,
+        }
+    }
+    type Snapshot = (
+        Option<Hash>,
+        Option<(u64, PeerId)>,
+        u64,
+        Vec<(EventId, DeliveryState, Option<String>)>,
+    );
+    fn snapshot(st: &State) -> Snapshot {
+        (
+            st.current,
+            st.last,
+            st.lamport_max,
+            st.inbox
+                .iter()
+                .map(|e| (e.item.id, e.item.state, e.text.clone()))
+                .collect(),
+        )
+    }
+    async fn command(st: &mut State, cmd: ModuleCommand) -> ModuleReply {
+        let (reply, rx) = oneshot::channel();
+        st.on_command(cmd, reply).await;
+        tokio::time::timeout(Duration::from_secs(2), rx)
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    // Catches early clock incorporation, off-by-one admission, and a poisoned next local copy.
+    #[tokio::test]
+    async fn clock_admission_preserves_state() {
+        let mut f = Fixture::new(ClipMode::Manual);
+        f.st.current = Some(hash_text("anterior"));
+        f.st.last = Some((7, f.st.host.local_id()));
+        f.st.lamport_max = 7;
+        for remote in [0, u64::MAX, 1_000_008] {
+            let before = snapshot(&f.st);
+            assert_eq!(
+                f.receive(offer(remote, "recusado")).await,
+                DeliveryState::Rejected(RejectReason::Invalid)
+            );
+            assert_eq!(snapshot(&f.st), before, "remote={remote}");
+            assert_eq!(lock(&f.st.status).last_block.as_deref(), Some(AHEAD));
+            assert_eq!((f.fake.writes(), f.fake.contents()), (0, None));
+        }
+        // Content, duplicate, pause and zero TTL take precedence over extreme clock rejection.
+        let mut invalid = offer(u64::MAX, "");
+        invalid.mime = "image/png".into();
+        let before = snapshot(&f.st);
+        assert_eq!(
+            f.receive(invalid).await,
+            DeliveryState::Rejected(RejectReason::Invalid)
+        );
+        assert_eq!(snapshot(&f.st), before);
+        let mut large = offer(u64::MAX, "grande");
+        f.st.cfg.max_text_bytes = 1;
+        assert_eq!(
+            f.receive(large.clone()).await,
+            DeliveryState::Rejected(RejectReason::TooLarge)
+        );
+        assert_eq!(snapshot(&f.st), before);
+        f.st.cfg.max_text_bytes = ClipboardConfig::default().max_text_bytes;
+        f.st.paused = true;
+        assert_eq!(
+            f.receive(offer(u64::MAX, "pausado")).await,
+            DeliveryState::Rejected(RejectReason::Paused)
+        );
+        assert_eq!(snapshot(&f.st), before);
+        f.st.paused = false;
+        large.ttl_ms = 0;
+        assert_eq!(f.receive(large).await, DeliveryState::Expired);
+        assert_eq!(
+            (f.st.current, f.st.last, f.st.lamport_max),
+            (before.0, before.1, 7)
+        );
+        assert_eq!(f.st.inbox.len(), 1);
+        assert_eq!(f.st.inbox[0].text, None);
+        let before = snapshot(&f.st);
+        let duplicate = offer(u64::MAX, "duplicado");
+        assert!(f.st.seen.insert_new(duplicate.id, Instant::now()));
+        assert_eq!(
+            f.receive(duplicate).await,
+            DeliveryState::Rejected(RejectReason::Duplicate)
+        );
+        assert_eq!(snapshot(&f.st), before);
+        // Exact limit relative to 7 is admitted, without claiming it was applied.
+        assert_eq!(
+            f.receive(offer(1_000_007, "limite")).await,
+            DeliveryState::InInbox
+        );
+        assert_eq!(
+            (f.st.current, f.st.last, f.st.lamport_max),
+            (before.0, before.1, 1_000_007)
+        );
+        f.st.on_local_change(Some(ClipSnapshot {
+            mime: MIME_TEXT_UTF8.into(),
+            text: "cópia seguinte".into(),
+        }));
+        assert_eq!(f.st.lamport_max, 1_000_008);
+        assert_eq!(f.st.last, Some((1_000_008, f.st.host.local_id())));
+        // Check the actual emitted timestamp, not only the internal counter.
+        loop {
+            let input = tokio::time::timeout(Duration::from_secs(2), f.remote.rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            if let ModuleInput::Reliable {
+                msg: ModuleMsg::Clip(ClipMsg::Offer(o)),
+                ..
+            } = input
+            {
+                assert_eq!((o.lamport, o.text.as_str()), (1_000_008, "cópia seguinte"));
+                break;
+            }
+        }
+        f.stop().await;
+    }
+
+    // Catches MAX emission/overflow in each creator and failure to return to the module loop.
+    #[tokio::test]
+    async fn local_clock_exhaustion_keeps_module_alive() {
+        for clock in [u64::MAX - 1, u64::MAX] {
+            let mut f = Fixture::new(ClipMode::Auto);
+            f.st.lamport_max = u64::MAX - 2;
+            assert_eq!(
+                f.st.new_offer("último válido".into()).unwrap().lamport,
+                u64::MAX - 1
+            );
+            f.st.lamport_max = clock;
+            f.st.last = Some((5, f.remote.id));
+            let last = f.st.last;
+            f.fake.user_copy("cópia local");
+            f.st.on_local_change(Some(ClipSnapshot {
+                mime: MIME_TEXT_UTF8.into(),
+                text: "cópia local".into(),
+            }));
+            assert_eq!(f.st.last, last, "failed copy cannot claim a new origin");
+            assert_eq!(f.st.lamport_max, clock);
+            assert_eq!(f.st.current, Some(hash_text("cópia local")));
+            assert_eq!(lock(&f.st.status).last_block.as_deref(), Some(EXHAUSTED));
+            for cmd in [
+                ModuleCommand::ClipSend {
+                    text: "envio explícito".into(),
+                    to: Some(f.remote.id),
+                },
+                ModuleCommand::ClipSendCurrent {
+                    to: Some(f.remote.id),
+                },
+            ] {
+                assert!(
+                    matches!(command(&mut f.st, cmd).await, ModuleReply::Error(e) if e == EXHAUSTED)
+                );
+                assert_eq!((f.st.lamport_max, f.st.last), (clock, last));
+            }
+            assert_eq!(f.fake.writes(), 0);
+            assert!(f.st.inbox.is_empty());
+            // Run the actual loop after exhaustion; status/pause/shutdown must still be handled.
+            let (tx, rx) = mpsc::channel(8);
+            let status = f.st.status.clone();
+            let task = tokio::spawn(async move {
+                f.st.event_loop(rx, f.events).await.unwrap();
+                f.st
+            });
+            tx.send(ModuleInput::Paused(true)).await.unwrap();
+            let (reply, response) = oneshot::channel();
+            tx.send(ModuleInput::Command {
+                cmd: ModuleCommand::Status,
+                reply,
+            })
+            .await
+            .unwrap();
+            let response = tokio::time::timeout(Duration::from_secs(2), response)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(
+                matches!(response, ModuleReply::Status(s) if s.last_block.as_deref() == Some(EXHAUSTED))
+            );
+            tx.send(ModuleInput::Shutdown).await.unwrap();
+            let st = task.await.unwrap();
+            assert!(st.paused);
+            assert_eq!((st.lamport_max, st.last), (clock, last));
+            assert_eq!(lock(&status).last_block.as_deref(), Some(EXHAUSTED));
+            // No offer of any timestamp (including MAX or 0) may have escaped.
+            while let Ok(input) = f.remote.rx.try_recv() {
+                assert!(!matches!(
+                    input,
+                    ModuleInput::Reliable {
+                        msg: ModuleMsg::Clip(ClipMsg::Offer(_)),
+                        ..
+                    }
+                ));
+            }
+            st.cmd_tx.send(Cmd::Stop).unwrap();
+            f.worker.await.unwrap();
+        }
+    }
+
+    // Catches reversed tie order and pretending an inbox entry/failed write was locally applied.
+    #[tokio::test]
+    async fn equal_timestamp_tiebreak_and_last() {
+        let low = PeerId([1; 32]);
+        let high = PeerId([2; 32]);
+        for order in [[low, high], [high, low]] {
+            let mut f = Fixture::new(ClipMode::Auto);
+            for from in order {
+                f.st.on_offer(from, offer(10, if from == low { "menor" } else { "maior" }))
+                    .await;
+            }
+            assert_eq!(f.st.last, Some((10, high)));
+            assert_eq!(f.fake.contents().as_deref(), Some("maior"));
+            assert_eq!(f.fake.writes(), if order[0] == low { 2 } else { 1 });
+            assert_eq!(
+                f.st.inbox[0].item.state,
+                if order[0] == low {
+                    DeliveryState::Applied
+                } else {
+                    DeliveryState::Rejected(RejectReason::Stale)
+                }
+            );
+            // Explicit stale apply may change content, but must not roll back ordering.
+            let stale = offer(9, "stale explícito");
+            f.st.on_offer(low, stale.clone()).await;
+            assert!(matches!(
+                f.st.apply_item(stale.id).await,
+                ModuleReply::ClipApplied(DeliveryState::Applied)
+            ));
+            assert_eq!(f.fake.contents().as_deref(), Some("stale explícito"));
+            assert_eq!(f.st.last, Some((10, high)));
+            f.st.on_offer(low, offer(10, "ainda antigo")).await;
+            assert_eq!(f.fake.contents().as_deref(), Some("stale explícito"));
+            assert_eq!(f.st.last, Some((10, high)));
+            f.stop().await;
+        }
+        let mut f = Fixture::new(ClipMode::Auto);
+        f.st.last = Some((5, low));
+        f.fake.fail_writes(true);
+        assert_eq!(
+            f.receive(offer(6, "falha")).await,
+            DeliveryState::Rejected(RejectReason::Locked)
+        );
+        assert_eq!(
+            (f.st.last, f.st.current, f.st.lamport_max),
+            (Some((5, low)), None, 6)
+        );
+        f.fake.fail_writes(false);
+        f.fake.user_copy("mudança concorrente");
+        assert_eq!(
+            f.receive(offer(7, "conflito")).await,
+            DeliveryState::InInbox
+        );
+        assert_eq!(
+            (f.st.last, f.st.current, f.st.lamport_max),
+            (Some((5, low)), None, 7)
+        );
+        let conflicted = f.st.inbox[0].item.id;
+        f.fake.fail_writes(true);
+        assert!(matches!(
+            f.st.apply_item(conflicted).await,
+            ModuleReply::ClipApplied(DeliveryState::Rejected(RejectReason::Locked))
+        ));
+        assert_eq!((f.st.last, f.st.current), (Some((5, low)), None));
+        f.fake.fail_writes(false);
+        f.st.cfg.mode = ClipMode::Manual;
+        let manual = offer(8, "manual");
+        assert_eq!(f.receive(manual.clone()).await, DeliveryState::InInbox);
+        assert_eq!(
+            (f.st.last, f.st.current, f.st.lamport_max),
+            (Some((5, low)), None, 8)
+        );
+        assert!(matches!(
+            f.st.apply_item(manual.id).await,
+            ModuleReply::ClipApplied(DeliveryState::Applied)
+        ));
+        assert_eq!(
+            (f.st.last, f.st.current),
+            (Some((8, f.remote.id)), Some(hash_text("manual")))
+        );
+        assert_eq!(
+            (f.fake.writes(), f.fake.contents().as_deref()),
+            (1, Some("manual"))
+        );
+        f.stop().await;
     }
 }

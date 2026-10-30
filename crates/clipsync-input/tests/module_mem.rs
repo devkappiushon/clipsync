@@ -145,6 +145,11 @@ async fn loopback_counts_every_event_and_orders_percentiles() {
         )
     };
     a.cap.activate(0, 0.25);
+    // This test measures active forwarding, not cancellation of an opening by Deactivated.
+    until("source announced the loopback session", || {
+        hub.sent_count(a.id, b.id) >= 1
+    })
+    .await;
     for i in 0..200u32 {
         match i % 4 {
             0 => a.cap.push(key(30, true)),
@@ -530,11 +535,10 @@ async fn loopback_source_lock_before_activation_never_opens_the_destination() {
         ));
     }
 
-    // Queue the lock before start, followed by an activation and a key that must never leave.
+    // The initial snapshot is locked; queued activation and input must never leave.
     a.cap.session_locked(true);
     a.cap.activate(0, 0.25);
     a.cap.push(key(30, true));
-    a.cap.session_locked(false);
     a.cap.deactivate();
     let reply = command(
         &a.tx,

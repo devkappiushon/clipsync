@@ -5,7 +5,7 @@ use clipsync_proto::{InputEvent, mono_us};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use tokio::sync::{Mutex as AsyncMutex, mpsc};
+use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -15,6 +15,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 /// What the handle shares with the capture besides zones and barriers.
 #[derive(Default)]
 struct CapState {
+    lifecycle: Mutex<Option<tokio::sync::watch::Sender<super::CaptureLifecycle>>>,
     hooks: AtomicBool,
     started: AtomicBool,
     starts: AtomicUsize,
@@ -23,6 +24,7 @@ struct CapState {
     released_at: Mutex<Vec<(usize, f32)>>,
     begins: Mutex<Vec<(usize, f32)>>,
     cannot_begin: AtomicBool,
+    screen_locked: AtomicBool,
 }
 
 pub struct FakeCapture {
@@ -30,7 +32,11 @@ pub struct FakeCapture {
     zones: Arc<Mutex<Vec<Zone>>>,
     barriers: Arc<Mutex<Vec<BarrierSpec>>>,
     src: Arc<AsyncMutex<mpsc::UnboundedReceiver<CaptureEvent>>>,
-    forwarder: Option<JoinHandle<()>>,
+    /// Configured fake mode has no external injector; keep its source alive until adapter drop.
+    _source_keepalive: Option<mpsc::UnboundedSender<CaptureEvent>>,
+    forwarder: Option<JoinHandle<Vec<CaptureEvent>>>,
+    stop_forwarder: Option<oneshot::Sender<()>>,
+    lifecycle: Vec<CaptureEvent>,
     released: Arc<AtomicUsize>,
 }
 
@@ -44,6 +50,23 @@ pub struct FakeCaptureHandle {
 }
 
 impl FakeCapture {
+    /// The configured fake has known unlocked state and no external event injector.
+    /// The controlled constructor below deliberately retains its handle-drop/EOF behavior.
+    pub(crate) fn standalone(zones: Vec<Zone>) -> Self {
+        let (mut cap, handle) = Self::new(zones.clone());
+        handle.enable_lifecycle(super::CaptureLifecycle {
+            revision: 1,
+            invalidation_generation: 0,
+            valid: true,
+            session_locked: Some(false),
+            desktop_available: Some(true),
+            zones,
+            terminal_error: None,
+        });
+        cap._source_keepalive = Some(handle.tx);
+        cap
+    }
+
     pub fn new(zones: Vec<Zone>) -> (Self, FakeCaptureHandle) {
         let (tx, rx) = mpsc::unbounded_channel();
         let released = Arc::new(AtomicUsize::new(0));
@@ -56,7 +79,10 @@ impl FakeCapture {
                 zones: zones.clone(),
                 barriers: barriers.clone(),
                 src: Arc::new(AsyncMutex::new(rx)),
+                _source_keepalive: None,
                 forwarder: None,
+                stop_forwarder: None,
+                lifecycle: Vec::new(),
                 released: released.clone(),
             },
             FakeCaptureHandle {
@@ -71,6 +97,17 @@ impl FakeCapture {
 }
 
 impl FakeCaptureHandle {
+    /// Seleciona o canal independente antes de iniciar o módulo.
+    pub fn enable_lifecycle(&self, snapshot: super::CaptureLifecycle) {
+        *lock(&self.cap.lifecycle) = Some(tokio::sync::watch::channel(snapshot).0);
+    }
+    /// Publica somente estado, independentemente da fila de dados.
+    pub fn publish_lifecycle(&self, snapshot: super::CaptureLifecycle) {
+        if let Some(tx) = lock(&self.cap.lifecycle).as_ref() {
+            tx.send_replace(snapshot);
+        }
+    }
+
     pub fn activate(&self, barrier: usize, pos: f32) {
         let _ = self.tx.send(CaptureEvent::Activated {
             barrier,
@@ -98,11 +135,29 @@ impl FakeCaptureHandle {
     /// The monitors changed: `known_zones()` answers with `z` from now on and the module is told.
     pub fn set_zones(&self, z: Vec<Zone>) {
         *lock(&self.zones) = z.clone();
-        let _ = self.tx.send(CaptureEvent::ZonesChanged(z));
+        if let Some(tx) = lock(&self.cap.lifecycle).as_ref() {
+            tx.send_modify(|s| {
+                s.zones = z;
+                s.revision = s.revision.saturating_add(1);
+            });
+        } else {
+            let _ = self.tx.send(CaptureEvent::ZonesChanged(z));
+        }
     }
     /// This machine's screen locked (`true`) or came back.
     pub fn session_locked(&self, on: bool) {
-        let _ = self.tx.send(CaptureEvent::SessionLocked(on));
+        self.cap.screen_locked.store(on, Ordering::SeqCst);
+        if let Some(tx) = lock(&self.cap.lifecycle).as_ref() {
+            tx.send_modify(|s| {
+                s.revision = s.revision.saturating_add(1);
+                if on {
+                    s.invalidation_generation = s.invalidation_generation.saturating_add(1);
+                }
+                s.session_locked = Some(on);
+            });
+        } else if self.cap.started.load(Ordering::SeqCst) {
+            let _ = self.tx.send(CaptureEvent::SessionLocked(on));
+        }
     }
     /// The barriers the module installed last, by `start` or `set_barriers`.
     pub fn barriers(&self) -> Vec<BarrierSpec> {
@@ -151,6 +206,9 @@ impl FakeCaptureHandle {
 
 #[async_trait]
 impl CaptureAdapter for FakeCapture {
+    fn lifecycle_receiver(&self) -> Option<tokio::sync::watch::Receiver<super::CaptureLifecycle>> {
+        lock(&self.cap.lifecycle).as_ref().map(|tx| tx.subscribe())
+    }
     fn name(&self) -> &'static str {
         "fake"
     }
@@ -164,21 +222,38 @@ impl CaptureAdapter for FakeCapture {
         &mut self,
         barriers: &[BarrierSpec],
     ) -> Result<mpsc::Receiver<CaptureEvent>, InputError> {
+        if self.forwarder.is_some() || self.cap.starts.load(Ordering::SeqCst) > 0 {
+            self.stop().await?;
+        }
         *lock(&self.barriers) = barriers.to_vec();
         self.cap.started.store(true, Ordering::SeqCst);
         self.cap.starts.fetch_add(1, Ordering::SeqCst);
-        if let Some(h) = self.forwarder.take() {
-            h.abort();
-        }
         let (tx, rx) = mpsc::channel(4096);
+        let (stop_tx, mut stop_rx) = oneshot::channel();
+        self.stop_forwarder = Some(stop_tx);
         let src = self.src.clone();
+        let mut initial = std::mem::take(&mut self.lifecycle);
+        if lock(&self.cap.lifecycle).is_none() {
+            initial.push(CaptureEvent::SessionLocked(
+                self.cap.screen_locked.load(Ordering::SeqCst),
+            ));
+        }
         self.forwarder = Some(tokio::spawn(async move {
             let mut src = src.lock().await;
-            while let Some(ev) = src.recv().await {
-                if tx.send(ev).await.is_err() {
-                    break;
+            let mut initial = std::collections::VecDeque::from(initial);
+            loop {
+                let ev = if let Some(ev) = initial.pop_front() {
+                    ev
+                } else {
+                    tokio::select! { biased; _ = &mut stop_rx => break, ev = src.recv() => match ev { Some(ev) => ev, None => break } }
+                };
+                tokio::select! {
+                    biased;
+                    _ = &mut stop_rx => { initial.push_front(ev); break; }
+                    permit = tx.reserve() => match permit { Ok(permit) => permit.send(ev), Err(_) => { initial.push_front(ev); break; } }
                 }
             }
+            initial.into_iter().filter(is_lifecycle).collect()
         }));
         Ok(rx)
     }
@@ -218,11 +293,29 @@ impl CaptureAdapter for FakeCapture {
     }
     async fn stop(&mut self) -> Result<(), InputError> {
         self.cap.started.store(false, Ordering::SeqCst);
-        if let Some(h) = self.forwarder.take() {
-            h.abort();
+        if let Some(stop) = self.stop_forwarder.take() {
+            let _ = stop.send(());
+        }
+        if let Some(h) = self.forwarder.take()
+            && let Ok(pending) = h.await
+        {
+            self.lifecycle.extend(pending);
+        }
+        let mut src = self.src.lock().await;
+        while let Ok(ev) = src.try_recv() {
+            if is_lifecycle(&ev) {
+                self.lifecycle.push(ev);
+            }
         }
         Ok(())
     }
+}
+
+fn is_lifecycle(ev: &CaptureEvent) -> bool {
+    !matches!(
+        ev,
+        CaptureEvent::Input { .. } | CaptureEvent::Activated { .. }
+    )
 }
 
 #[derive(Default)]
@@ -326,5 +419,75 @@ impl EmulateAdapter for FakeEmulate {
     async fn stop(&mut self) -> Result<(), InputError> {
         lock(&self.st).started = false;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod standalone_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn standalone_has_explicit_snapshot_before_start_and_stop_joins_each_producer() {
+        let mut cap = FakeCapture::standalone(vec![crate::fake_zone()]);
+        let state = cap
+            .lifecycle_receiver()
+            .expect("standalone must publish known fake state before start");
+        assert!(state.borrow().allows_capture());
+        assert_eq!(state.borrow().zones.len(), 1);
+        for _ in 0..2 {
+            let mut rx = cap.start(&[]).await.unwrap();
+            assert!(state.borrow().allows_capture());
+            assert!(
+                tokio::time::timeout(Duration::from_millis(25), rx.recv())
+                    .await
+                    .is_err(),
+                "quiet standalone must stay alive without an external injector"
+            );
+            cap.stop().await.unwrap();
+            assert!(cap.forwarder.is_none(), "stop must join the owned producer");
+            assert!(cap.stop_forwarder.is_none());
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), rx.recv())
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn standalone_source_does_not_eof_without_an_injector() {
+        let mut cap = FakeCapture::standalone(vec![crate::fake_zone()]);
+        let mut rx = cap.start(&[]).await.unwrap();
+        let ended = tokio::time::timeout(Duration::from_millis(25), async {
+            while rx.recv().await.is_some() {}
+        })
+        .await;
+        cap.stop().await.unwrap();
+        assert!(
+            ended.is_err(),
+            "standalone source closed when its injector was dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn controlled_fake_still_reaches_eof_when_its_handle_is_dropped() {
+        let (mut cap, handle) = FakeCapture::new(vec![crate::fake_zone()]);
+        drop(handle);
+        let mut rx = cap.start(&[]).await.unwrap();
+        assert!(matches!(
+            rx.recv().await,
+            Some(CaptureEvent::SessionLocked(false))
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), rx.recv())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        cap.stop().await.unwrap();
+        assert!(cap.forwarder.is_none());
     }
 }

@@ -2,6 +2,7 @@
 //! the links in `layout.toml` stay installed while the agent runs. Crossing one opens a control
 //! session on the linked peer; pushing the cursor back through the entry edge, a refusal, a
 //! pause, the lock or the peer going down closes it and gives the cursor back.
+use crate::adapter::lifecycle::LifecycleCursor;
 use crate::adapter::{
     BarrierSpec, CaptureAdapter, CaptureEvent, Hotkey, InputError, Zone, same_zones,
 };
@@ -9,14 +10,61 @@ use crate::config::{map_pos, zone_ref};
 use crate::layout::trim_dead_corner;
 use crate::msg;
 use clipsync_proto::{
-    Edge, EventId, InputDatagram, InputEvent, InputMsg, MAX_EVENTS_PER_DATAGRAM, ModuleHost,
-    ModuleMsg, PeerId, RejectReason, SendError, ZoneInfo,
+    Edge, EventId, InputDatagram, InputEvent, InputMsg, ModuleHost, ModuleMsg, PeerId,
+    RejectReason, SendError, ZoneInfo,
 };
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
+
+/// Each owner observes host invalidations independently; never share a watch cursor.
+pub(crate) struct HostCursor {
+    rx: Option<tokio::sync::watch::Receiver<clipsync_proto::HostLifecycle>>,
+    pub snapshot: clipsync_proto::HostLifecycle,
+}
+impl HostCursor {
+    pub fn new(host: &dyn ModuleHost) -> Self {
+        let mut rx = host.lifecycle_receiver();
+        let mut snapshot = rx.as_mut().map_or(
+            clipsync_proto::HostLifecycle {
+                paused: host.paused(),
+                pause_generation: 0,
+                stopped: false,
+            },
+            |r| *r.borrow_and_update(),
+        );
+        snapshot.stopped |= rx.as_ref().is_some_and(|r| r.has_changed().is_err())
+            || snapshot.pause_generation == u64::MAX;
+        Self { rx, snapshot }
+    }
+    pub fn observed(&self) -> bool {
+        self.rx.is_some()
+    }
+    /// (notification, invalidation). Closed observed sources stay terminal.
+    pub fn refresh(&mut self) -> (bool, bool) {
+        let Some(rx) = &mut self.rx else {
+            return (false, false);
+        };
+        let changed = rx.has_changed().unwrap_or(true);
+        let mut next = *rx.borrow_and_update();
+        next.stopped |=
+            self.snapshot.stopped || rx.has_changed().is_err() || next.pause_generation == u64::MAX;
+        let invalidated = next.pause_generation != self.snapshot.pause_generation;
+        let changed = changed || next != self.snapshot;
+        self.snapshot = next;
+        (changed, invalidated)
+    }
+    pub async fn changed(&mut self) {
+        match &mut self.rx {
+            Some(rx) => {
+                let _ = rx.changed().await;
+            }
+            None => std::future::pending().await,
+        }
+    }
+}
 
 /// Pushing this far past the entry edge brings the cursor back; smaller moves are jitter.
 pub(crate) const RETURN_SLACK_PX: f32 = 8.0;
@@ -93,6 +141,7 @@ pub(crate) enum Note {
     Ignored,
     /// The adapter cannot swap barriers in place: the module restarts the capture.
     Restart,
+    OfferSent(PeerId, clipsync_proto::OfferState),
 }
 
 pub(crate) struct Engine {
@@ -152,6 +201,7 @@ impl VirtualCursor {
 }
 
 struct Session {
+    connection: u64,
     peer: PeerId,
     id: u32,
     seq: u32,
@@ -163,8 +213,17 @@ struct Session {
 struct PendingSwitch {
     peer: PeerId,
     reply: oneshot::Sender<Result<(), String>>,
-    until: Instant,
+    until: Option<Instant>,
 }
+
+use crate::network::Sending;
+struct Opening {
+    session: Session,
+    send: Sending,
+    started: bool,
+    begin: Option<(usize, f32)>,
+}
+const OPEN_BUFFER: usize = 256;
 
 pub(crate) fn new_session() -> u32 {
     let b = EventId::random().0;
@@ -197,15 +256,23 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
         peer_zones,
     } = engine;
     let specs: Vec<BarrierSpec> = targets.iter().map(|t| t.spec.clone()).collect();
-    let mut rx = match cap.start(&specs).await {
-        Ok(rx) => Some(rx),
-        Err(e) => {
-            let text = match e {
-                InputError::PermissionDenied => msg::PORTAL_DENIED.to_owned(),
-                other => msg::adapter_failed(&other.to_string()),
-            };
-            let _ = notes.send(Note::Block(text));
-            None
+    let mut authority = HostCursor::new(host.as_ref());
+    authority.refresh();
+    let paused = paused || host.paused() || authority.snapshot.paused || authority.snapshot.stopped;
+    let mut lifecycle = LifecycleCursor::new(cap.as_ref());
+    let mut rx = if paused {
+        None
+    } else {
+        match cap.start(&specs).await {
+            Ok(rx) => Some(rx),
+            Err(e) => {
+                let text = match e {
+                    InputError::PermissionDenied => msg::PORTAL_DENIED.to_owned(),
+                    other => msg::adapter_failed(&other.to_string()),
+                };
+                let _ = notes.send(Note::Block(text));
+                None
+            }
         }
     };
     let last_zones = cap.known_zones();
@@ -222,60 +289,167 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
         notes,
         locked,
         paused,
-        session_locked: false,
+        session_locked: true,
+        snapshot_ready: false,
         dead_corner_px,
         peer_zones,
         last_zones,
         session: None,
+        opening: None,
+        closing: None,
+        reset_rx: false,
+        available: rx.is_some(),
         pending: None,
         queue: VecDeque::new(),
     };
-    loop {
-        let ev = if let Some(e) = st.queue.pop_front() {
-            Some(e)
-        } else {
-            tokio::select! {
-                e = async { match rx.as_mut() { Some(r) => r.recv().await, None => None } },
-                    if rx.is_some() =>
-                {
-                    match e {
-                        Some(e) => Some(e),
-                        None => {
-                            // The adapter is gone; wait for Stop so the module can rebuild.
-                            rx = None;
-                            st.notes(Note::Block(msg::adapter_failed("captura encerrada")));
-                            st.end_session(true).await;
-                            continue;
-                        }
+    'capture: loop {
+        // Stop wins even if a full data queue left the main module blocked in emulation.
+        if !st.reconcile_host(&mut authority).await {
+            break;
+        }
+        lifecycle.refresh();
+        st.reconcile_lifecycle(&lifecycle).await;
+        if st.reset_rx {
+            st.reset_rx = false;
+            st.available = false;
+            // Closing admission wakes producers blocked in send, so stop can join them.
+            // Keep queued lifecycle signals until the joined generation is drained below.
+            if let Some(old) = rx.as_mut() {
+                old.close();
+            }
+            let stopped = st.cap.stop().await;
+            if let Some(mut old) = rx.take() {
+                // Producer is stopped before discarding its activation generation. Lifecycle
+                // notifications survive the boundary; old input/activation never does.
+                while let Ok(ev) = old.try_recv() {
+                    if !matches!(
+                        ev,
+                        CaptureEvent::Input { .. } | CaptureEvent::Activated { .. }
+                    ) {
+                        st.event(ev).await;
                     }
-                }
-                c = ctl.recv() => {
-                    match c {
-                        Some(Ctl::Stop) | None => break,
-                        Some(c) => st.control(c).await,
-                    }
-                    continue;
-                }
-                _ = zones_tick.tick() => {
-                    st.poll_zones();
-                    continue;
-                }
-                () = async { if let Some(p) = &st.pending { tokio::time::sleep_until(p.until).await } },
-                    if st.pending.is_some() =>
-                {
-                    if let Some(p) = st.pending.take() {
-                        let _ = p.reply.send(Ok(()));
-                    }
-                    continue;
                 }
             }
-        };
-        if let Some(ev) = ev {
-            st.event(ev, rx.as_mut()).await;
+            lifecycle.acknowledge_cleanup();
+            st.snapshot_ready = false;
+            st.reconcile_lifecycle(&lifecycle).await;
+            // stop/join may have yielded while the caller cancelled or the module paused.
+            // Observe those changes before installing another producer. This adapter is stopped:
+            // retarget only updates the next start, and Switch fails via `available = false`.
+            loop {
+                match ctl.try_recv() {
+                    Ok(Ctl::Stop) | Err(mpsc::error::TryRecvError::Disconnected) => break 'capture,
+                    Ok(c) => st.control(c).await,
+                    Err(mpsc::error::TryRecvError::Empty) => {
+                        if st.pending.as_ref().is_some_and(|p| p.reply.is_closed()) {
+                            st.end_session(true).await;
+                            // Recheck controls that arrived while releasing the cancelled attempt.
+                            continue;
+                        }
+                        break;
+                    }
+                }
+            }
+            if !st.reconcile_host(&mut authority).await {
+                break;
+            }
+            st.reset_rx = false;
+            if let Err(e) = stopped {
+                st.notes(Note::Block(msg::adapter_failed(&e.to_string())));
+                st.end_session(true).await;
+                st.reset_rx = false;
+            } else if !st.paused
+                && !st.host.paused()
+                && !st.locked
+                && !st.targets.is_empty()
+                && !lifecycle
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|s| s.terminal_error.is_some())
+            {
+                // Locked screens need a fresh producer to observe unlock, with no crossing barriers.
+                let observing_lock = lifecycle.snapshot.as_ref().map_or(st.session_locked, |s| {
+                    s.session_locked == Some(true) || s.desktop_available == Some(false)
+                });
+                let specs: Vec<_> = if observing_lock {
+                    Vec::new()
+                } else {
+                    st.targets.iter().map(|t| t.spec.clone()).collect()
+                };
+                // O lock herdado continua autoritativo no produtor sem barreiras.
+                // Seu primeiro unlock exige outro start; nunca libera este rx para ativar.
+                st.snapshot_ready = observing_lock && lifecycle.snapshot.is_none();
+                st.session_locked = true;
+                match st.cap.start(&specs).await {
+                    Ok(new_rx) => {
+                        rx = Some(new_rx);
+                        lifecycle.reacquire(st.cap.as_ref());
+                        st.reconcile_lifecycle(&lifecycle).await;
+                        st.available = true;
+                    }
+                    Err(e) => st.notes(Note::Block(msg::adapter_failed(&e.to_string()))),
+                }
+            }
+        }
+        if st.reset_rx {
+            continue;
+        }
+        let switch_until = st.pending.as_ref().and_then(|p| p.until);
+        tokio::select! {
+            biased;
+            c = ctl.recv() => {
+                match c { Some(Ctl::Stop) | None => break, Some(c) => st.control(c).await }
+            }
+            () = async { if let Some(p) = st.pending.as_mut() { p.reply.closed().await; } }, if st.pending.is_some() => { st.end_session(true).await; }
+            () = authority.changed() => continue,
+            () = lifecycle.changed() => continue,
+            _ = async { if let Some(f) = &mut st.closing { let _ = f.await; } }, if st.closing.is_some() => { st.closing = None; }
+            ev = async { match rx.as_mut() { Some(r) => r.recv().await, None => None } }, if rx.is_some() => {
+                match ev {
+                    Some(ev) => {
+                        if !st.reconcile_host(&mut authority).await { break; }
+                        lifecycle.refresh();
+                        st.reconcile_lifecycle(&lifecycle).await;
+                        if !st.reset_rx { st.event(ev).await; }
+                    },
+                    None => {
+                        st.notes(Note::Block(msg::adapter_failed("captura encerrada")));
+                        st.end_session(true).await;
+                        st.reset_rx = true;
+                    }
+                }
+            }
+            result = async {
+                if let Some(o) = &mut st.opening { o.started = true; o.send.as_mut().await } else { Ok(()) }
+            }, if st.opening.is_some() && st.closing.is_none() => {
+                if !st.reconcile_host(&mut authority).await { break; }
+                lifecycle.refresh();
+                st.reconcile_lifecycle(&lifecycle).await;
+                if !st.reset_rx { st.opened(result).await; }
+            }
+            _ = std::future::ready(()), if st.session.is_some() && !st.queue.is_empty() => {
+                if !st.reconcile_host(&mut authority).await { break; }
+                lifecycle.refresh();
+                st.reconcile_lifecycle(&lifecycle).await;
+                if st.reset_rx { continue; }
+                if let Some(CaptureEvent::Input { t_mono_us, ev }) = st.queue.pop_front() { st.forward(t_mono_us, ev).await; }
+            }
+            _ = zones_tick.tick() => st.poll_zones(),
+            () = async { if let Some(until) = switch_until { tokio::time::sleep_until(until).await; } },
+                if switch_until.is_some() => {
+                if let Some(p) = st.pending.take() { let _ = p.reply.send(Ok(())); }
+            }
         }
     }
     st.end_session(true).await;
+    if let Some(old) = rx.as_mut() {
+        old.close();
+    }
     let _ = st.cap.stop().await;
+    drop(rx);
+    if let Some(closing) = st.closing.take() {
+        let _ = closing.await;
+    }
     st.cap
 }
 
@@ -288,16 +462,68 @@ struct Loop {
     paused: bool,
     /// This machine's screen is locked: no barrier may open a session (§13.6 item 6).
     session_locked: bool,
+    snapshot_ready: bool,
     dead_corner_px: u32,
     peer_zones: HashMap<PeerId, Vec<ZoneInfo>>,
     /// The zones the module was last told about, to see a change by content.
     last_zones: Vec<Zone>,
     session: Option<Session>,
+    opening: Option<Opening>,
+    closing: Option<Sending>,
+    reset_rx: bool,
+    available: bool,
     pending: Option<PendingSwitch>,
     queue: VecDeque<CaptureEvent>,
 }
 
 impl Loop {
+    async fn reconcile_host(&mut self, authority: &mut HostCursor) -> bool {
+        let (_, invalidated) = authority.refresh();
+        let state = authority.snapshot;
+        if authority.observed() && (invalidated || state.paused != self.paused || state.stopped) {
+            self.paused = state.paused || state.stopped;
+            self.end_session(true).await;
+            self.reset_rx = true;
+        }
+        // Losing/replacing the destination also cancels while the module cannot consume PeerDown.
+        if self.current().is_some_and(|s| {
+            self.host
+                .peer_input_context(s.peer)
+                .is_none_or(|c| !c.connected || c.connection != s.connection)
+        }) {
+            self.end_session(false).await;
+        }
+        !state.stopped
+    }
+
+    async fn reconcile_lifecycle(&mut self, lifecycle: &LifecycleCursor) {
+        let Some(snapshot) = lifecycle.snapshot.as_ref() else {
+            return;
+        };
+        let blocked = !snapshot.allows_capture();
+        if lifecycle.pending_invalidation {
+            self.session_locked = true;
+            self.end_session(true).await;
+            self.queue.clear();
+            self.reset_rx = true;
+        }
+        if self.snapshot_ready && self.session_locked != blocked {
+            self.reset_rx = true;
+        }
+        self.session_locked = blocked;
+        self.snapshot_ready = true;
+        if blocked {
+            self.end_session(true).await;
+        }
+        if !same_zones(&self.last_zones, &snapshot.zones) && !snapshot.zones.is_empty() {
+            self.last_zones = snapshot.zones.clone();
+            self.notes(Note::Zones(snapshot.zones.clone()));
+        }
+        if let Some(error) = snapshot.terminal_error {
+            self.notes(Note::Block(msg::adapter_failed(error)));
+        }
+    }
+
     fn notes(&self, n: Note) {
         let _ = self.notes.send(n);
     }
@@ -323,22 +549,99 @@ impl Loop {
 
     /// Like `end_session`, but the cursor comes back at `(barrier, pos)` when given.
     async fn close_session(&mut self, send_leave: bool, back_at: Option<(usize, f32)>) {
-        let Some(s) = self.session.take() else { return };
-        if send_leave {
-            let m = ModuleMsg::Input(InputMsg::Leave { session: s.id });
-            if let Err(e) = self.host.send_reliable(s.peer, m).await {
-                tracing::debug!("leave not sent: {e}");
-            }
+        let opening = self.opening.take();
+        let had_opening = opening.is_some();
+        let s = self.session.take();
+        if s.is_none() && !had_opening {
+            return;
         }
+        // Release the physical device before cancelling or polling any network work.
         match back_at {
             Some((barrier, pos)) => {
-                if let Err(e) = self.cap.release_at(barrier, pos).await {
-                    tracing::debug!("release_at failed: {e}");
-                }
+                let _ = self.cap.release_at(barrier, pos).await;
             }
             None => self.release().await,
         }
+        let cancelled = opening.map(|o| (o.session, o.started)); // drops the send future now
+        let attempt = s.map(|s| (s, send_leave)).or(cancelled);
+        self.queue.clear();
+        self.reset_rx = true;
+        if let Some(p) = self.pending.take() {
+            let _ = p.reply.send(Err(msg::SESSION_CANCELLED.to_owned()));
+        }
         self.notes(Note::Active(None));
+        if let Some((s, true)) = attempt {
+            let host = self.host.clone();
+            let release_all = self.session_locked;
+            // At most one cleanup; a following Enter is never polled before it completes.
+            self.closing = Some(Box::pin(async move {
+                tokio::time::timeout(crate::network::SEND_WAIT, async move {
+                    host.send_reliable_on(
+                        s.peer,
+                        s.connection,
+                        ModuleMsg::Input(InputMsg::Leave { session: s.id }),
+                    )
+                    .await?;
+                    if release_all {
+                        host.send_reliable_on(
+                            s.peer,
+                            s.connection,
+                            ModuleMsg::Input(InputMsg::ReleaseAll { session: s.id }),
+                        )
+                        .await?;
+                    }
+                    Ok(())
+                })
+                .await
+                .unwrap_or_else(|_| {
+                    Err(SendError::Transport(
+                        "input cleanup deadline exceeded".into(),
+                    ))
+                })
+            }));
+        }
+    }
+
+    fn current(&self) -> Option<&Session> {
+        self.session
+            .as_ref()
+            .or_else(|| self.opening.as_ref().map(|o| &o.session))
+    }
+
+    async fn opened(&mut self, result: Result<(), SendError>) {
+        if let Err(e) = result {
+            let text = send_error_text(&e);
+            self.notes(Note::Block(text));
+            self.end_session(true).await;
+            return;
+        }
+        if self.host.paused()
+            || self.opening.as_ref().is_some_and(|o| {
+                self.host
+                    .peer_input_context(o.session.peer)
+                    .is_none_or(|c| !c.connected || c.connection != o.session.connection)
+            })
+        {
+            self.end_session(true).await;
+            return;
+        }
+        let Some(o) = self.opening.take() else {
+            return;
+        };
+        let peer = o.session.peer;
+        self.session = Some(o.session);
+        if let Some((barrier, pos)) = o.begin
+            && let Err(e) = self.cap.begin(barrier, pos).await
+        {
+            self.notes(Note::Block(msg::adapter_failed(&e.to_string())));
+            self.end_session(true).await;
+            return;
+        }
+        if let Some(p) = self.pending.as_mut() {
+            p.until = Some(Instant::now() + SWITCH_GRACE);
+        }
+        self.notes(Note::Active(Some(peer)));
+        self.notes(Note::Event(msg::control_started(&self.peer_name(peer))));
     }
 
     /// Length in px of `edge` of the peer's monitor `monitor`, when the peer told us.
@@ -416,26 +719,42 @@ impl Loop {
                 pos,
             },
         });
-        if let Err(e) = self.host.send_reliable(t.peer, m).await {
-            self.release().await;
-            let text = send_error_text(&e);
-            self.notes(Note::Block(text.clone()));
-            return Err(text);
-        }
-        self.session = Some(Session {
-            peer: t.peer,
-            id,
-            seq: 0,
-            cursor: (!v3).then(|| VirtualCursor::new(t.peer_edge)),
-            target: t.clone(),
+        let connection = self
+            .host
+            .peer_input_context(t.peer)
+            .filter(|c| c.connected)
+            .ok_or_else(|| msg::PEER_OFFLINE.to_owned())?
+            .connection;
+        let host = self.host.clone();
+        let peer = t.peer;
+        self.opening = Some(Opening {
+            session: Session {
+                peer,
+                connection,
+                id,
+                seq: 0,
+                cursor: (!v3).then(|| VirtualCursor::new(t.peer_edge)),
+                target: t.clone(),
+            },
+            send: Box::pin(async move {
+                tokio::time::timeout(
+                    crate::network::SEND_WAIT,
+                    host.send_reliable_on(peer, connection, m),
+                )
+                .await
+                .unwrap_or_else(|_| {
+                    Err(SendError::Transport(
+                        "input opening deadline exceeded".into(),
+                    ))
+                })
+            }),
+            started: false,
+            begin: None,
         });
-        let name = self.peer_name(t.peer);
-        self.notes(Note::Active(Some(t.peer)));
-        self.notes(Note::Event(msg::control_started(&name)));
         Ok(())
     }
 
-    async fn event(&mut self, ev: CaptureEvent, rx: Option<&mut mpsc::Receiver<CaptureEvent>>) {
+    async fn event(&mut self, ev: CaptureEvent) {
         match ev {
             CaptureEvent::Activated { barrier, pos, .. } => {
                 if self.locked || self.paused || self.session_locked {
@@ -458,52 +777,30 @@ impl Loop {
                 let _ = self.open(&t, dest).await;
             }
             CaptureEvent::Input { t_mono_us, ev } => {
+                if self.opening.is_some() {
+                    if self.queue.len() == OPEN_BUFFER {
+                        self.notes(Note::Block(msg::OPEN_BUFFER_FULL.to_owned()));
+                        self.end_session(true).await;
+                    } else {
+                        self.queue.push_back(CaptureEvent::Input { t_mono_us, ev });
+                    }
+                    return;
+                }
                 if self.session.is_none() {
                     return;
                 }
-                let mut events = vec![ev];
-                if let Some(rx) = rx {
-                    while events.len() < MAX_EVENTS_PER_DATAGRAM {
-                        match rx.try_recv() {
-                            Ok(CaptureEvent::Input { ev, .. }) => events.push(ev),
-                            Ok(other) => {
-                                self.queue.push_back(other);
-                                break;
-                            }
-                            Err(_) => break,
-                        }
+                if self.queue.is_empty() {
+                    self.forward(t_mono_us, ev).await;
+                } else {
+                    let oldest = self.queue.pop_front();
+                    self.queue.push_back(CaptureEvent::Input { t_mono_us, ev });
+                    if let Some(CaptureEvent::Input { t_mono_us, ev }) = oldest {
+                        self.forward(t_mono_us, ev).await;
                     }
-                }
-                let mut back = false;
-                let Some(s) = self.session.as_mut() else {
-                    return;
-                };
-                if let Some(cursor) = s.cursor.as_mut() {
-                    for e in &events {
-                        if let InputEvent::Motion { dx, dy } = e {
-                            back |= cursor.step(*dx, *dy);
-                        }
-                    }
-                }
-                let dg = InputDatagram {
-                    session: s.id,
-                    seq: s.seq,
-                    t_mono_us,
-                    events,
-                };
-                s.seq = s.seq.wrapping_add(1);
-                let peer = s.peer;
-                if let Err(e) = self.host.send_datagram(peer, dg) {
-                    tracing::warn!("datagram not sent: {e}");
-                }
-                if back {
-                    let name = self.peer_name(peer);
-                    self.end_session(true).await;
-                    self.notes(Note::Event(msg::returned_from(&name)));
                 }
             }
             CaptureEvent::Deactivated => {
-                if self.session.is_some() {
+                if self.current().is_some() {
                     self.end_session(true).await;
                 }
             }
@@ -519,6 +816,10 @@ impl Loop {
                 }
             }
             CaptureEvent::SessionLocked(on) => {
+                if self.snapshot_ready && self.session_locked != on {
+                    self.reset_rx = true;
+                }
+                self.snapshot_ready = true;
                 self.session_locked = on;
                 if on {
                     self.close_for_lock().await;
@@ -528,25 +829,47 @@ impl Loop {
         }
     }
 
+    async fn forward(&mut self, t_mono_us: u64, ev: InputEvent) {
+        let events = vec![ev];
+        let mut back = false;
+        let Some(s) = self.session.as_mut() else {
+            return;
+        };
+        if let Some(cursor) = s.cursor.as_mut() {
+            for e in &events {
+                if let InputEvent::Motion { dx, dy } = e {
+                    back |= cursor.step(*dx, *dy);
+                }
+            }
+        }
+        let dg = InputDatagram {
+            session: s.id,
+            seq: s.seq,
+            t_mono_us,
+            events,
+        };
+        s.seq = s.seq.wrapping_add(1);
+        let peer = s.peer;
+        if let Err(e) = self.host.send_datagram(peer, dg) {
+            tracing::warn!("datagram not sent: {e}");
+        }
+        if back {
+            let name = self.peer_name(peer);
+            self.end_session(true).await;
+            self.notes(Note::Event(msg::returned_from(&name)));
+        }
+    }
+
     /// This machine's screen locked: `ReleaseAll` and `Leave` to the destination, cursor back
     /// (§13.6 item 6).
     async fn close_for_lock(&mut self) {
-        let Some(s) = &self.session else { return };
-        let m = ModuleMsg::Input(InputMsg::ReleaseAll { session: s.id });
-        if let Err(e) = self.host.send_reliable(s.peer, m).await {
-            tracing::debug!("release-all not sent: {e}");
-        }
         self.end_session(true).await;
     }
 
     async fn control(&mut self, c: Ctl) {
         match c {
             Ctl::Returned { from, session, pos } => {
-                let Some(s) = self
-                    .session
-                    .as_ref()
-                    .filter(|s| s.peer == from && s.id == session)
-                else {
+                let Some(s) = self.current().filter(|s| s.peer == from && s.id == session) else {
                     self.notes(Note::Ignored);
                     return;
                 };
@@ -573,8 +896,7 @@ impl Loop {
                 reason,
             } => {
                 if self
-                    .session
-                    .as_ref()
+                    .current()
                     .is_some_and(|s| s.peer == from && s.id == session)
                 {
                     // The peer refused: no `Leave`, just the cursor back.
@@ -594,32 +916,48 @@ impl Loop {
                 self.peer_zones.insert(peer, zones);
             }
             Ctl::Retarget(targets) => {
+                if self
+                    .current()
+                    .is_some_and(|s| !targets.iter().any(|t| same_barrier(t, &s.target)))
+                {
+                    self.end_session(true).await;
+                }
                 self.targets = targets;
                 let specs: Vec<BarrierSpec> = self.targets.iter().map(|t| t.spec.clone()).collect();
-                if let Err(e) = self.cap.set_barriers(&specs).await {
+                if self.available
+                    && let Err(e) = self.cap.set_barriers(&specs).await
+                {
                     tracing::debug!("set_barriers failed: {e}");
                     self.notes(Note::Restart);
                 }
             }
             Ctl::Home => {
-                if self.session.is_some() {
+                if self.current().is_some() {
                     self.end_session(true).await;
                 }
             }
             Ctl::Lock(on) => {
                 self.locked = on;
+                if !on || self.session_locked {
+                    self.reset_rx = true;
+                }
                 if on {
                     self.end_session(true).await;
                 }
             }
             Ctl::Paused(on) => {
+                // Queued compatibility values can be older than the independent authority.
+                if self.host.lifecycle_receiver().is_some() {
+                    return;
+                }
                 self.paused = on;
+                self.reset_rx = true;
                 if on {
                     self.end_session(true).await;
                 }
             }
             Ctl::Rejected { from, reason } => {
-                if self.session.as_ref().is_some_and(|s| s.peer == from) {
+                if self.current().is_some_and(|s| s.peer == from) {
                     self.end_session(false).await;
                     self.notes(Note::Block(reason.pt().to_owned()));
                 }
@@ -630,7 +968,7 @@ impl Loop {
                 }
             }
             Ctl::PeerDown(id) => {
-                if self.session.as_ref().is_some_and(|s| s.peer == id) {
+                if self.current().is_some_and(|s| s.peer == id) {
                     self.end_session(false).await;
                     self.notes(Note::Block(msg::PEER_OFFLINE.to_owned()));
                 }
@@ -645,12 +983,12 @@ impl Loop {
                 match res {
                     Ok(()) => {
                         if let Some(p) = self.pending.take() {
-                            let _ = p.reply.send(Ok(()));
+                            let _ = p.reply.send(Err(msg::SESSION_CANCELLED.to_owned()));
                         }
                         self.pending = Some(PendingSwitch {
                             peer: to,
                             reply,
-                            until: Instant::now() + SWITCH_GRACE,
+                            until: None,
                         });
                     }
                     Err(e) => {
@@ -663,11 +1001,15 @@ impl Loop {
     }
 
     async fn switch(&mut self, to: PeerId) -> Result<(), String> {
+        // A deliberate gate remains the reason after cancellation stops the producer.
         if self.locked {
             return Err(msg::LOCKED.to_owned());
         }
         if self.paused {
             return Err(RejectReason::Paused.pt().to_owned());
+        }
+        if !self.available {
+            return Err(msg::adapter_failed("captura indisponível"));
         }
         if self.session_locked {
             return Err(msg::SOURCE_SCREEN_LOCKED.to_owned());
@@ -691,10 +1033,10 @@ impl Loop {
             .position(|x| same_barrier(x, &t))
             .unwrap_or(0);
         let here = (t.local.0 + t.local.1) / 2.0;
-        if let Err(e) = self.cap.begin(barrier, here).await {
-            self.end_session(true).await;
-            return Err(msg::adapter_failed(&e.to_string()));
+        if let Some(o) = self.opening.as_mut() {
+            o.begin = Some((barrier, here));
         }
+
         Ok(())
     }
 }
@@ -706,4 +1048,18 @@ fn same_barrier(a: &Target, b: &Target) -> bool {
         && a.peer_edge == b.peer_edge
         && a.local == b.local
         && a.remote == b.remote
+        && a.spec.edge == b.spec.edge
+        && a.spec.from == b.spec.from
+        && a.spec.to == b.spec.to
+        && match (&a.spec.zone, &b.spec.zone) {
+            (crate::adapter::ZoneRef::Index(a), crate::adapter::ZoneRef::Index(b)) => a == b,
+            (crate::adapter::ZoneRef::Name(a), crate::adapter::ZoneRef::Name(b)) => a == b,
+            _ => false,
+        }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod backpressure {
+    include!("../tests/support/capture_backpressure.rs");
 }

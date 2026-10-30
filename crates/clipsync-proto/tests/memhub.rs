@@ -120,6 +120,7 @@ async fn delivers_authorized_offer() {
         ModuleInput::Reliable {
             from,
             msg: ModuleMsg::Clip(ClipMsg::Offer(o)),
+            ..
         } => {
             assert_eq!(from, a.id);
             assert_eq!(o.id, id);
@@ -251,7 +252,7 @@ async fn datagrams_follow_the_same_rules() {
     let (a, mut b) = pair(&hub, BOTH, BOTH, input_in);
     a.host.send_datagram(b.id, dg(3)).unwrap();
     match next(&mut b.rx).await {
-        ModuleInput::Datagram { from, dg } => assert_eq!((from, dg.events.len()), (a.id, 3)),
+        ModuleInput::Datagram { from, dg, .. } => assert_eq!((from, dg.events.len()), (a.id, 3)),
         other => panic!("unexpected {other:?}"),
     }
     // Destination without input_in: silently dropped, no reply.

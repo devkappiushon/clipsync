@@ -674,3 +674,77 @@ async fn loopback_uses_the_link_barrier_and_maps_the_position() {
     }
     assert!(entered, "no EnterSpan after the loopback");
 }
+
+#[tokio::test]
+async fn paused_bootstrap_with_link_never_starts_capture_until_explicit_resume() {
+    for hooks in [false, true] {
+        let hub = MemHub::new();
+        let node = hub.add_node("paused-source", INPUT);
+        let remote = hub.add_node("destination", INPUT);
+        hub.link(node.id, remote.id, CONTROL, CONTROL);
+        hub.set_paused(node.id, true);
+        let directory = tempfile::tempdir().unwrap();
+        write_layout(directory.path(), &layout_ab(node.id, remote.id));
+        let (cap_ad, cap) = FakeCapture::new(vec![zone()]);
+        cap.set_hooks(hooks);
+        let (emu_ad, _) = FakeEmulate::new();
+        let module = build_with_layout(
+            InputConfig::default(),
+            Box::new(cap_ad),
+            Box::new(emu_ad),
+            directory.path(),
+        )
+        .unwrap();
+        let task = tokio::spawn(module.run(node.host, node.rx));
+        command(&node.tx, ModuleCommand::Status).await;
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert_eq!(
+            cap.starts(),
+            0,
+            "paused bootstrap installed capture, hooks={hooks}"
+        );
+        let reply = command(
+            &node.tx,
+            ModuleCommand::InputLoopback {
+                to: remote.id,
+                seconds: 1,
+            },
+        )
+        .await;
+        assert!(matches!(reply, ModuleReply::Error(_)));
+        assert_eq!(cap.starts(), 0, "paused explicit test installed capture");
+        hub.set_paused(node.id, false);
+        until("capture starts only after resume", || cap.started()).await;
+        node.tx.send(ModuleInput::Shutdown).await.unwrap();
+        task.await.unwrap().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn revoking_local_input_in_preserves_the_independent_outgoing_session() {
+    let hub = MemHub::new();
+    let dir = tempfile::tempdir().unwrap();
+    write_layout(dir.path(), &layout_ab(node_id("a"), node_id("b")));
+    let a = spawn_with_layout(&hub, "a", dir.path());
+    let mut b = raw(&hub, "b");
+    hub.link(a.id, b.id, CONTROL, CONTROL);
+    until("capture installed", || a.cap.started()).await;
+    a.cap.activate(0, 0.7);
+    loop {
+        if matches!(
+            next_input(&mut b, 2000).await,
+            Some(InputMsg::EnterSpan { .. } | InputMsg::EnterAt { .. } | InputMsg::Enter { .. })
+        ) {
+            break;
+        }
+    }
+    hub.link(a.id, b.id, PeerPerms::default(), CONTROL);
+    settle(&a).await;
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let ModuleReply::InputState(state) = command(&a.tx, ModuleCommand::InputState).await else {
+        panic!("state");
+    };
+    assert_eq!(state.active_peer, Some(b.id));
+    assert_eq!(a.cap.released(), 0);
+    a.tx.send(ModuleInput::Shutdown).await.unwrap();
+}

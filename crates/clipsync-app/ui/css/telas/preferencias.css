@@ -110,3 +110,7 @@
 .preferencias__acao .nota {
   flex: 1 1 auto;
 }
+
+.preferencias .linha {
+  flex-wrap: wrap;
+}

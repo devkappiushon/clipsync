@@ -36,6 +36,11 @@ pub fn blocked_too_large(bytes: usize, max: usize) -> String {
 pub fn adapter_read_failed(detail: &str) -> String {
     format!("leitura do clipboard falhou: {detail}")
 }
+// Logical clock policy (contrato §15.11); never includes clipboard content.
+pub const CLOCK_EXHAUSTED: &str =
+    "relógio lógico do clipboard esgotado; nenhuma oferta foi enviada";
+pub const CLOCK_AHEAD: &str =
+    "relógio remoto inválido: a janela lógica permite até 1000000 passos de avanço";
 pub const NO_TARGET: &str = "nenhum par autorizado a receber (ou par desconhecido)";
 pub const EMPTY_TEXT: &str = "texto vazio não é enviado";
 pub const TOO_LARGE: &str = "texto acima do limite configurado";

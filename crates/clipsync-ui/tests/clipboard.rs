@@ -39,7 +39,11 @@ async fn a_manual_box_receives_previews_applies_and_discards() {
         json!({ "cmd": "clipboard_set_mode", "args": { "mode": "manual" } }),
     )
     .await;
-    assert_eq!(mode, json!({ "mode": "manual", "restart_needed": false }));
+    assert_eq!(mode["mode"], "manual");
+    assert_eq!(mode["restart_needed"], false);
+    assert_eq!(mode["observed"]["paused"], true);
+    // Retomar é uma ação explícita, separada da troca de modo.
+    ok(&ui_b, json!({"cmd":"pause_set","args":{"paused":false}})).await;
     assert!(
         std::fs::read_to_string(pb.config_path())
             .unwrap()
@@ -179,4 +183,156 @@ async fn with_the_module_off_the_screen_still_answers() {
     .await;
     assert_eq!(e.code, "module_off");
     ui.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn b09_pausa_nao_persistida_bloqueia_modo_e_reparo_reinicia_pausado() {
+    let dir = tempfile::tempdir().unwrap();
+    let (p, _) = init_profile(dir.path(), "b09", BOTH);
+    let ui = start(dir.path(), "b09").await;
+    ok(&ui, json!({"cmd":"lock_to_screen","args":{"locked":true}})).await;
+    p.set_paused(false).unwrap();
+    let state_lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(p.dir.join("state.toml.lock"))
+        .unwrap();
+    state_lock.lock().unwrap();
+    let before = std::fs::read(p.config_path()).unwrap();
+    let pause = err(&ui, json!({"cmd":"pause_set","args":{"paused":true}})).await;
+    assert_eq!(pause.code, "io");
+    let mode = err(
+        &ui,
+        json!({"cmd":"clipboard_set_mode","args":{"mode":"manual"}}),
+    )
+    .await;
+    let details = mode.details.unwrap();
+    assert_eq!(details["effects"]["config_saved"], false);
+    assert_eq!(details["effects"]["stop"], "not_requested");
+    assert_eq!(details["observed"]["paused"], true);
+    assert_eq!(std::fs::read(p.config_path()).unwrap(), before);
+    assert!(!p.load_state().unwrap().paused);
+    let state = app_state(&ui).await;
+    assert!(state["pause_warning"].as_str().unwrap().contains("pausa"));
+    state_lock.unlock().unwrap();
+    let mode = ok(
+        &ui,
+        json!({"cmd":"clipboard_set_mode","args":{"mode":"manual"}}),
+    )
+    .await;
+    assert_eq!(mode["effects"]["start"], "owned_ready");
+    assert_eq!(mode["observed"]["paused"], true);
+    assert_eq!(mode["observed"]["screen_locked"], true);
+    assert!(app_state(&ui).await["pause_warning"].is_null());
+    assert!(p.load_state().unwrap().paused);
+    ui.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn b09_noop_nao_pausa_e_parado_nao_inicia() {
+    let dir = tempfile::tempdir().unwrap();
+    let (p, _) = init_profile(dir.path(), "b09", CLIPBOARD_ONLY);
+    let ui = start(dir.path(), "b09").await;
+    let before = std::fs::read(p.config_path()).unwrap();
+    let r = ok(
+        &ui,
+        json!({"cmd":"clipboard_set_mode","args":{"mode":"auto"}}),
+    )
+    .await;
+    assert_eq!(r["effects"]["pause"], "not_requested");
+    assert_eq!(r["effects"]["config_saved"], false);
+    assert_eq!(std::fs::read(p.config_path()).unwrap(), before);
+    assert!(!p.state_path().exists());
+    ok(&ui, json!({"cmd":"agent_stop"})).await;
+    let r = ok(
+        &ui,
+        json!({"cmd":"clipboard_set_mode","args":{"mode":"manual"}}),
+    )
+    .await;
+    assert_eq!(r["observed"]["agent"], "stopped");
+    assert_eq!(r["effects"]["start"], "not_requested");
+    assert!(!p.state_path().exists());
+    ui.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn b09_erro_de_retomada_nao_afirma_pausa_e_poll_nao_limpa_aviso() {
+    let dir = tempfile::tempdir().unwrap();
+    let (p, _) = init_profile(dir.path(), "b09", CLIPBOARD_ONLY);
+    let ui = start(dir.path(), "b09").await;
+    ok(&ui, json!({"cmd":"pause_set","args":{"paused":true}})).await;
+    let state_lock = std::fs::OpenOptions::new()
+        .write(true)
+        .open(p.dir.join("state.toml.lock"))
+        .unwrap();
+    state_lock.lock().unwrap();
+    err(&ui, json!({"cmd":"pause_set","args":{"paused":false}})).await;
+    for _ in 0..2 {
+        let s = app_state(&ui).await;
+        assert_eq!(s["paused"], false);
+        assert!(s["pause_warning"].as_str().unwrap().contains("retomada"));
+    }
+    state_lock.unlock().unwrap();
+    ok(&ui, json!({"cmd":"pause_set","args":{"paused":false}})).await;
+    assert!(app_state(&ui).await["pause_warning"].is_null());
+    ui.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn b09_externo_so_salva_configuracao_sem_mutar_runtime() {
+    let dir = tempfile::tempdir().unwrap();
+    let (p, _) = init_profile(dir.path(), "b09", CLIPBOARD_ONLY);
+    let mutations = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = mutations.clone();
+    let other = fake_agent(&p, move |_| {
+        seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        clipsync_proto::ControlResponse::Error {
+            message: "comando inesperado".into(),
+        }
+    })
+    .await;
+    let ui = start(dir.path(), "b09").await;
+    let reply = ok(
+        &ui,
+        json!({"cmd":"clipboard_set_mode","args":{"mode":"manual"}}),
+    )
+    .await;
+    assert_eq!(reply["restart_needed"], true);
+    assert_eq!(reply["observed"]["agent"], "external");
+    assert_eq!(reply["effects"]["config_saved"], true);
+    assert_eq!(reply["effects"]["pause"], "not_requested");
+    assert_eq!(reply["effects"]["start"], "not_requested");
+    assert_eq!(mutations.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(!p.state_path().exists());
+    ui.shutdown().await;
+    other.stop().await;
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn b09_desconhecido_nao_salva_modo() {
+    use tokio::io::AsyncWriteExt;
+    let dir = tempfile::tempdir().unwrap();
+    let (p, _) = init_profile(dir.path(), "b09", CLIPBOARD_ONLY);
+    let listener = tokio::net::UnixListener::bind(p.socket_path()).unwrap();
+    let server = tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let _ = stream.write_all(&[0, 0, 0, 3, b'x', b'x', b'x']).await;
+        }
+    });
+    let ui = start(dir.path(), "b09").await;
+    let before = std::fs::read(p.config_path()).unwrap();
+    let error = err(
+        &ui,
+        json!({"cmd":"clipboard_set_mode","args":{"mode":"manual"}}),
+    )
+    .await;
+    let details = error.details.unwrap();
+    assert_eq!(details["observed"]["agent"], "unknown");
+    assert_eq!(details["effects"]["config_saved"], false);
+    assert_eq!(std::fs::read(p.config_path()).unwrap(), before);
+    ui.shutdown().await;
+    server.abort();
+    let _ = server.await;
 }

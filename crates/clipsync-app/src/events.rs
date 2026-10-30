@@ -41,7 +41,10 @@ pub fn spawn(app: AppHandle, ui: Ui) {
             match events.recv().await {
                 Ok(event) => match serde_json::to_value(&event) {
                     Ok(value) => {
-                        let resync = event_name(&value) == Some("resync");
+                        let resync = matches!(
+                            event_name(&value),
+                            Some("resync" | "pause_changed" | "agent_state")
+                        );
                         forward(&app, value);
                         if resync {
                             tray::sync_paused(&app, &ui).await;
@@ -78,11 +81,6 @@ fn forward(app: &AppHandle, event: Value) {
                 event.pointer("/data/traversal").unwrap_or(&Value::Null),
             );
         }
-        Some("pause_changed") => {
-            if let Some(paused) = paused_of(&event) {
-                tray::set_paused(app, paused);
-            }
-        }
         _ => {}
     }
     if let Err(error) = app.emit_to(window::LABEL, EVENT, event) {
@@ -92,10 +90,6 @@ fn forward(app: &AppHandle, event: Value) {
 
 fn event_name(event: &Value) -> Option<&str> {
     event.get("event").and_then(Value::as_str)
-}
-
-fn paused_of(event: &Value) -> Option<bool> {
-    event.pointer("/data/paused").and_then(Value::as_bool)
 }
 
 /// Título e corpo de um evento `notification`; sem título, o nome do app.
@@ -120,21 +114,37 @@ fn notification_kind(event: &Value) -> Option<&str> {
 /// conteúdo de clipboard (§12.2 regra 7); a casca confere de novo porque é ela que fala com o
 /// sistema (S6-13).
 fn notify(app: &AppHandle, event: &Value) {
-    let wanted = notification_kind(event)
-        .is_some_and(|kind| app.state::<AppState>().notify_prefs().allows(kind));
-    if !wanted {
-        tracing::debug!("system notification skipped by the preferences");
-        return;
-    }
     let (title, body) = notification_text(event);
     // O nome do par vem de fora: no Linux o daemon lê marcação, então `&`, `<` e `>` são escapados.
     let (title, body) = (
         notify_text::for_system(title),
         notify_text::for_system(body),
     );
-    if let Err(error) = app.notification().builder().title(title).body(body).show() {
+    let state = app.state::<AppState>();
+    let Some(kind) = notification_kind(event) else {
+        return;
+    };
+    if let Some(Err(error)) = attempt_notification(&state, kind, std::time::Instant::now(), || {
+        app.notification().builder().title(title).body(body).show()
+    }) {
         tracing::warn!(error = %error, "system notification failed");
     }
+}
+
+// O mesmo ponto de admissão é usado pelo notificante real e pelos testes sem SO.
+fn attempt_notification<E>(
+    state: &AppState,
+    kind: &str,
+    now: std::time::Instant,
+    send: impl FnOnce() -> Result<(), E>,
+) -> Option<Result<(), E>> {
+    if !state.notify_prefs().allows(kind) {
+        return None;
+    }
+    if kind == "block" && !state.allow_block_notice(now) {
+        return None;
+    }
+    Some(send())
 }
 
 #[cfg(test)]
@@ -142,12 +152,91 @@ mod tests {
     use super::*;
 
     #[test]
+    fn b01_duplicate_candidates_and_failed_show_share_one_window() {
+        let state = AppState::new(false);
+        state.set_notify_prefs(NotifyPrefs {
+            block: true,
+            item_received: true,
+            device_connected: true,
+        });
+        let now = std::time::Instant::now();
+        let calls = std::cell::Cell::new(0);
+        for offset in [0, 1, 29_999] {
+            let _ = attempt_notification(
+                &state,
+                "block",
+                now + std::time::Duration::from_millis(offset),
+                || {
+                    calls.set(calls.get() + 1);
+                    Err::<(), _>("falha fake")
+                },
+            );
+        }
+        assert_eq!(calls.get(), 1);
+        let _ = attempt_notification(
+            &state,
+            "block",
+            now + std::time::Duration::from_secs(30),
+            || {
+                calls.set(calls.get() + 1);
+                Ok::<(), ()>(())
+            },
+        );
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn b01_preference_before_gate_and_removal_outside_throttle() {
+        let state = AppState::new(false);
+        let now = std::time::Instant::now();
+        let calls = std::cell::Cell::new(0);
+        let send = || {
+            calls.set(calls.get() + 1);
+            Ok::<(), ()>(())
+        };
+        assert!(attempt_notification(&state, "block", now, send).is_none());
+        state.set_notify_prefs(NotifyPrefs {
+            block: true,
+            item_received: false,
+            device_connected: false,
+        });
+        assert!(attempt_notification(&state, "block", now, send).is_some());
+        state.set_notify_prefs(NotifyPrefs::default());
+        assert!(
+            attempt_notification(
+                &state,
+                "block",
+                now + std::time::Duration::from_secs(1),
+                send
+            )
+            .is_none()
+        );
+        state.set_notify_prefs(NotifyPrefs {
+            block: true,
+            item_received: false,
+            device_connected: false,
+        });
+        assert!(
+            attempt_notification(
+                &state,
+                "block",
+                now + std::time::Duration::from_secs(2),
+                send
+            )
+            .is_none()
+        );
+        for _ in 0..2 {
+            assert!(attempt_notification(&state, "device_removed", now, send).is_some());
+        }
+        assert_eq!(calls.get(), 3);
+    }
+
+    #[test]
     fn pause_is_read_from_the_contract_shape() {
         let on = json!({ "event": "pause_changed", "data": { "paused": true } });
         let other = json!({ "event": "peer_connected", "data": { "peer_id": "ab" } });
         assert_eq!(event_name(&on), Some("pause_changed"));
-        assert_eq!(paused_of(&on), Some(true));
-        assert_eq!(paused_of(&other), None);
+        assert_eq!(event_name(&other), Some("peer_connected"));
     }
 
     #[test]

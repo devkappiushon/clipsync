@@ -12,6 +12,7 @@ import "./mock/layout.js";
 import "./mock/clipboard.js";
 import "./mock/diagnostico.js";
 import "./mock/prefs.js";
+import "./mock/modulos.js";
 
 export { invoke, listen } from "./mock/nucleo.js";
 

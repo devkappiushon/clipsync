@@ -124,6 +124,13 @@ impl From<CoreError> for UiError {
             CoreError::Config(d) if d.starts_with("perfil não inicializado") => {
                 Self::not_initialized()
             }
+            CoreError::Profile(d) if d == "profile_busy" => {
+                Self::new("profile_busy", "reconfiguração do perfil em andamento")
+            }
+            CoreError::Profile(d) if d == "stale_config" => Self::new(
+                "stale_config",
+                "a configuração mudou; recarregue antes de aplicar",
+            ),
             CoreError::Config(d) | CoreError::Identity(d) | CoreError::Profile(d) => {
                 Self::new(code::CONFIG, msg::config(&clean(&d)))
             }
@@ -138,7 +145,8 @@ impl From<CoreError> for UiError {
 
 /// Every `cmd` the router knows, in the order of §12.5. A name outside this list is
 /// `unknown_command`; a known name with bad args is `bad_request`.
-pub const COMMANDS: [&str; 39] = [
+pub const COMMANDS: [&str; 40] = [
+    "modules_set",
     "app_state",
     "agent_start",
     "agent_stop",
@@ -190,6 +198,7 @@ pub const COMMANDS: [&str; 39] = [
 )]
 pub enum UiRequest {
     // common
+    ModulesSet(crate::modules::Args),
     AppState,
     AgentStart,
     AgentStop,
@@ -428,7 +437,53 @@ fn json<T: Serialize>(v: T) -> Result<Value, UiError> {
 
 pub(crate) async fn route(ctx: &Arc<Ctx>, req: UiRequest) -> Result<Value, UiError> {
     use UiRequest as R;
+    let mutation = matches!(
+        &req,
+        R::ModulesSet(_)
+            | R::AgentStart
+            | R::AgentStop
+            | R::OnboardingCreate(_)
+            | R::ClipboardSetMode(_)
+            | R::PairHostStart(_)
+            | R::PairJoinStart(_)
+            | R::PairCodeMatches(_)
+            | R::PairFinish(_)
+            | R::PairCancel(_)
+            | R::LockToScreen(_)
+    );
+    if !mutation {
+        return route_inner(ctx, req).await;
+    }
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let owned = ctx.clone();
+    let task = tokio::spawn(async move {
+        let result = match owned.mutation.try_lock() {
+            Ok(_guard) => route_inner(&owned, req).await,
+            Err(_) => {
+                let error = UiError::new(
+                    "profile_busy",
+                    "outra alteração do perfil está em andamento",
+                );
+                Err(error.with_details(serde_json::json!({"effects":crate::modules::Effects::default(),"observed":crate::modules::Observed::default()})))
+            }
+        };
+        let _ = sender.send(result);
+        agent::finish_pending(&owned).await;
+    });
+    {
+        let mut jobs = crate::lock(&ctx.jobs);
+        jobs.retain(|job| !job.is_finished());
+        jobs.push(task);
+    }
+    receiver
+        .await
+        .map_err(|_| UiError::internal("operação interrompida"))?
+}
+
+async fn route_inner(ctx: &Arc<Ctx>, req: UiRequest) -> Result<Value, UiError> {
+    use UiRequest as R;
     match req {
+        R::ModulesSet(args) => json(crate::modules::apply(ctx, args).await?),
         R::AppState => json(status::app_state(ctx).await?),
         R::AgentStart => json(agent::start(ctx).await?),
         R::AgentStop => json(agent::stop(ctx).await?),

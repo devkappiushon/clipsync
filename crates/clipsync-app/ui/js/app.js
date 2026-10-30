@@ -2,11 +2,12 @@
 // Cada tela é um módulo em js/telas/<nome>.js com `export default function montar(ctx)`,
 // que devolve { no, desmontar? } (ou uma promessa disso).
 
+import { criarAnunciador, guardarFoco, restaurarFoco, interacaoAtual } from "./acessibilidade.js";
 import { api } from "./api.js";
-import { aviso, estadoErro } from "./areas.js";
+import { estadoErro } from "./areas.js";
 import { botao, comCarregamento } from "./componentes.js";
 import { h, trocar } from "./dom.js";
-import { aplicarAparencia, assinar, atualizarApp, iniciarEventos, obterApp, observarApp } from "./estado.js";
+import { aplicarAparencia, assinar, atualizarApp, iniciarEventos, obterApp, observarApp, pausaObservada } from "./estado.js";
 import { mensagemDe } from "./formatar.js";
 import { icone } from "./icones.js";
 
@@ -39,9 +40,20 @@ const el = {
   pausarRotulo: document.getElementById("pausar-rotulo"),
 };
 
+const anuncios = criarAnunciador();
+const avisoOperacao = h("div", { class: "aviso-agente", hidden: true });
+el.conteudo.prepend(anuncios.no, avisoOperacao);
+function erroOperacao(erro) {
+  const texto = mensagemDe(erro);
+  avisoOperacao.hidden = false;
+  trocar(avisoOperacao, h("div", { class: "aviso aviso--erro" }, h("p", null, texto)));
+  anuncios.erro(texto);
+}
+
 let desmontarAtual = null;
 let geracao = 0;
 let primeiraRota = true;
+let falhaConsultaPausa = null;
 
 const ir = (caminho) => {
   location.hash = `#/${caminho}`;
@@ -72,6 +84,7 @@ async function navegar() {
   }
 
   const minha = ++geracao;
+  const focoNavegacao = guardarFoco(document.body);
   desmontarAtual?.();
   desmontarAtual = null;
 
@@ -98,7 +111,7 @@ async function navegar() {
     pagina.append(estadoErro(erro, navegar));
   }
 
-  if (!primeiraRota) document.getElementById("titulo-pagina")?.focus();
+  if (!primeiraRota && (!focoNavegacao || interacaoAtual(focoNavegacao, document.body))) document.getElementById("titulo-pagina")?.focus();
   primeiraRota = false;
 }
 
@@ -112,56 +125,86 @@ function pintarRodape(app) {
   let texto;
   if (app.agent === "failed") [estado, texto] = ["erro", "Malha: agente com falha"];
   else if (app.agent === "stopped") [estado, texto] = ["neutro", "Malha: agente parado"];
-  else if (app.paused) [estado, texto] = ["aviso", "Malha: pausada"];
+  else if (falhaConsultaPausa || pausaObservada(app) === null) [estado, texto] = ["aviso", "Malha: estado não confirmado"];
+  else if (pausaObservada(app)) [estado, texto] = ["aviso", "Malha: pausada"];
   else [estado, texto] = ["ok", `Malha: ${app.mesh.connected} de ${app.mesh.total} conectados`];
   el.maquinaPonto.dataset.estado = app.device ? estado : "neutro";
-  el.malha.textContent = texto;
+  if (el.malha.textContent !== texto) el.malha.textContent = texto;
 
-  el.pausar.disabled = app.agent === "stopped" || app.agent === "failed";
-  el.pausar.setAttribute("aria-pressed", String(app.paused));
+  const pausa = falhaConsultaPausa ? null : pausaObservada(app);
+  el.pausar.disabled = pausa === null;
   el.pausar.querySelector(".icone")?.remove();
-  el.pausar.prepend(icone(app.paused ? "retomar" : "pausa"));
-  el.pausarRotulo.textContent = app.paused ? "Retomar tudo" : "Pausar tudo";
+  el.pausar.prepend(icone(pausa === true ? "retomar" : "pausa"));
+  el.pausarRotulo.textContent = pausa === null && !["stopped", "failed"].includes(app.agent) ? "Pausa não confirmada" : pausa ? "Retomar tudo" : "Pausar tudo";
 }
 
-/** Faixa acima da tela quando o agente está parado ou caiu: a causa e o botão para subir de novo. */
+/** Faixa persistente: polling atualiza texto, sem trocar o botão que está em uso. */
+const textoAgente = h("p");
+const iniciarAgente = botao({
+  rotulo: "Iniciar agente", variante: "primario", icone: "retomar", dataset: { focusKey: "agente-iniciar" },
+  aoClicar: async () => {
+    const foco = guardarFoco(document.body);
+    avisoOperacao.hidden = true;
+    anuncios.limpar();
+    try {
+      await api.agentStart();
+      await atualizarApp();
+      restaurarFoco(foco, document.body, { fallback: () => document.getElementById("titulo-pagina") });
+    } catch (erro) { erroOperacao(erro); }
+  },
+});
+const faixaAgente = h("div", { class: "aviso aviso--aviso" }, textoAgente, iniciarAgente);
+el.avisoAgente.append(faixaAgente);
+
 function pintarAvisoAgente(app) {
   const mostrar = app.initialized && (app.agent === "stopped" || app.agent === "failed");
   el.avisoAgente.hidden = !mostrar;
-  if (!mostrar) {
-    trocar(el.avisoAgente);
-    return;
+  if (!mostrar) return;
+  const texto = app.agent === "failed"
+    ? `O agente parou com erro: ${app.agent_error ?? "causa desconhecida"}`
+    : "O agente está parado. Nada é enviado nem recebido até você iniciá-lo.";
+  faixaAgente.className = `aviso aviso--${app.agent === "failed" ? "erro" : "aviso"}`;
+  if (textoAgente.textContent !== texto) {
+    textoAgente.textContent = texto;
+    if (app.agent === "failed") anuncios.erro(texto);
+    else anuncios.status(texto);
   }
-  const texto =
-    app.agent === "failed"
-      ? `O agente parou com erro: ${app.agent_error ?? "causa desconhecida"}`
-      : "O agente está parado. Nada é enviado nem recebido até você iniciá-lo.";
-  trocar(el.avisoAgente, 
-    aviso(
-      app.agent === "failed" ? "erro" : "aviso",
-      h("p", null, texto),
-      botao({
-        rotulo: "Iniciar agente",
-        variante: "primario",
-        icone: "retomar",
-        aoClicar: async () => {
-          try {
-            await api.agentStart();
-          } catch (erro) {
-            el.avisoAgente.querySelector("p").textContent = `Não foi possível iniciar o agente: ${mensagemDe(erro)}`;
-            return;
-          }
-          await atualizarApp();
-        },
-      }),
-    ),
-  );
+}
+
+const textoPausa = h("p");
+const avisoPausa = h("div", { class: "aviso aviso--aviso", hidden: true }, textoPausa);
+el.conteudo.insertBefore(avisoPausa, avisoOperacao);
+let ultimoAvisoPausa = null;
+function pintarAvisoPausa(app) {
+  const avisos = [...new Set([falhaConsultaPausa, app.pause_warning].filter(Boolean))];
+  const texto = avisos.join(" ") || (app.agent === "in_app" && app.agent_error ? app.agent_error : null);
+  avisoPausa.hidden = !texto;
+  if (texto !== ultimoAvisoPausa) {
+    textoPausa.textContent = texto ?? "";
+    if (texto) anuncios.erro(texto);
+    else anuncios.limpar();
+    ultimoAvisoPausa = texto;
+  }
 }
 
 function alternarPausa() {
   return comCarregamento(el.pausar, async () => {
-    await api.pauseSet({ paused: !obterApp().paused });
-    await atualizarApp();
+    const pausa = pausaObservada(obterApp());
+    if (pausa === null) return;
+    avisoOperacao.hidden = true;
+    try {
+      await api.pauseSet({ paused: !pausa });
+      await atualizarApp();
+    } catch (erro) {
+      // Uma falha pode ter alterado memória sem persistir. Nunca pintar o valor pedido.
+      try { await atualizarApp(); }
+      catch {
+        falhaConsultaPausa = `Não foi possível confirmar ${pausa ? "a retomada" : "a pausa"}, nem consultar o estado atual. Aguarde uma nova consulta antes de repetir a ação.`;
+        pintarAvisoPausa(obterApp());
+        pintarRodape(obterApp());
+      }
+      if (!obterApp()?.pause_warning && !falhaConsultaPausa) erroOperacao(erro);
+    }
   });
 }
 
@@ -170,6 +213,10 @@ async function iniciar() {
   document.querySelector(".pular").addEventListener("click", (evento) => {
     evento.preventDefault();
     el.conteudo.focus();
+  });
+  observarApp((app, consultado) => {
+    if (consultado) falhaConsultaPausa = null;
+    pintarAvisoPausa(app);
   });
   observarApp(pintarRodape);
   observarApp(pintarAvisoAgente);

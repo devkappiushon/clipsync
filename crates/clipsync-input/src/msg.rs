@@ -184,3 +184,11 @@ pub fn self_test_conflicts(found: &[String]) -> String {
         found.join(", ")
     )
 }
+
+pub const NETWORK_BUSY: &str = "entrada: fila de avisos de rede cheia";
+
+pub(crate) const SESSION_CANCELLED: &str = "Sessão cancelada antes da confirmação";
+pub(crate) const OPEN_BUFFER_FULL: &str = "Captura interrompida: fila de abertura cheia";
+
+pub const SCREEN_STATE_UNAVAILABLE: &str =
+    "estado da tela não confirmado ou desktop protegido: o controle permanece bloqueado";

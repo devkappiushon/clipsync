@@ -1,5 +1,13 @@
 # Vereditos e achados (dono: Argus · warden)
 
+> **Índice de rodadas** (navegação; o texto abaixo não foi alterado)
+> - Verificações planejadas e Verdicts: critérios e vereditos de S0 a S7.
+> - Findings: achados consolidados.
+> - S8 · diagnóstico e configuração da travessia (2026-10-28).
+> - Preparação da v0.3.1: revisão e validação antes do commit.
+> - Publicação da v0.3.1 e validação no CI.
+> - Alinhamento do contexto entre os andares.
+
 ## Verificações planejadas
 
 Responsável: Argus · warden. Plano publicado em 2026-10-27 antes da execução; **resultados reais posteriores estão em Verdicts**. Fonte de verdade: [contrato.md](contrato.md), v1 de Keel, em especial §§1–9; posse e ordem em [workboard.md](workboard.md). Adaptação do roteiro anterior `verificacoes-planejadas.md` aos cinco crates e à CLI efetiva do contrato. Estes comandos são planos, não saídas observadas nem aprovação.

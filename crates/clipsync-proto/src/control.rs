@@ -89,6 +89,14 @@ pub struct BlockRecord {
     pub module: Option<ModuleKind>,
     /// Portuguese, ready to show.
     pub reason: String,
+    #[serde(default = "one")]
+    pub occurrences: u64,
+    #[serde(default)]
+    pub last_unix_ms: u64,
+}
+
+fn one() -> u64 {
+    1
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -300,5 +308,21 @@ impl fmt::Debug for InboxItem {
             .field("preview", &Redacted)
             .field("state", &self.state)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod block_compat_tests {
+    use super::*;
+    #[test]
+    fn old_block_json_defaults_to_one_and_unknown_last() {
+        let old =
+            r#"{"at_unix_ms":42,"peer":null,"peer_name":null,"module":null,"reason":"motivo"}"#;
+        let record: BlockRecord = serde_json::from_str(old).unwrap();
+        assert_eq!(record.occurrences, 1);
+        assert_eq!(record.last_unix_ms, 0);
+        let round: BlockRecord =
+            serde_json::from_str(&serde_json::to_string(&record).unwrap()).unwrap();
+        assert_eq!(round, record);
     }
 }

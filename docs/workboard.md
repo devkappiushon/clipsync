@@ -1,6 +1,26 @@
 # workboard · ClipSync MVP de hoje
 
+## Preparação da v0.4.0 · 30/10/2026
+
+João autorizou agora commit, push, CI, empacotamento e publicação, ao responder “então faça” ao roteiro desses passos. Esta autorização substitui o limite anterior de não publicar nesta rodada. Preparar os seis pacotes no workflow manual, conferir CI e hashes antes de publicar. Última publicada neste registro ainda é v0.3.1; v0.4.0 está em preparação, não deve ser anunciada como disponível antes da confirmação remota.
+
+Validação local S9 encerrada:597 testes Rust principais passaram,0falhas,3gráficos ignorados e5execuções auxiliares separadas; Node164/164. Revisão integrada aprovada. [Pendências explícitas da próxima versão](pendencias-v0.4.0.md): mouse nas duas máquinas,Tauri interativo,zoom/leitores e lacunas de portal. [Resumo da validação local](evidencias/s9-local-2026-10-30.md).
+
+O material automático abaixo é histórico e não pode reabrir tarefas já concluídas nem revogar a autorização acima.
+
+## Estado atual S9 · validação local encerrada, 30/10/2026
+
+- Revisão integrada e único re-review focal do delta composto aprovados. Foram corrigidos perda de pausa sob fila cheia, expectativa mesh anterior ao agrupamento B01, ciclo do fake standalone, motivo da recusa de Switch e encaminhamento de lifecycle no wrapper. Contrato §15.14; fonte final estável. Revisões focais C01/B09, B01/B03/B05, WTS, I01, Pareamento round4 e B07 FIX1 preservadas.
+- Gate final Linux: **597 testes Rust principais passaram, zero falhas, três testes manuais ignorados**; cinco execuções auxiliares em subprocessos também passaram, separadas do total principal. Fmt, clippy workspace/all-targets sem app, cross-clippy Windows GNU de input/win/ui/cli e scripts unsafe/privacidade/diffcheck passaram. Node: 164/164 sobre as mesmas 49 fontes UI. Evidências: `.superpowers/retomada-s9-2026-10-30/validacao-final-2/` e `fecho-local.md`.
+- Portal: 60 medições Pixel aprovadas por revisão dos artefatos. Echo declarou 6 PASSA/5 INCONCLUSIVO; o critério completo mantém 5 PASSA/6 INCONCLUSIVO porque não mediu largura 960. Amostras independentes Argus/Revisor UX ficaram sem execução por vínculo incorreto no Maestri; coordenadores Acess/UX atingiram quota. PAR-C, composição inacessível ao mock e prova assistiva continuam limitados. Não há conformidade global declarada.
+- Runtime central foi encerrado pelo Maestro após os operadores concluírem; processo ausente e porta 5174 recusando conexão. Portais preservados no canvas. Não iniciar outro servidor sem coordenação.
+- **Pendentes externos:** Tauri/CI, Windows nativo (11 testes B05, 14 capture, 6 win), notificações, zoom/teclas/leitores reais e travessia em duas máquinas. A validação local não comprova o relato físico do mouse. Nenhum commit, push, tag ou nova release. HEAD d41aa65; v0.3.1/f700caa continua publicada.
+
+Os registros abaixo preservam o histórico. Esta seção e os relatórios posteriores prevalecem para o estado vigente.
+
 ## Estado atual · retomada S8 em 2026-10-28
+
+**Atualização de 2026-10-28 (DOC):** o pacote `clip-sync` está instalado no notebook na versão 0.3.1 (`dpkg -s clip-sync`, conferência de Fact). Isso não prova uso físico nem travessia; o uso físico validado segue pendente, e a instalação no Windows não foi verificada nesta rodada. As linhas abaixo preservam o estado anterior.
 
 **v0.3.1 publicada após autorização do usuário (“publique”).** S8 commitada em `f700caa` e enviada à main. CI Linux/Windows aprovado na run `40783057611`; empacotamento manual aprovado na run `40783058074`. A tag `v0.3.1` foi enviada para o mesmo commit. Release: https://github.com/devkappiushon/clipsync/releases/tag/v0.3.1. Os seis artefatos aprovados da run `40783058074` foram publicados pela CLI do GitHub com SHA256SUMS; os sete digests remotos conferem e o SHA256SUMS baixado confirmou 6/6 OK; a recompilação duplicada `40789025116` foi cancelada pelo Maestro, sem falha de build. A instalação e a travessia física continuam pendentes.
 
@@ -43,6 +63,8 @@ Backlog S1/S5, licença, terceiro PC, centralização de `write_private` e insta
 
 
 **Estado: MVP de 2026-10-27 FECHADO.** S0 a S4 e I passam no warden (Argus). Segurança liberada, com 0 bloqueantes (`docs/seguranca.md`). **S5 (Windows e release): código entregue, e a segurança LIBEROU** (Sentinel 10777b4: 0 BLOCKER, 3 MÉDIO, 8 BAIXO). **Release v0.1.0 publicado** em 2026-10-27, a partir de c04de08. **CI verde nos dois runners** em ec8eee3 (run 40576377462). Os três critérios da S5 passam: a S5 está FECHADA. O próximo release sai de ec8eee3 ou depois. Pendências consolidadas e próxima fatia no fim deste arquivo.
+
+### Estado anterior à S8 (histórico)
 
 **S6 (interface visual): FECHADA em 2026-10-28.** Contrato §12 (v1.14 a v1.24). **Release v0.2.0** a partir de d7a4d79 (run 40691106646) e **v0.2.1** a partir de 3a77e82 (run 40699996923), cada um com os 6 pacotes e o `SHA256SUMS` (6 de 6 OK). **CI verde nos dois runners em b3d71c7** (run 40698339508). App e CLI 0.2.1 instalados nesta máquina. Critérios da §12.9: 1, 2, 4, 5, 6, 7 e 8 passam; o 3 passa na parte automática, e a prova manual dele (diálogo do portal) foi feita pelo usuário, por relato. **Aprovada pelo usuário em 2026-10-28** ("feito, testado e aprovado"); o teste manual do critério 3 e o `setup.exe` no Windows foram feitos por ele, por relato. Detalhe no fechamento da seção S6.
 
@@ -455,3 +477,96 @@ Commits 0e76039, f54c995, 8daf2f5 e 3c2bad0. A implementação (Tauri) segue dep
    A S5 (2026-10-27) já adianta parte da 2A: binário release, e o clipboard Windows por polling, experimental. Na 2A sobra a prova em máquina real e a segurança de LAN.
 4. **Tauri** (janela, bandeja, editor de layout): virou a S6 (v1.14). Compila só no CI; aqui roda pelo AppImage. A S6 fechou em 2026-10-28 com o release v0.2.0.
 5. **S7 · layout de telas de verdade** (v1.25, aberta em 2026-10-28): a parte de input da 2B no Windows e no Linux, com o roteiro na máquina real. O terceiro PC entra quando o usuário disser o sistema (contrato §13.14).
+
+## Rodada de documentação (DOC) · 2026-10-28
+
+Revisão pós-v0.3.1 coordenada pelo Maestro #4, com matriz de Meridian, verificação de Fact e revisão de Argus. Quill foi o único editor. Atualizados: `AGENTS.md`, `README.md`, `CONTEXTO.md`, `docs/contexto-equipe.md`, `docs/contrato.md` (entrada v1.35, documental), `docs/handoff-codex.md`, `docs/telas.md`, `docs/prompt-mestre.md`, `docs/matriz-compatibilidade.md`, `docs/evidencias/roteiro-2026-10-27.md`, `docs/decisoes/0002` e `0003`, `docs/seguranca.md` e `docs/verdicts.md` (índice) e `crates/clipsync-app/ui/README.md`.
+
+Correções principais: ordem de leitura única, regras do Maestri e comandos locais com `--workspace --exclude clipsync-app`; `node --test` como checagem local opcional, fora do CI; README separa CLI/crates do app Tauri e avisa que os pacotes do app não trazem a CLI; a versão instalada no notebook é 0.3.1 (`dpkg -s clip-sync`), sem prova de uso no Windows; o relato do cursor foi adiado ao andar TESTES, não investigado nem resolvido. O registro de 0.2.1 na seção S8 acima é anterior a essa verificação e foi preservado como histórico.
+
+A origem da versão instalada é `dpkg -s clip-sync`, conferida por Fact; ela prova o pacote no notebook, não uso físico nem travessia. A instalação no Windows é relato, não verificação.
+
+A revisão de UX/UI pós-v0.3.1 está em `docs/telas.md`, no adendo de 2026-10-28: veredito PRECISA REVISAR no recorte de clareza e recuperação, com seis P1 propostos para implementação futura, P2/P3, acessibilidade e limites. Não é veto ao release publicado nem prova de travessia física; a fonte é `/tmp/clipsync-uxui-fecho-final.txt` (consolidado nas linhas 24-56).
+
+Nenhum commit, push, tag, release, merge ou land nesta rodada. A travessia física, a instalação no Windows e as permissões reais do portal continuam sem verificação; o simulador não é prova física.
+
+
+## Rodada autorizada 2/3/4 · 2026-10-28
+
+João autorizou continuar o fecho DOC (2), implementar as correções das auditorias (3) e testar (4). Esta autorização substitui o limite anterior de apenas auditar; não significa que as correções ou os testes estejam concluídos. Sem commit, push, tag ou release nesta rodada.
+
+O coordenador DOC passou a Codex, mantendo o nó Maestro #4, o papel e as conexões. Foi autorizado reiniciar os Codex bloqueados no mesmo nó com `codex --no-daemon --sandbox workspace-write --ask-for-approval on-request`; acesso ao socket local usa a escalada normal, sem bypass ou alteração de configuração global.
+
+Quill entregou os 16 documentos e ficou bloqueado pelo limite gratuito. Encerrada a posse dessa entrega, Maestro #4 assumiu somente os dois ajustes finais de `docs/telas.md`: identificar o selo de atalhos e retirar a informação efêmera de runtime/portais, preservando os limites de verificação. As alterações entregues por Quill devem ser preservadas.
+
+O arquiteto nativo prepara a proposta S9; o Maestro central avisará a reserva de `docs/contrato.md`. Este registro não altera contrato de produto nem atribui arquivos de implementação. A distribuição das correções e dos testes cabe ao Maestro central, com posse exclusiva por arquivo e revisão. O runtime 5174 está desligado nesta retomada; somente o Maestro central pode iniciá-lo. Sem Playwright, perfil real, leitura de `.env` ou aprovação de diálogos do sistema. A travessia física continua sem comprovação.
+
+### Fecho DOC desta retomada
+
+Argus · warden #3 aprovou o recorte em 2026-10-28: `docs/telas.md:68` identifica o selo de atalhos; a linha 94 preserva os limites sem afirmar encerramento do runtime ou preservação dos portais. Conferiu também que os registros 2/3/4 distinguem autorização de conclusão. Evidência: leitura dos trechos e `git diff --check`, código 0 e saída vazia. Veredito recebido pelo coordenador via `maestri check`, pois o ask back de Argus falhou com terminal não encontrado.
+
+Entrega documental preservada nos mesmos 16 arquivos Markdown. Nenhuma suíte Rust reexecutada; sem verificação de portal, app ou travessia física nesta retomada. O fecho DOC não encerra as correções das auditorias nem os testes da rodada 3/4.
+
+## S9 · execução das correções, 28–29/10/2026
+
+Autorização: itens 2/3/4 de João. Base d41aa65, sem commit/push/tag/release nesta rodada. Os 16 diffs DOC foram entregues e aprovados no recorte final; preservados. Contrato §15 e planos/specs em docs/superpowers são a fonte da implementação.
+
+| Fatia | Dono | Estado e evidência | Aceite restante |
+|---|---|---|---|
+| H-01/B-02 | /root/backend | Desenho revisto por Sentinel; ressalvas de épocas, fila, ordem QUIC, donos e prazo de ingresso incorporadas. Implementação/TDD em andamento. | Sete grupos de regressão, revisão independente do diff e integração. |
+| Base acessível | /root/frontend | Helpers de foco/busy/anúncio, Clipboard/Diagnóstico e CSS em implementação. | RED/GREEN, revisão e portais; seis fluxos completos dependem dos consumidores. |
+| Módulos C01 | Arquiteto, depois Rivet | Proposta recebeu AJUSTES; lock config ausente na base, ciclo de vida precisa estado parcial e exclusão entre processos. Nenhuma implementação C01 liberada ainda. | Delta/contrato, implementação e revisão SEG. |
+| Zoom C14 | Rivet, revisão Sentinel | Dois JSON alterados; parse e diff --check exit 0 por Rivet. Sentinel APROVA spec/qualidade por leitura em 29/10, sem repetir testes. | Ctrl+/Ctrl-/Ctrl+0 e reflow no Tauri Linux/Windows real não verificados. |
+| Consumidores UX | A atribuir após base | Matriz canônica C01–C15 e F1–F6, sem somar 42 entradas brutas como defeitos únicos. | Implementação e revisões Acess/UX. |
+| TESTES | Maestro #5 / Quebrador | Planejamento backend+visual concluído e conferido; execuções nesta fase: 0. Só Linux acessado. | Janela de diffs estáveis; Rust/Node/integrado e roteiro físico. |
+
+Acess (Maestro #2/Echo) e UX (Maestro #3/Pixel) confirmaram acesso após retomada autorizada com aprovações sob demanda; notas/papéis/conexões preservados. DOC/Fact, Rivet, Sentinel e TESTES também confirmaram. Nenhuma configuração global de sandbox foi alterada.
+
+Coleta visual futura: Acess fica com foco/semântica/contraste/reflow; UX com jornadas/layout e pendências PUI-12/PUI-13; TESTES integra resultados e valida módulos/estado e regressões automatizadas. Não duplicar execuções já comprovadas. Runtime segue sob o Maestro central e não deve ser inferido pela existência dos portais.
+
+Limites mantidos: 488 atributos Rust/22 chamadas JS do inventário eram contagens estáticas, não testes rodados. Sem Windows/segunda máquina, leitor assistivo real, zoom Tauri, portais do sistema ou mouse físico comprovado. O incidente do cursor não é resolvido por estas propostas.
+
+### Atualização S9 · 29/10, integração em andamento
+- Base: 38 Node verdes na entrega inicial; warden encontrou W-S9-01 (fallback retirava botão do Tab) e W-S9-02 (polling perdia conclusão explícita). FIX1 tratou ambos, 20 testes da base verdes; re-review aprovou spec e qualidade, sem achado aberto no delta. Consumidores UX liberados.
+- Portal: runtime único iniciado pelo Maestro, PID 2008564, HTTP200 em127.0.0.1:5174, log /tmp/clipsync-s9-ui.log. Acess/UX coletam base/Clipboard/Diagnóstico em recortes separados. hasFocus=false e zero focusin limitam prova de foco voluntário; não apresentar activeElement como Tab/leitor real.
+- C01: desenho completo aprovado por Sentinel, API/posse registradas §15.7 e implementação Rivet em curso; mocks preservados até fecho da coleta BASE. Bootstrap pausado+hotkeys atrasados foram corrigidos pelo backend com prova fake; não físicos.
+- Integração Cargo: primeira tentativa ampla do Rivet encontrou dois patterns ModuleInput sem context; backend corrigiu ambos e informou clippy dos quatro crates aprovado. O erro de compilação não é execução integral da suite. Janela final TESTES ainda não liberada.
+- Cobertura SEG complementar em /tmp/clipsync-s9-seg-cobertura.md: B01/B03/B05/B07 exigem desenho próprio; B09 precisa complemento no restart legado/modo de clipboard e bandeja. H03 exige decisão de retenção/remoção e não autoriza apagar perfil; históricos/hipóteses/provas físicas continuam separados.
+
+
+### S9 · revisão das entregas e coleta de consumidores (29/10/2026)
+- BASE: revisão após FIX1 aprovada; geometria Clipboard/Diagnóstico em32ensaios e D-S9-01 retestado em4casos. Prova DOM tem limite hasFocus=false/zero focusin; leitor/teclas reais não certificados. C14 configuração aprovada, zoom Tauri real pendente.
+- Layout/Dispositivos/Pareamento: revisão de código encerrada após FIX2, coordenadas normalizadas da resposta; coleta nos andares Acess/UX em andamento, fontes congeladas em /tmp/clipsync-s9-consumidores-portal-manifest.json.
+- Preferências/onboarding/B09 frontend:35testes focados verdes na entrega, revisão encontrou W-S9-PREF-01 (aviso antigo oculta tentativa atual sem confirmação). Duas regressões RED confirmadas; patch de produto aguarda fechamento da coleta que usa a mesma casca. Não interpretar esses REDs intencionais como falha antiga da base.
+- C01+B09 Rust/mocks: revisão Sentinel devolveu3Important (preflight de tabelas, observação externa desconhecida e reserva de bootstrap tardio); Rivet executa FIX1 focal. Relatório /tmp/clipsync-s9-modulos-review-seguranca.md.
+- H01/B02:330testes dirigidos/3manuais ignorados na entrega, revisão encontrou2Important de fronteira stop/join com fila cheia e rearme antes de controles atuais; builder executa FIX1. Wrapper WTS conferido por leitura independente, sem execução Windows. Relatório /tmp/clipsync-s9-backend-review.md.
+- B01/B03/B05/B07: desenho complementar aprovado com ressalvas incorporadas, plano/posse final em preparação; não implementados ainda. H03 requer decisão específica de retenção, sem exclusão de perfil.
+- TESTES: matriz em /tmp/clipsync-s9-testes-matriz.txt; suíte integrada aguarda diffs corrigidos e estáveis. Nenhum novo commit/push/tag/release. Instalação/prova física Windows/Linux e CI do app Tauri continuam pendentes.
+
+
+### S9 · retomada após recuperação do IPC, 29/10/2026
+O Maestro confirmou acesso ao socket com escalada normal. Acess/UX/DOC/TESTES receberam a retomada e atingiram o limite gratuito OpenCode; SEG/Rivet/Sentinel falharam no bootstrap Codex mesmo após um reinício autorizado. Os nós/papéis/notas foram preservados. Os andares não estão operacionais; auxiliares nativos executam as posses já autorizadas. Não interpretar recibos de leitura como implementação ou teste concluído.
+
+- Evidência focal FIX1 I1/I2 recuperada: 9 testes de parada/controle/bridge e4 de retarget/zonas passaram,0falhas/ignorados; seis hashes conferem com revisão independente antes/depois. Relatório durável `.superpowers/sdd/2026-10-28-s9-seguranca/retomada-fix1-execucao.md`. Gate de handoff input para B07 liberado, mantendo limites fake/Linux.
+- W-S9-PREF-01 aplicado ao app.js: composição conserva incerteza atual e aviso persistente. Cinco testes focais verdes e40/40 nos sete arquivos de interface executados em processos separados; o lote anterior sem isolamento entre arquivos teve3falhas e foi preservado no relatório. Revisão integrada em andamento, portal pendente. `.superpowers/sdd/2026-10-29-s9-consumidores/retomada-interface-report.md`.
+- Pareamento: correções de foco na espera, alerta terminal duplicado e caminho de corrigir endereço ainda em preparação; coleta anterior liberada sem afirmar aprovação integral. UI tem dono nativo exclusivo.
+- B01: implementação parcial de Rivet preservada e em conclusão por novo dono nativo. B07: dono exclusivo iniciou TDD após handoff; adendo permite somente snapshot inicial nos starts de dois harnesses de pressão, preservando assertions/gates.
+- C01+B09 FIX1, B03, WTS e código B05 mantêm aprovações recebidas no histórico; artefatos antigos /tmp não estão acessíveis nesta retomada. Não reconstituir logs como originais. Onze testes B05 Windows ainda sem execução nativa; suíte integrada S9, appTauri, zoom real, leitores e duas máquinas continuam pendentes.
+- Notas atuais copiadas sem edição em `.superpowers/retomada-s9-2026-10-29/`. Runtime5174 sem listener e curl recusado nesta conferência; somente Maestro pode iniciar outro. Sem commit/push/tag/release.
+
+### Continuidade após troca de sessão · 29/10/2026
+Os relatórios duráveis sobreviveram; os auxiliares nativos anteriores não constam como ativos. Novo dono B07 continua a implementação parcial pelo task-4-report.md, sem reaplicar scripts /tmp ausentes. B01 entregue (task-3-report.md) e Pareamento round3 entregue (retomada-interface-report.md); ambos congelados para revisão independente, sem declarar aceite antes do parecer. A revisão integrada do aviso W-S9-PREF-01 segue aprovada.
+A sessão atual não recebeu MAESTRI_SOCKET nem MAESTRI_CLI; o binário /opt/Maestri/resources/cli/maestri existe e debug informa que só funciona dentro de terminal Maestri. Porta5174 sem listener. Não confundir esse estado com o acesso anterior por escalada nem com a janela minimizada da coleta passada. Não recriar nós/conexões por inferência. Portais/interação real pendentes; código/revisões/testes locais continuam autorizados. Nenhum commit/push/release.
+
+### Retomada após reinício do servidor · 29/10/2026, noite
+Acesso ao IPC respondeu HTTP 200 no diagnóstico, mas `maestri list` identificou esta conversa como **Revisor · achados #2**, ligada a Maestro #2/Signal e a um portal Mercado/Concorrência. Isso diverge do papel autorizado Maestro · scaffold. Nenhuma nota, identidade, conexão ou terminal desse grafo foi alterado. Porta 5174 sem listener; não há runtime iniciado nesta retomada. Validação pelos portais e reativação dos andares aguardam vínculo correto.
+
+Os auxiliares nativos foram retomados após conferir snapshots e logs existentes: `/root/b07_finaliza` é o único editor B07; `/root/pareamento_r4_finaliza` conclui B-R1 round4 nos dois arquivos de pareamento; `/root/suporte_i01_finaliza` corrige a anonimização de nomes históricos apenas em diag.rs e seu teste. A reinicialização interrompeu os auxiliares antes de novas entregas; confirmações de atividade foram recebidas na retomada. Posse exclusiva e autorização 2/3/4 mantidas, sem commit/push/release.
+
+B01 foi aprovado no delta por revisão independente (`task-3-review.md`); I01 é achado preexistente separado. Pareamento mantém B-R1 aberto até o re-review. B07 tem FIX1 9/9 registrado, mas o teste novo de controle durante cleanup ainda falhou na última execução salva; a fatia não está aprovada. A suíte integrada Node anterior teve 158/158 e antecede a correção round4, portanto não a comprova.
+
+
+## Retomada 30/10/2026 · identidade central correta
+maestri list confirmou Maestro · scaffold, maestro:true e os cinco coordenadores existentes. Reativação enviada uma vez em ask --batch, prompts preservados em .superpowers/retomada-s9-2026-10-30/reativacao-prompts.json; respostas ainda pendentes, não declarar andares operacionais por mero envio. Sem troca de nó/programa/permissão.
+B01 revisado por fonte/logs, I01 nomes históricos corrigido com testes focais verdes e em revisão independente. Pareamento round4 tem38/38verdes, falta alinhar inicializador do harness consumidores e re-review. B07 novos casos11/11 verdes e suite input concluída segundo autor, manifesto/review pendentes. Aviso W-S9-PREF-01 integrado/revisado. C01+B09FIX1/B03/WTS/B05 preservados. Nenhuma aprovação Tauri/Windows físico/zoom/leitor/mouse real.
+Posse produto: nativos b07_finaliza input; pareamento_r4_finaliza pareamento+testes; I01 diagUI congelado para reviewer. DOC recebeu posse apenas ui/README.md e docs/telas.md. Maestro central mantém contrato/contexto/workboard e runtime. Porta5174 não iniciada ainda. Sem commit/push/release.

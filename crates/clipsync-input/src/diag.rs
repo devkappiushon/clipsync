@@ -75,7 +75,7 @@ pub async fn diagnose() -> Vec<DiagItem> {
             item(
                 "tela bloqueada",
                 DiagStatus::Warn,
-                "o logind não respondeu: a tela é tratada como desbloqueada",
+                "o logind não respondeu: o controle permanece bloqueado até confirmar o estado da tela",
             )
         });
     }

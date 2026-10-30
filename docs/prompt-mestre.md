@@ -1,6 +1,6 @@
 # Prompt mestre v4 · ClipSync: teclado, mouse e clipboard entre meus computadores
 
-> Revisado em 2026-10-27, 11h40. Esta v4 **vence** v3, v2 e o original (`prompt_mestre_clipsync.md`). O original continua como anexo detalhado do módulo de clipboard (seções 5 a 39). Novidades da v4: módulos opcionais (§13), o MVP testável hoje (§14) e as telas do Figma (§15).
+> Revisado em 2026-10-27, 11h40. Esta v4 **vence** v3, v2 e o original (`prompt_mestre_clipsync.md`, hoje `docs/prompt-mestre-anexo-original.md`). O original continua como anexo detalhado do módulo de clipboard (seções 5 a 39). Novidades da v4: módulos opcionais (§13), o MVP testável hoje (§14) e as telas do Figma (§15).
 > "ClipSync" é nome de código. Renomear antes do primeiro release, porque o nome já não descreve o produto.
 
 ## 0. O que mudou da v2 para a v3
