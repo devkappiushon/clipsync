@@ -54,6 +54,10 @@
   margin-top: var(--s-1);
 }
 
+.dispositivos__painel {
+  min-width: 0;
+}
+
 .dispositivos__painel:empty {
   display: none;
 }
@@ -65,10 +69,20 @@
   gap: var(--s-2);
 }
 
+.dispositivos__titulo > h2 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .dispositivos__permissoes {
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
+}
+
+/* Nomes sem espaços devem quebrar sem disputar largura com o interruptor. */
+.dispositivos__permissoes .opcao__texto {
+  overflow-wrap: anywhere;
 }
 
 .dispositivos__painel .cartao {
