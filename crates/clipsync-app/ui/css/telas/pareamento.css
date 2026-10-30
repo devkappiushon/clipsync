@@ -15,6 +15,12 @@
   max-width: 720px;
 }
 
+/* O nome do par também aparece nas instruções e na orientação das permissões. */
+.pareamento__colunas .cartao > p,
+.pareamento__permissoes .opcao__texto {
+  overflow-wrap: anywhere;
+}
+
 .pareamento__confirmacao {
   align-items: center;
   text-align: center;
