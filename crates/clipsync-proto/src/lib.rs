@@ -10,6 +10,7 @@ pub mod ids;
 pub mod input;
 pub mod limits;
 pub mod module;
+pub mod monitors;
 pub mod msg;
 mod redact;
 #[cfg(feature = "testing")]
@@ -24,6 +25,7 @@ pub use ids::*;
 pub use input::*;
 pub use limits::*;
 pub use module::*;
+pub use monitors::*;
 #[cfg(feature = "testing")]
 pub use testing::*;
 pub use time::*;

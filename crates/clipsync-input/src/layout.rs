@@ -131,12 +131,30 @@ pub enum LayoutError {
     UnsupportedVersion(u32),
     InvalidField(String),
     DuplicateId(String),
-    UnknownDevice { link: String },
-    SameDevice { link: String },
-    EmptySegment { link: String },
-    SegmentOutOfRange { link: String },
-    SegmentOverlap { link: String, other: String },
+    UnknownDevice {
+        link: String,
+    },
+    SameDevice {
+        link: String,
+    },
+    EmptySegment {
+        link: String,
+    },
+    SegmentOutOfRange {
+        link: String,
+    },
+    SegmentOverlap {
+        link: String,
+        other: String,
+    },
     ManualBarrierConflict,
+    Busy,
+    BackupConflict,
+    StaleRev,
+    /// The new revision is visible, but the directory sync failed after rename.
+    PublishedUnconfirmed {
+        rev: u64,
+    },
 }
 
 impl LayoutError {
@@ -154,6 +172,10 @@ impl LayoutError {
             Self::SegmentOutOfRange { .. } => "segment_out_of_range",
             Self::SegmentOverlap { .. } => "segment_overlap",
             Self::ManualBarrierConflict => "manual_barrier_conflict",
+            Self::Busy => "busy",
+            Self::BackupConflict => "backup_conflict",
+            Self::StaleRev => "stale_rev",
+            Self::PublishedUnconfirmed { .. } => "published_unconfirmed",
         }
     }
 }
@@ -172,6 +194,12 @@ impl fmt::Display for LayoutError {
             Self::SegmentOutOfRange { link } => msg::layout_out_of_range(link),
             Self::SegmentOverlap { link, other } => msg::layout_overlap(link, other),
             Self::ManualBarrierConflict => msg::LAYOUT_MANUAL_CONFLICT.to_owned(),
+            Self::Busy => "layout em uso".into(),
+            Self::BackupConflict => "backup anterior difere do layout atual".into(),
+            Self::StaleRev => "revisão do layout mudou".into(),
+            Self::PublishedUnconfirmed { rev } => {
+                format!("revisão {rev} publicada; durabilidade não confirmada")
+            }
         };
         f.write_str(&s)
     }
