@@ -96,7 +96,7 @@ export default function montar({ assinar }) {
           itens.flatMap(itemDiagnostico),
         ),
         pares.length === 0
-          ? estadoVazio({ titulo: "Nenhum par", texto: "Pareie uma máquina em Dispositivos para ver estado, endereço e latência aqui." })
+          ? estadoVazio({ titulo: "Nenhum par", texto: "Pareie um computador em Dispositivos para acompanhar o estado e o endereço disponível." })
           : [
               tabela({
                 legenda: "Pares e rede",
@@ -114,7 +114,7 @@ export default function montar({ assinar }) {
                 linhas: pares,
                 chaveLinha: (p) => p.peer_id,
               }),
-              !recurso("peer_rtt") && h("p", { class: "nota" }, "RTT e latência de entrada por par: ", indisponivel(), "."),
+              !recurso("peer_rtt") && h("p", { class: "nota" }, "RTT e latência de entrada por computador: ", indisponivel(), ". Essas medições ainda não foram implementadas."),
             ],
       ],
     });

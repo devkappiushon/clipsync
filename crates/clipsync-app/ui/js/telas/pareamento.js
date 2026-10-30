@@ -6,8 +6,9 @@ import { aviso, cabecalho, estadoErro } from "../areas.js";
 import { abrirDialogo, botao, campo, cartao, esqueleto, interruptor, segmentado, selo } from "../componentes.js";
 import { criarAnunciador, guardarFoco, interacaoAtual, restaurarFoco } from "../acessibilidade.js";
 import { h, trocar } from "../dom.js";
-import { indicarParNoLayout, recurso } from "../estado.js";
-import { INDISPONIVEL, mensagemDe } from "../formatar.js";
+import { indicarParNoLayout, obterApp, recurso } from "../estado.js";
+import { mensagemDe } from "../formatar.js";
+import { motivoInputIndisponivel } from "../disponibilidade.js";
 
 const JANELA_S = 120;
 
@@ -462,7 +463,7 @@ export default function montar({ ir, assinar }) {
     const ativo = estado.step === "permissions";
     const par = estado.peer ?? { name: "a outra máquina" };
     const motivoClipboard = disponiveis.clipboard ? null : "Um dos lados não tem o módulo de clipboard.";
-    const motivoInput = !recurso("input") ? INDISPONIVEL : disponiveis.input ? null : "O par não tem o módulo de teclado e mouse.";
+    const motivoInput = !recurso("input") ? motivoInputIndisponivel(obterApp()) : disponiveis.input ? null : "Não foi possível confirmar a disponibilidade de teclado e mouse para este pareamento.";
     const nota = ativo ? null : estado.step === "waiting_peer" ? "Suas escolhas foram enviadas." : "Libera depois de confirmar o código.";
     return h(
       "section",
@@ -520,7 +521,10 @@ export default function montar({ ir, assinar }) {
             confiancaTotal = true;
           },
         }),
-        interruptor({ rotulo: `Controlar ${par.name} a partir deste computador`, descricao: `Autorize a entrada em ${par.name}, na tela Dispositivos dele. ${INDISPONIVEL}`, marcado: false, desabilitado: true }),
+        h("div", { class: "opcao" }, h("div", { class: "opcao__texto" },
+          h("p", { class: "opcao__rotulo" }, `Controlar ${par.name} a partir deste computador`),
+          h("p", { class: "opcao__descricao" }, `Para controlar ${par.name} a partir deste computador, autorize este computador na tela Dispositivos de ${par.name}. O ClipSync não informa aqui se essa autorização já foi concedida.`),
+        )),
       ),
       h(
         "div",

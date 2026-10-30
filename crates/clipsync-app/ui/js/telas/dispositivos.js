@@ -8,6 +8,7 @@ import { criarAnunciador, guardarFoco, restaurarFoco } from "../acessibilidade.j
 import { h, trocar } from "../dom.js";
 import { indicarParNoLayout, obterApp, observarApp, recurso } from "../estado.js";
 import { INDISPONIVEL, formatarMomento, mensagemDe, seloDispositivo } from "../formatar.js";
+import { motivoInputIndisponivel } from "../disponibilidade.js";
 
 import { resumoTravessia } from "../travessia-vista.js";
 
@@ -156,8 +157,8 @@ export default function montar({ ir, assinar }) {
     const inputLocal = recurso("input");
     const inputRemoto = dispositivo.remote_modules.input === true;
     const bloqueado = dispositivo.state === "blocked" ? "Computador bloqueado. Use Reparear para renovar a confiança." : null;
-    const motivoClipboard = bloqueado ?? (!clipboardLocal ? "O módulo de clipboard está desligado nesta máquina." : !clipboardRemoto ? "O par não tem o módulo de clipboard." : null);
-    const motivoInput = bloqueado ?? (!inputLocal ? INDISPONIVEL : !inputRemoto ? "O par não tem o módulo de teclado e mouse." : null);
+    const motivoClipboard = bloqueado ?? (!clipboardLocal ? "O módulo de clipboard está desligado nesta máquina." : !clipboardRemoto ? `Não foi possível confirmar os recursos de ${dispositivo.name}.` : null);
+    const motivoInput = bloqueado ?? (!inputLocal ? motivoInputIndisponivel(app) : !inputRemoto ? `Não foi possível confirmar os recursos de ${dispositivo.name}.` : null);
 
     const permissoes = h(
       "div",
@@ -197,12 +198,10 @@ export default function montar({ ir, assinar }) {
           return gravarPermissoes({ input_in: true }, true);
         },
       }),
-      interruptor({
-        rotulo: `Controlar ${dispositivo.name} a partir deste computador`,
-        descricao: `Autorize a entrada em ${dispositivo.name}, na tela Dispositivos dele. ${INDISPONIVEL}`,
-        marcado: false,
-        desabilitado: true,
-      }),
+      h("div", { class: "opcao" }, h("div", { class: "opcao__texto" },
+        h("p", { class: "opcao__rotulo" }, `Controlar ${dispositivo.name} a partir deste computador`),
+        h("p", { class: "opcao__descricao" }, `Para controlar ${dispositivo.name} a partir deste computador, autorize este computador na tela Dispositivos de ${dispositivo.name}. O ClipSync não informa aqui se essa autorização já foi concedida.`),
+      )),
       erroPainel,
     );
 

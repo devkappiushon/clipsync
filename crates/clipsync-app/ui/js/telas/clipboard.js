@@ -70,15 +70,16 @@ export default function montar({ ir, assinar }) {
     return h(
       "div",
       { class: "clipboard__estado" },
-      !dados.enabled && h("div", { class: "aviso aviso--aviso" }, h("p", null, "O módulo de clipboard está desligado neste computador. Nada entra nem sai; a caixa fica vazia.")),
+      dados.enabled === false && h("div", { class: "aviso aviso--aviso" }, h("p", null, "O módulo de clipboard está desligado neste computador. Nada entra nem sai; a caixa fica vazia.")),
       cartao({
         filhos: [
           h(
             "dl",
             { class: "clipboard__faixa" },
-            celula("Módulo", dados.enabled ? selo("ok", "ligado") : selo("neutro", "desligado")),
+            celula("Módulo", dados.enabled === true ? selo("ok", "ligado") : selo("neutro", dados.enabled === false ? "desligado" : "não confirmado")),
             celula("Adaptador", dados.adapter ? h("span", { class: "mono" }, dados.adapter) : h("span", { class: "muted" }, "nenhum")),
-            celula("Plataforma", seloClassificacao(dados.classification)),
+            celula("Plataforma", dados.enabled === true ? seloClassificacao(dados.classification)
+              : selo("neutro", dados.enabled === false ? "não avaliada com o módulo desligado" : "estado da plataforma não confirmado")),
             celula("Último evento", dados.last_event ?? h("span", { class: "muted" }, "nenhum"), "clipboard__celula--larga"),
             celula("Último bloqueio", dados.last_block ?? h("span", { class: "muted" }, "nenhum"), "clipboard__celula--larga"),
           ),
