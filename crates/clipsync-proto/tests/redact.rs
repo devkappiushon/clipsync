@@ -107,3 +107,51 @@ fn control_messages_roundtrip_as_json() {
         serde_json::from_slice(&serde_json::to_vec(&resp).unwrap()).unwrap();
     assert!(matches!(back, ControlResponse::Error { .. }));
 }
+
+#[test]
+fn v4_inventory_exposes_only_public_monitor_fields() {
+    let inventory = MonitorInventory {
+        rev: 1,
+        space: CoordinateSpace::Logical,
+        source: GeometrySource::Observed,
+        capabilities: MonitorCapabilities {
+            internal_edges: false,
+            positioned_return: false,
+            route_receiver: true,
+        },
+        monitors: vec![MonitorInfo {
+            uid: MonitorUid([1; 16]),
+            label: "Tela".into(),
+            rect: NativeRect {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            },
+            scale: 1.0,
+        }],
+    };
+    let message = InputMsg::InventoryV4(inventory);
+    let json = serde_json::to_value(&message).unwrap();
+    let fields: Vec<_> = json["InventoryV4"]["monitors"][0]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(fields, ["label", "rect", "scale", "uid"]);
+    let serialized = serde_json::to_string(&message).unwrap().to_lowercase();
+    let debug = format!("{message:?}").to_lowercase();
+    for private in [
+        "path",
+        "edid",
+        "fingerprint",
+        "aliases",
+        "pressed",
+        "code",
+        "4242",
+    ] {
+        assert!(!serialized.contains(private), "{serialized}");
+        assert!(!debug.contains(private), "{debug}");
+    }
+}

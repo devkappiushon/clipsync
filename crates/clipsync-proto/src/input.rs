@@ -6,6 +6,7 @@ use crate::ids::PeerId;
 use crate::limits::{MAX_EVENTS_PER_DATAGRAM, MAX_LAYOUT_LINKS, MAX_ZONES};
 use crate::redact::Redacted;
 use crate::wire::{RejectReason, Validate, WireError, validate_monitor_name};
+use crate::{EnterRoutes, LayoutOfferV4, MonitorInventory, ReturnedRoute};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Edge {
@@ -127,6 +128,11 @@ pub enum InputMsg {
         session: u32,
         reason: RejectReason,
     },
+    // ---- protocol 4: keep the positional tags of all earlier variants ----
+    InventoryV4(MonitorInventory),
+    EnterRoutes(EnterRoutes),
+    ReturnedRoute(ReturnedRoute),
+    LayoutOfferV4(LayoutOfferV4),
 }
 
 /// One local monitor, in logical px of the desktop.
@@ -263,6 +269,10 @@ impl Validate for InputMsg {
                 }
             }
             InputMsg::Refused { .. } => Ok(()),
+            InputMsg::InventoryV4(i) => i.validate(),
+            InputMsg::EnterRoutes(e) => e.validate(),
+            InputMsg::ReturnedRoute(r) => r.validate(),
+            InputMsg::LayoutOfferV4(o) => o.validate(),
         }
     }
 }

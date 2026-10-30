@@ -163,7 +163,7 @@ fn validate_refuses_pos_out_of_range_nan_empty_way_back_and_a_bad_monitor_name()
 
 #[test]
 fn min_version_is_3_only_for_the_new_variants() {
-    assert_eq!((PROTOCOL_VERSION, MIN_PROTOCOL_VERSION), (3, 1));
+    assert_eq!((PROTOCOL_VERSION, MIN_PROTOCOL_VERSION), (4, 1));
     for m in [
         span("eDP-1", 0.5, 0.0, 1.0),
         returned(0.5),

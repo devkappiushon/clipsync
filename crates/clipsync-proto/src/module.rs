@@ -57,6 +57,12 @@ pub enum SendError {
 pub fn min_version(msg: &ModuleMsg) -> u16 {
     match msg {
         ModuleMsg::Input(
+            InputMsg::InventoryV4(_)
+            | InputMsg::EnterRoutes(_)
+            | InputMsg::ReturnedRoute(_)
+            | InputMsg::LayoutOfferV4(_),
+        ) => 4,
+        ModuleMsg::Input(
             InputMsg::EnterSpan { .. } | InputMsg::Returned { .. } | InputMsg::Refused { .. },
         ) => 3,
         ModuleMsg::Input(
@@ -217,13 +223,14 @@ pub trait Module: Send + 'static {
 enum Gate {
     /// Out: clipboard_out. In: clipboard_in. Pause blocks.
     ClipOffer,
-    /// `Enter`, `EnterAt` and `EnterSpan`. Out: no local permission. In: input_in. Pause blocks.
+    /// `Enter`, `EnterAt`, `EnterSpan` and `EnterRoutes`. Out: no local permission. In: input_in. Pause blocks.
     InputEnter,
-    /// Out: input_in (I only reveal my monitors to whoever may control me). In: open.
+    /// `Zones`/`InventoryV4`. Out: input_in (I only reveal monitors to whoever may control me). In: open.
     /// Pause ignored.
     Zones,
-    /// Out: no local permission. In: input_in. Pause ignored.
+    /// `LayoutOffer`/`LayoutOfferV4`. Out: no local permission. In: input_in. Pause ignored.
     LayoutOffer,
+    /// Includes returned routes: the runtime checks the opening session and connection.
     Open,
 }
 
@@ -231,10 +238,15 @@ fn gate(msg: &ModuleMsg) -> Gate {
     match msg {
         ModuleMsg::Clip(ClipMsg::Offer(_)) => Gate::ClipOffer,
         ModuleMsg::Input(
-            InputMsg::Enter { .. } | InputMsg::EnterAt { .. } | InputMsg::EnterSpan { .. },
+            InputMsg::Enter { .. }
+            | InputMsg::EnterAt { .. }
+            | InputMsg::EnterSpan { .. }
+            | InputMsg::EnterRoutes(_),
         ) => Gate::InputEnter,
-        ModuleMsg::Input(InputMsg::Zones { .. }) => Gate::Zones,
-        ModuleMsg::Input(InputMsg::LayoutOffer(_)) => Gate::LayoutOffer,
+        ModuleMsg::Input(InputMsg::Zones { .. } | InputMsg::InventoryV4(_)) => Gate::Zones,
+        ModuleMsg::Input(InputMsg::LayoutOffer(_) | InputMsg::LayoutOfferV4(_)) => {
+            Gate::LayoutOffer
+        }
         ModuleMsg::Clip(ClipMsg::Ack(_))
         | ModuleMsg::Input(
             InputMsg::Leave { .. }
@@ -242,18 +254,19 @@ fn gate(msg: &ModuleMsg) -> Gate {
             | InputMsg::StatsRequest { .. }
             | InputMsg::Stats(_)
             | InputMsg::Returned { .. }
-            | InputMsg::Refused { .. },
+            | InputMsg::Refused { .. }
+            | InputMsg::ReturnedRoute(_),
         ) => Gate::Open,
     }
 }
 
 /// Outbound, checked in THIS ORDER, first failure wins:
 /// LocalModuleDisabled -> RemoteModuleDisabled -> NotAuthorized -> Paused.
-/// NotAuthorized on the way out exists for Clip::Offer (perms.clipboard_out) and Input::Zones
-/// (perms.input_in); Enter, EnterAt, EnterSpan and LayoutOffer have no local outbound permission
-/// (control permission is checked at the DESTINATION). Zones and LayoutOffer ignore pause.
-/// Ack, Stats, StatsRequest, Leave, ReleaseAll, Returned and Refused ignore pause and permission.
-/// The protocol version (`min_version`, `RemoteTooOld`) is checked by the host, after this.
+/// Clipboard offers require clipboard_out; Zones and InventoryV4 require input_in.
+/// Entry and layout offers have no outbound grant: control permission is checked at the
+/// destination. Pause blocks clipboard offers and entries. Open messages (including both
+/// returned variants) only require the local module; their session authority is runtime-owned.
+/// The protocol version (`min_version`, `RemoteTooOld`) is checked by the host after this.
 pub fn authorize_outbound(
     local: ModuleSet,
     perms: &PeerPerms,
@@ -302,11 +315,10 @@ pub fn authorize_outbound_datagram(
 }
 
 /// Inbound, checked in THIS ORDER: ModuleDisabled -> NotAuthorized -> Paused.
-/// Clip::Offer needs perms.clipboard_in; Enter, EnterAt, EnterSpan and LayoutOffer need
-/// perms.input_in. Pause blocks Offer, Enter, EnterAt and EnterSpan; LayoutOffer ignores it.
-/// Zones, Ack, Stats, StatsRequest, Leave, ReleaseAll, Returned and Refused ignore pause and
-/// permission, so the MODULE only acts on them if the session/id belongs to the sender (for
-/// Returned and Refused, a session this node opened to that peer).
+/// Clipboard offers require clipboard_in; all entry and layout-offer variants require
+/// input_in. Pause blocks clipboard offers and entries; layout offers ignore it.
+/// Inventories and open messages ignore permission and pause. The runtime must bind returned
+/// routes to the peer, connection and session this node opened; they grant no reverse control.
 pub fn authorize_inbound(
     local: ModuleSet,
     perms: &PeerPerms,

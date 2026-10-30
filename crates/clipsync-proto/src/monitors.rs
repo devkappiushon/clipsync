@@ -83,6 +83,7 @@ pub struct MonitorInventory {
     pub space: CoordinateSpace,
     pub source: GeometrySource,
     pub capabilities: MonitorCapabilities,
+    #[serde(deserialize_with = "crate::limits::deserialize_monitors")]
     pub monitors: Vec<MonitorInfo>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
