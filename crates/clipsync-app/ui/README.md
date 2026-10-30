@@ -1,6 +1,6 @@
 # Interface do ClipSync (ui)
 
-Frontend estático do app Tauri 2: HTML, CSS e JavaScript puros, sem npm, sem bundler e sem conteúdo remoto. A casca (`crates/clipsync-app`) serve esta pasta como `frontendDist`. A lógica das telas fica no crate `clipsync-ui`; aqui só há apresentação. Contrato: `docs/contrato.md` §12 e §14.
+Frontend estático do app Tauri 2: HTML, CSS e JavaScript puros, sem npm, sem bundler e sem conteúdo remoto. A casca (`crates/clipsync-app`) serve esta pasta como `frontendDist`. A lógica das telas fica no crate `clipsync-ui`; aqui só há apresentação. Contrato: `docs/contrato.md` §12, §14 e §16.1.
 
 ## Regras que valem em todo arquivo
 
@@ -9,7 +9,7 @@ Frontend estático do app Tauri 2: HTML, CSS e JavaScript puros, sem npm, sem bu
 - Sem travessão em texto de interface. Separe com vírgula, dois-pontos, `·` ou parênteses.
 - Tema claro e escuro por tokens em `css/tokens.css` (escala de 8 pt, um raio, uma elevação). Nada de cor solta nas telas.
 - Todo botão assíncrono passa por `comCarregamento` (o `botao()` já faz isso). Toda tela tem estado vazio e estado de erro com a `message` do agente.
-- Recurso sem backend aparece desabilitado com "indisponível nesta versão", conforme `app_state.features`. Nunca fica escondido.
+- Recurso futuro sem backend permanece visível e desabilitado, nunca escondido, com o texto de indisponibilidade conforme `app_state.features`. Num ramo já desabilitado, a explicação separa suporte local ausente, módulo comprovadamente desligado e estado desconhecido, nessa ordem; booleano remoto falso não comprova módulo ausente (contrato §16.1).
 
 Critério de pronto da interface: §12.9 item 5 do contrato. Ele busca estilo em linha, atribuição de HTML e o caractere de travessão nesta pasta, e não pode achar nada. Por isso este README descreve essas regras sem escrevê-las.
 
@@ -136,6 +136,21 @@ O agrupamento é do agente, não da tela. `recent_blocks` traz no máximo 20 gru
 - Contagem acima do inteiro seguro do JavaScript aparece como "pelo menos N", porque o valor acima disso não é exato na tela.
 - A cadência de 30 s e o teto de notificação são da casca, não desta pasta. O Diagnóstico continua mostrando a história observada mesmo com a notificação de bloqueio desligada.
 
+## Clareza da disponibilidade (S10)
+
+A fonte deste repositório está à frente da v0.4.0 publicada: a clareza abaixo não está nos instaladores daquela versão. O contrato é o §16.1 e a spec fica em `docs/superpowers/specs/2026-10-30-clareza-disponibilidade-design.md`.
+
+- `js/disponibilidade.js` devolve o motivo de input indisponível em três ramos, nesta ordem: `input_supported === false`, `modules.input === false` e não confirmado. É texto de apresentação, nunca gate: `recurso("input")` continua decidindo a habilitação, e os dois não podem ser fundidos nem trocados.
+- Só o ramo de módulo desligado nomeia Preferências. Suporte ausente e estado desconhecido não mandam trocar interruptor.
+- Dispositivos e Pareamento chamam o helper dentro do ramo já bloqueado. Bloqueio de confiança e etapa do pareamento continuam com precedência, e motivo nulo não pode virar não nulo nem o inverso.
+- `remote_modules` falso não significa módulo removido: o texto é "Não foi possível confirmar os recursos de {nome}." em Dispositivos e "Não foi possível confirmar a disponibilidade de teclado e mouse para este pareamento." em Pareamento, sem apontar o par como causa.
+- O controle de conceder entrada nesta máquina mantém valor, confirmação e payload. A orientação sobre controlar o outro computador é texto estático no mesmo grupo, sem interruptor e sem escrita.
+- Clipboard tem três estados: `enabled === true` mostra a classificação recebida, `=== false` mostra "não avaliada com o módulo desligado" e a ausência do booleano mostra estado não confirmado. Desligado não é incompatibilidade de plataforma.
+- Diagnóstico não promete latência: sem pares, orienta acompanhar estado e endereço disponível, e a nota diz que a medição por computador não foi implementada.
+- Nome longo quebra por `overflow-wrap` no CSS de Dispositivos e de Pareamento. Não resolva com corte, reticências, `overflow` oculto ou fonte menor.
+
+Os testes focais ficam em `ui-dev/testes/disponibilidade.test.mjs` e montam as telas de produção com API simulada.
+
 ## Limites do simulador
 
 O simulador prova a tela e o contrato dos comandos, não o agente. Nesta pasta, tudo que aparece em `effects`, `observed`, `recent_blocks` e `pause_warning` é escrito à mão em `ui-dev/mock/`.
@@ -143,7 +158,7 @@ O simulador prova a tela e o contrato dos comandos, não o agente. Nesta pasta, 
 - `cenario=b01-grupos` cobre legado sem agregação, grupos repetidos, causa geral sem par e contador no teto. Ele não cobre a agregação dinâmica, a cadência de 30 s nem o teto de 20 grupos, que são do agente e da casca.
 - Reinício pausado, restauração da trava e estado desconhecido trocam `estado.agente` no mock; nenhum processo reinicia. Lock de configuração, gravação de `config.toml` e `state.toml` e reserva de listener são Rust.
 - Seguem sem prova: app Tauri real, zoom real, leitor assistivo e AT-SPI, clipboard do sistema, hooks, sessão WTS e desktop do Windows, travessia física e duas máquinas.
-- O ciclo de vida da captura (B07) segue em revisão, sem aceite. O round4 do Pareamento foi aprovado pelos revisores nativos, o que não é prova em portal, app real ou duas máquinas.
+- A S9 foi encerrada com revisão integrada aprovada e a v0.4.0 publicada a incorpora; o round4 do Pareamento foi aprovado pelos revisores nativos. Nenhuma dessas aprovações é prova em portal, app real, leitor assistivo ou duas máquinas.
 
 ## Acrescentar uma tela
 

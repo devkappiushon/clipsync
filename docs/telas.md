@@ -95,6 +95,8 @@ A consolidação tem 42 entradas brutas (17 do Access, 12 do Meridian e 13 do Ec
 
 ## S9 · estados das telas (2026-10-30)
 
+> **Leitura histórica, marcada em 30/10/2026 pela S10.** Este adendo descreve a S9 antes do fechamento documentado em `docs/workboard.md` e da publicação da v0.4.0 (`docs/evidencias/release-v0.4.0.md`). A linha de B07 em "O que segue sem aprovação" registra aquele momento e não é o estado atual: a revisão integrada da S9 foi aprovada e o FIX1 de B07 foi preservado nela. Nada disso é prova física, de travessia ou de tela em app nativo. Os achados e as evidências abaixo seguem como foram registrados.
+
 **Adendo novo, sem alterar a especificação acima nem a revisão de 28/10.** Registra o efeito das fatias C01, B09 e B01 da S9 nas telas, conforme `docs/contrato.md` §15.7, §15.8 e §15.10. Descreve comportamento de interface; o aceite de produto continua separado, com app Tauri real, leitor assistivo, zoom e travessia física pendentes (§15.4 item 7 e §15.6).
 
 ### 1. Onboarding, passo "O que sincronizar" (C01)
@@ -122,3 +124,37 @@ Novo cartão "Módulos", com os dois interruptores, "Aplicar módulos" e resumo 
 **B07:** o ciclo de vida da captura independente dos dados continua em revisão, sem aceite. Nenhuma tela deve ser descrita como prova desse comportamento.
 
 **Limites:** o simulador escreve `effects`, `observed`, `recent_blocks` e `pause_warning` à mão. `?cenario=b01-grupos` cobre repetições e contador no teto, mas não a agregação dinâmica, a cadência de 30 s nem o teto de 20 grupos; nenhum cenário reinicia processo. Medição de portal, zoom real, leitor assistivo e duas máquinas continuam fora desta rodada.
+
+## S10 · clareza da disponibilidade (30/10/2026)
+
+**Adendo novo, sem alterar a especificação acima nem os adendos de 28/10 e da S9.** Registra o efeito da S10 nas telas conforme `docs/contrato.md` §16.1 e a spec `docs/superpowers/specs/2026-10-30-clareza-disponibilidade-design.md`. Vale para a fonte deste repositório, que está à frente da v0.4.0 publicada (commit `6cc1384`, evidência em `docs/evidencias/release-v0.4.0.md`): os instaladores publicados não têm esta clareza. Nenhuma API, dependência, capability, protocolo, grant ou regra de habilitação muda nesta fatia.
+
+### 1. Por que um controle está desabilitado
+
+A regra antiga, "recurso sem backend aparece desabilitado com `indisponível nesta versão`", era ampla demais para explicar motivo. Recurso futuro sem backend continua visível e desabilitado, como manda §12.2 regra 6. Dentro de um ramo já desabilitado de Dispositivos e Pareamento, a descrição passa a separar três causas, nesta ordem: suporte explicitamente ausente (`input_supported === false`), módulo local comprovadamente desligado (`modules.input === false`) e estado não confirmado. Só a segunda orienta conferir Módulos em Preferências. Bloqueio de confiança e etapa do pareamento mantêm precedência. O helper é `crates/clipsync-app/ui/js/disponibilidade.js`, chamado apenas nesses ramos; os gates e os handlers continuam os mesmos.
+
+### 2. Disponibilidade remota não é prova de módulo ausente
+
+Booleano remoto falso deixa de ser lido como "o par não tem o módulo". Em Dispositivos, `remote_modules` falso nos dois módulos passa a "Não foi possível confirmar os recursos de {nome}." Em Pareamento, o motivo agregado de input passa a "Não foi possível confirmar a disponibilidade de teclado e mouse para este pareamento.", sem atribuir a causa ao outro computador. Conexão e versão conhecidas não demonstram o estado atual do módulo remoto, e a disponibilidade agregada dos dois lados não ganha causa exclusiva.
+
+### 3. Controle remoto: orientação estática, autorização no destino
+
+O interruptor sempre falso "Controlar {nome} a partir deste computador" sai de Dispositivos e de Pareamento e dá lugar a orientação estática no mesmo grupo: "Para controlar {nome} a partir deste computador, autorize este computador na tela Dispositivos de {nome}. O ClipSync não informa aqui se essa autorização já foi concedida." A autorização é feita no destino e a tela não afirma conhecê-la. O controle real de conceder entrada nesta máquina, seu valor e a confirmação de confiança total permanecem iguais; texto, navegação e teste não criam grant.
+
+### 4. Clipboard com o módulo desligado não avalia plataforma
+
+`enabled === false` mantém o aviso de módulo desligado e mostra a coluna Plataforma como "não avaliada com o módulo desligado", em tom neutro, sem inferir incompatibilidade. Ausência do booleano aparece como módulo "não confirmado" e "estado da plataforma não confirmado", que é estado desconhecido, não desligado. Com `enabled === true`, a classificação recebida continua aparecendo, sem afirmar validação física.
+
+### 5. Diagnóstico não promete latência
+
+O estado vazio de pares deixa de prometer latência e passa a orientar acompanhar estado e endereço disponível. A nota de métricas diz que as medições por computador ainda não foram implementadas. Esta versão não mede RTT nem latência de entrada por par, e o pareamento não deve prometer isso ao concluir.
+
+### 6. Nomes longos quebram sem truncamento
+
+`css/telas/dispositivos.css` e `css/telas/pareamento.css` ganharam `overflow-wrap: anywhere` nos textos de permissão com nome e no título da lista. A altura cresce e o texto aparece inteiro: não há corte, reticências, `overflow` oculto nem redução de fonte, e os interruptores e ações continuam alcançáveis.
+
+### Evidência e limites
+
+A revisão independente do delta de tela aprovou spec, qualidade e segurança dos textos, sem achado Critical, Important ou Minor, e confirmou que nenhum motivo nulo virou não nulo nem o inverso. A revisão estática do CSS também foi aprovada, com o reteste geométrico reservado ao portal. O reteste focal mediu no DOM, em temas claro e escuro e em 1280×800, 960×640 e 320×640, contenção do conteúdo e quebra dos nomes: 12/12 combinações no Pareamento e no Dispositivos, mais 3/3 no estado vazio, com restauração dos nomes sintéticos, sem conceder controle nem concluir pareamento.
+
+**Limites:** essas medições são geometria de DOM em simulador, não raster, contraste, foco real, leitor assistivo, app Tauri ou travessia física; o histórico de 0/30 aceites visuais integrais da Janela A permanece. O app real, o Windows nativo e o teste em duas máquinas não foram verificados nesta rodada. A v0.4.0 publicada não contém esta clareza.
