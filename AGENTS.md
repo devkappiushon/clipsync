@@ -49,7 +49,7 @@ cargo test --workspace --exclude clipsync-app --locked
 # checagem do Windows sem Windows (compila e passa o clippy; não roda teste):
 CC_x86_64_pc_windows_gnu=true AR_x86_64_pc_windows_gnu=true \
   cargo clippy --target x86_64-pc-windows-gnu -p clipsync-input -p clipsync-win --all-targets -- -D warnings
-node --test crates/clipsync-app/ui-dev/testes/*.test.mjs  # opcional, sem npm; o CI não roda
+node --max-old-space-size=512 --test --test-concurrency=2 crates/clipsync-app/ui-dev/testes/*.test.mjs
 scripts/conferir-unsafe.sh                 # unsafe só no ffi.rs (também roda no CI)
 scripts/conferir-privacidade.sh            # nada de log de tecla no código dos hooks (também roda no CI)
 python3 -I scripts/servir-ui-dev.py        # interface com simulador em http://127.0.0.1:5174 (fora do Maestri)
@@ -58,9 +58,9 @@ python3 -I scripts/servir-ui-dev.py        # interface com simulador em http://1
 - O app Tauri (`crates/clipsync-app`) **não compila aqui** (faltam os headers do WebKitGTK e não há sudo). Ele compila e testa só no CI.
 - Os `default-members` do `Cargo.toml` não incluem o app nem o `clipsync-ui`; por isso os comandos locais são explícitos com `--exclude clipsync-app`, senão os testes da lógica das telas não rodam.
 - O CI usa `--workspace` sem `--exclude` porque lá o app compila; não copie o comando do CI para uso local.
-- `node --test` é checagem local opcional do simulador, sem `npm`; o CI não roda Node.
+- `node --test` verifica os consumidores e o simulador sem `npm`. O CI tem um job `ui-node` separado, Node 24, heap 512 MiB por processo e concorrência 2; configuração no YAML não equivale a execução aprovada no GitHub.
 - Testes `cfg(windows)` (hooks, SendInput, desktop seguro) só rodam no CI do Windows.
-- CI: `.github/workflows/ci.yml` (ubuntu-latest e windows-latest; fmt só no job Linux; clippy e test nos dois com `--workspace --locked`; mais os dois scripts).
+- CI: `.github/workflows/ci.yml` (ubuntu-latest e windows-latest; fmt só no job Linux; clippy e test nos dois com `--workspace --locked`; mais os dois scripts e o job Node no Ubuntu).
 - **Nunca crie `target/` em `/tmp`.** Para conferir o lockfile de um commit, use `git archive` numa pasta e `cargo metadata --offline --locked`, que não compila.
 - Cenários do simulador da interface: a tabela completa, com `?cenario=...`, `&tema=` e `&plataforma=windows`, está em `crates/clipsync-app/ui/README.md`.
 

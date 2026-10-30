@@ -98,3 +98,21 @@ jobs:
 
       - name: cargo test
         run: cargo test --workspace --locked --no-fail-fast
+
+  ui-node:
+    name: testes Node da interface
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: node --test
+        run: node --max-old-space-size=512 --test --test-concurrency=2 crates/clipsync-app/ui-dev/testes/*.test.mjs
