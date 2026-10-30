@@ -17,7 +17,7 @@ Roteiro completo: [contrato §13.12](contrato.md#1312-roteiro-manual-do-usuário
 ## Evidência disponível e limites
 
 - Validação local: 597 testes Rust principais aprovados, cinco execuções auxiliares de processos aprovadas, 164 Node; três testes gráficos ignorados.
-- Revisão do delta de integração: aprovada. Compilação cruzada Windows é apenas compilação; os resultados nativos ficam no CI associado ao commit/tag da release.
+- Revisão do delta de integração: aprovada. [CI nativo Linux/Windows e publicação](evidencias/release-v0.4.0.md) concluídos no commit `6cc1384`: 624/614 testes principais aprovados, respectivamente, incluindo o app Tauri. Build/testes no runner não comprovam interação física.
 - Geometria: 60 casos medidos no simulador e revisados por artefatos. Foco/semântica: cinco casos com aceite completo no recorte DOM e seis inconclusivos. isTrusted=false/hasFocus=false não comprovam teclado ou foco nativos.
 - Não existe certificação WCAG, legal ou de uso físico. Não há decisão nova de licença, suporte a terceiro computador ou remoção de perfil/desinstalação nesta rodada.
 

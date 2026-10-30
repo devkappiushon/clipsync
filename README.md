@@ -6,7 +6,7 @@ Estado em 2026-10-30: a v0.4.0 reúne as correções S9 de controle de entrada, 
 
 ## Baixar
 
-Baixe em https://github.com/devkappiushon/clipsync/releases/tag/v0.4.0 quando a publicação estiver concluída. Cada release traz o app de desktop e a linha de comando, mais o `SHA256SUMS`:
+Baixe a [v0.4.0 publicada](https://github.com/devkappiushon/clipsync/releases/tag/v0.4.0). Cada release traz o app de desktop e a linha de comando, mais o `SHA256SUMS`:
 
 - `clipsync-app-v0.4.0-linux-x86_64.AppImage` e `clipsync-app-v0.4.0-linux-amd64.deb`: app de desktop no Linux.
 - `clipsync-app-v0.4.0-windows-x86_64-setup.exe` e `clipsync-app-v0.4.0-windows-x86_64.msi`: app de desktop no Windows.

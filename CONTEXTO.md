@@ -1,5 +1,15 @@
 # Contexto: clipsync
 
+## v0.4.0 publicada · 30/10/2026
+
+[Release disponível](https://github.com/devkappiushon/clipsync/releases/tag/v0.4.0), código `6cc1384a7d036877e7077d3c6b63838c64750d4b`. Commit, push e publicação concluídos com a autorização de João. CI Linux/Windows `41006607785` e empacotamento `41006610958` aprovados no mesmo commit; seis pacotes e `SHA256SUMS` publicados, sete tamanhos/digests remotos conferidos.
+
+Linux: 624 testes principais aprovados, cinco execuções auxiliares e três testes gráficos ignorados. Windows: 614 principais aprovados, cinco auxiliares e um gráfico ignorado; inclui 11 de emulação, 14 de captura, 10 do módulo Windows e 27 do app. Node local: 164/164. A execução no runner fecha a pendência de build/testes nativos, sem provar interação no desktop ou mouse físico.
+
+**Falta validar nas máquinas:** passagem e retorno do cursor (inclusive salto ao centro), soltura/teclado, ambas autorizando entrada, permissões/UAC, bandeja/notificações, zoom e leitores; também permanecem lacunas de foco/fluxo no portal. Instalar a mesma 0.4.0 nas duas máquinas preservando o perfil. Runtime de revisão encerrado. Nenhuma nova implementação atribuída aos andares.
+
+Evidência: [publicação e verificações](docs/evidencias/release-v0.4.0.md). Lista de aceites ainda abertos: [pendências da versão](docs/pendencias-v0.4.0.md). Os blocos abaixo são históricos; não reabrem tarefas nem mudam o estado publicado acima.
+
 ## Preparação da v0.4.0 · 30/10/2026
 
 João autorizou agora commit, push, CI, empacotamento e publicação, ao responder “então faça” ao roteiro desses passos. Esta autorização substitui o limite anterior de não publicar nesta rodada. Preparar os seis pacotes no workflow manual, conferir CI e hashes antes de publicar. Última publicada neste registro ainda é v0.3.1; v0.4.0 está em preparação, não deve ser anunciada como disponível antes da confirmação remota.
