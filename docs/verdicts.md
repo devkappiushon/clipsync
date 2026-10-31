@@ -4379,3 +4379,22 @@ Após a troca de Claude para Codex, o CLI herdava o identificador de outro termi
 O usuário criou as quatro ligações iniciais exigidas pelo limite de alcance do CLI. `maestri list` confirmou acesso aos quatro coordenadores e às suas notas. Cada coordenador ligou as notas à própria equipe e confirmou leitura da fonte comum. Verificação independente das conexões salvas: SEG & COMPLIANCE 15/15, Acess. 10/10, UX & UI 15/15, DOC 10/10. Total 50/50, vinte agentes. Oito colegas do térreo têm conexão com ClipSync · contexto comum.
 
 Esta prova cobre a distribuição do contexto e a leitura pelos quatro coordenadores. Não é revisão do app nem afirmação de leitura individual dos outros dezesseis agentes. Nenhum código, servidor ou auditoria foi iniciado nessa etapa.
+
+
+## S10 · revisão integrada de f3cdd01
+
+Argus · warden: Needs fixes, INT-TEC-01/02 Important. Preparação interativa limitada ao timeout de Status; aceite/restauração omitem durabilidade não confirmada. Revisão estática do conjunto c1c9ea5..f3cdd01, sem novas execuções. Rivet possui uma onda final; re-review do delta permanece pendente. T4-SEG-01 Minor aberto e diferido, conforme triagem de Sentinel.
+
+A observação de stale após aplicar/aceitar não é novo achado: atualização explícita é prevista no design §3/plano T4.4. A coleta não exercitou a recuperação; ela não prova travamento nem aprovação da sequência completa. Nenhum parecer libera release ou fecha prova física.
+
+
+### S10 · re-review focal da correção integrada
+
+Argus aprovou o delta final de quatro arquivos: INT-TEC-01/02 ADDRESSED, nenhum novo Critical/Important/Minor demonstrado. Prazo110s exclusivo da preparação, durabilidade visível e anunciada nos dois consumidores, sem nova escrita; regressão de atualização explícita preserva posições e renova revisão/stamps. Leitura de fonte e logs do autor, sem reexecução pelo revisor.
+
+Integração posterior do Maestro passou: Rust workspace sem app, três gráficos ignorados, e Node264/264. Coletas complementares pelos coordenadores UX/Acess fecharam quatroV07 e duas recuperações explícitas no DOM; não fecham prova nativa/física. A falha Windows no coletor de notificações é gate separado, sem reabertura dos achados de produção encerrados.
+
+
+### S10 · coletor do teste de revogação no Windows
+
+Rivet corrigiu somente devices.rs: preserva Notification antes/depois da desconexão e delimita o Block intencional do setup. Asserts de notificação única/conteúdo e prazos mantidos; duplicatas contam e PeerBlocked/Lagged/Closed falham nas duas fases. RED determinístico confirmou o descarte do teste, sem demonstrar a ordem efetiva do CI antigo. Alvo final10/10, clippy/fmt focais aprovados; Argus aprovou o delta sem enfraquecimento. Produção e helper global intactos. Nova execução CI Windows permanece gate.

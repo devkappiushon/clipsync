@@ -1,5 +1,14 @@
 # workboard · ClipSync MVP de hoje
 
+## Estado atual S10 · candidata 0.5.0, ainda não publicada
+
+Clareza e organização independente por monitor implementadas e revisadas. INT-TEC-01/02 encerrados após correção de Rivet e re-review de Argus: preparação interativa usa 110 segundos e aceite/restauração conservam o aviso de durabilidade. Sentinel concluiu a revisão integrada sem novo achado de segurança. T4-SEG-01 continua Minor aberto, explicitamente diferido; corrida de check/open do backup não foi corrigida.
+
+Integração local: Rust workspace sem app aprovado (três gráficos ignorados), Node 264/264 e fmt/clippy/scripts conforme evidências da rodada. UX/Acess devolveram os portais: oito V06 e complementos V07 passam no DOM; recuperação explícita após aplicar/aceitar observada. Simulador encerrado; app instalado intocado. A coleta não certifica raster, leitor ou aplicação nativa.
+
+O candidato ainda exige CI integral e pacotes do commit final: execução Windows de f3cdd01 falhou na observação da notificação DeviceRemoved, em teste cujo coletor descartava eventos anteriores à desconexão. Correção restrita ao teste não relaxa asserts/prazos. Travessia física e demais aceites obrigatórios não se substituem por fake/CI. Não há tag nem publicação da v0.5.0.
+Fonte vigente: contrato §16, docs/contexto-equipe.md e progress.md do plano monitores em .superpowers/sdd. Conteúdo abaixo preserva rodadas anteriores.
+
 ## v0.4.0 publicada · 30/10/2026
 
 [Release disponível](https://github.com/devkappiushon/clipsync/releases/tag/v0.4.0), código `6cc1384a7d036877e7077d3c6b63838c64750d4b`. Commit, push e publicação concluídos com a autorização de João. CI Linux/Windows `41006607785` e empacotamento `41006610958` aprovados no mesmo commit; seis pacotes e `SHA256SUMS` publicados, sete tamanhos/digests remotos conferidos.

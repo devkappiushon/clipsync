@@ -62,6 +62,9 @@ function dom() {
       focus() { if (!this.isConnected || this.disabled) return; if (doc.activeElement === this) return;
         doc.activeElement = this; for (const fn of focusListeners) fn({ target: this }); },
       setPointerCapture() {}, releasePointerCapture() {},
+      showModal() { this.open = true; },
+      close(value) { this.returnValue = value; this.open = false; this.listeners.close?.(); },
+      remove() { this.parentNode?.removeChild(this); },
     };
     return n;
   };
@@ -119,7 +122,7 @@ const deferred = () => {
 };
 
 const settle = () => new Promise(resolve => setImmediate(resolve));
-async function tela({ oferta = false, resposta, aplicar, nomeLongo = false } = {}) {
+async function tela({ oferta = false, resposta, aplicar, restaurar, nomeLongo = false } = {}) {
   const doc = dom(); globalThis.document = doc;
   globalThis.ResizeObserver = class { observe() {} disconnect() {} };
   const l = snapshot();
@@ -135,12 +138,17 @@ async function tela({ oferta = false, resposta, aplicar, nomeLongo = false } = {
   api.layoutGet = async () => structuredClone(l);
   api.layoutMonitorOfferAnswer = async args => {
     calls.push(["oferta", args]);
-    if (resposta) await resposta(args);
+    const resultado = resposta ? await resposta(args) : null;
     l.pending_monitor_offer = null;
-    return { activation: "confirmed" };
+    return resultado ?? { layout_rev: 8, activation: "confirmed", durability: "confirmed" };
+  };
+  api.layoutRestoreV1 = async args => {
+    calls.push(["restaurar", structuredClone(args)]);
+    return restaurar(args);
   };
   api.layoutPreviewOrganization = async args => {
     calls.push(["previa", structuredClone(args)]);
+    if (args.base_rev !== l.rev) throw { code: "stale_rev", message: "Prévia desatualizada" };
     return { ...args, effective_links: [], preserved_link_ids: [], replaced_link_ids: [], unresolved_link_ids: [] };
   };
   api.layoutApplyOrganization = async args => {
@@ -302,3 +310,56 @@ for (const acao of ["aceitar", "recusar"]) {
     assert.deepEqual(h.calls.map(c => c[0]), ["previa", "oferta", "previa"]);
   });
 }
+
+for (const acao of ["oferta", "restaurar"]) for (const durability of ["unconfirmed", "confirmed"]) {
+  test(`Layout completo: ${acao} conserva durabilidade ${durability} após recarga`, async t => {
+    const resultado = { layout_rev: 8, activation: "unconfirmed", durability };
+    const h = await tela({ oferta: true, resposta: () => resultado, restaurar: () => resultado });
+    t.after(h.desmontar);
+    h.l.organization = { positions: [], links: [] }; h.l.v1_backup_available = true;
+    await h.events.get("layout_changed")();
+    await h.click("monitores-prever");
+    if (acao === "oferta") await h.click("monitores-oferta-aceitar");
+    else {
+      const pending = h.click("monitores-restaurar");
+      const dialog = h.doc.body.querySelector("dialog");
+      await dialog.botoes[1].listeners.click({});
+      await pending;
+    }
+    const verificar = () => {
+      const visible = h.no.querySelectorAll(".aviso").map(n => n.textContent).join(" ");
+      const live = h.no.querySelector(".anunciador").querySelector('[role="status"]').textContent;
+      for (const text of [visible, live]) {
+        assert.match(text, /ativação não confirmada/);
+        if (durability === "unconfirmed") {
+          assert.match(text, /revisão.*publicada/i);
+          assert.match(text, /persistência.*queda.*não.*confirmada/i);
+        } else assert.doesNotMatch(text, /persistência.*não.*confirmada/i);
+      }
+    };
+    verificar();
+    await h.events.get("layout_changed")(); verificar();
+    assert.deepEqual(h.calls.map(c => c[0]), ["previa", acao]);
+  });
+}
+for (const acao of ["oferta", "aplicar"]) test(`Layout completo: Atualizar prévia após ${acao} usa nova revisão e preserva posições`, async t => {
+  let h;
+  const publicar = () => { h.l.rev = 8; h.l.inventories[1].stamp = { peer: peer(2), connection: 9, rev: 3 }; h.l.inventories[1].inventory.rev = 3; return { layout_rev: 8, activation: "confirmed", durability: "confirmed" }; };
+  h = await tela({ oferta: true, resposta: publicar, aplicar: publicar }); t.after(h.desmontar);
+  const x = h.no.querySelectorAll("[data-focus-key]").find(n => n.dataset.focusKey.endsWith(":x"));
+  x.value = "123"; await h.click(x.dataset.focusKey.slice(0, -1) + "mover");
+  await h.click("monitores-prever");
+  const antes = h.calls.find(c => c[0] === "previa")[1];
+  await h.click(acao === "oferta" ? "monitores-oferta-aceitar" : "monitores-aplicar");
+  await h.click("monitores-prever");
+  assert.match(h.no.querySelector(".anunciador").querySelector('[role="alert"]').textContent, /desatualizada|mudou/i);
+  assert.equal(h.find("monitores-aplicar").disabled, true);
+  assert.equal(h.calls.at(-1)[1].base_rev, 7);
+  await h.click("monitores-atualizar");
+  const depois = h.calls.at(-1)[1];
+  assert.equal(depois.base_rev, 8);
+  assert.deepEqual(depois.positions, antes.positions);
+  assert.deepEqual(depois.inventories, [{ peer: peer(1), connection: 0, rev: 1 }, { peer: peer(2), connection: 9, rev: 3 }]);
+  assert.equal(h.find("monitores-aplicar").disabled, false);
+  assert.deepEqual(h.calls.map(c => c[0]), ["previa", acao, "previa", "previa"]);
+});

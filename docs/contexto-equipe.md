@@ -2,13 +2,14 @@
 
 ## Estado vigente da fonte · S10 / candidata 0.5.0
 
-João autorizou concluir clareza e monitores independentes, e publicar somente após todos os gates. Clareza e T1–T3 estão implementadas/revisadas; T3 inclui o commit aef92b6. T4 está no fix final do editor por Pixel · UI, sob Maestro #3. Testes positivos reais da API foram acrescentados por Rivet e aprovados por Argus. DOC prepara o guia; TESTES prepara o oráculo físico. O Maestro central executa integração, CI e runtime. Nenhuma tag/release S10 foi publicada.
+João autorizou concluir clareza e monitores independentes, e publicar somente após todos os gates. As duas funcionalidades estão implementadas e revisadas, incluindo prazo interativo de preparação e aviso de durabilidade no aceite/restauração. Integração local Rust sem app passou, com três testes gráficos ignorados; Node passou em 264/264. A revisão integrada de segurança não identificou novo impedimento; T4-SEG-01 permanece Minor aberto e diferido. DOC e evidência da API estão revisados. Os complementos de UX/Acess fecharam os recortes DOM e a recuperação explícita; isso não comprova Tauri ou uso físico. Nenhuma tag/release S10 foi publicada.
 
+O CI Windows de `f3cdd01` revelou perda de observação de notificação no coletor de um teste. A correção fica restrita ao teste e preserva suas exigências; o candidato precisa de CI integral aprovado e pacotes do mesmo commit final nos dois sistemas. A travessia física Windows A ↔ notebook GNOME ↔ Windows B permanece gate obrigatório. O simulador de revisão foi encerrado após a devolução dos portais; o app instalado foi preservado.
 Novas delegações usam apenas os terminais conectados no Maestri, sem subagentes internos. Posse e evidências: `.superpowers/sdd/2026-10-30-monitores-independentes/progress.md`. Contrato §16 é vinculante; a versão candidata não fecha aceites físicos pendentes. A publicação v0.4.0 descrita abaixo permanece histórica e disponível.
 
 
 
-## S10 em implementação · 30/10/2026
+## Histórico do início da S10 · 30/10/2026
 
 João aprovou clareza de disponibilidade e monitores independentes, com release **somente após tudo finalizado**. Contrato §16 e designs/plans 2026-10-30 em docs/superpowers são a fonte vigente. O Maestro coordena implementação nativa por posse; UX/TESTES preparam e executam aceites quando houver diff estável/runtime anunciado. Oito nós em uso foram recuperados, com identidade/notas confirmadas. A instalação0.4.0 permanece intacta.
 

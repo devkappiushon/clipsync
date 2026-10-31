@@ -10,6 +10,7 @@
 
 mod common;
 
+use std::future::Future;
 use std::time::Duration;
 
 use clipsync_core::{Profile, control};
@@ -18,9 +19,10 @@ use clipsync_proto::{
     PeerPerms, PeerState,
 };
 use clipsync_ui::UiEvent;
-use clipsync_ui::events::NotificationKind;
+use clipsync_ui::events::{Notification, NotificationKind, PeerBlocked, PeerRef};
 use common::*;
 use serde_json::json;
+use tokio::sync::broadcast;
 
 async fn peer_state(p: &Profile, id: PeerId) -> Option<(PeerState, PeerPerms)> {
     match control::request(p, ControlRequest::Status).await.unwrap() {
@@ -45,6 +47,171 @@ async fn send(from: &Profile, to: PeerId, text: &str) -> DeliveryState {
     match control::request(from, req).await.unwrap() {
         ControlResponse::Module(ModuleReply::ClipSent(o)) => o[0].state,
         other => panic!("{other:?}"),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ErroColetaRevogacao {
+    Lagged(u64),
+    Closed,
+    PeerBlocked(PeerBlocked),
+    DesconexaoAusente,
+}
+
+// O produtor pode observar remoção e desconexão em polls distintos, em qualquer ordem.
+// Preserva WAIT para a desconexão e a janela original POLL * 10 depois dela.
+async fn coletar_revogacao(
+    rx: &mut broadcast::Receiver<UiEvent>,
+    peer_id: &str,
+) -> Result<Vec<Notification>, ErroColetaRevogacao> {
+    let mut removed = Vec::new();
+    let mut disconnected = false;
+    let mut deadline = tokio::time::Instant::now() + WAIT;
+    loop {
+        match tokio::time::timeout_at(deadline, rx.recv()).await {
+            Ok(Ok(UiEvent::Notification(n))) => removed.push(n),
+            Ok(Ok(UiEvent::PeerBlocked(b))) => return Err(ErroColetaRevogacao::PeerBlocked(b)),
+            Ok(Ok(UiEvent::PeerDisconnected(p))) if p.peer_id == peer_id => {
+                if !disconnected {
+                    disconnected = true;
+                    deadline = tokio::time::Instant::now() + POLL * 10;
+                }
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(broadcast::error::RecvError::Lagged(n))) => {
+                return Err(ErroColetaRevogacao::Lagged(n));
+            }
+            Ok(Err(broadcast::error::RecvError::Closed)) => {
+                return Err(ErroColetaRevogacao::Closed);
+            }
+            Err(_) if disconnected => return Ok(removed),
+            Err(_) => return Err(ErroColetaRevogacao::DesconexaoAusente),
+        }
+    }
+}
+
+// Canal e eventos reais, enfileirados antes de ler: a ordem não depende do agendador.
+fn eventos_revogacao() -> (UiEvent, UiEvent) {
+    (
+        UiEvent::Notification(Notification {
+            kind: NotificationKind::DeviceRemoved,
+            title: "Dispositivo removido".into(),
+            body: "a removeu este dispositivo".into(),
+        }),
+        UiEvent::PeerDisconnected(PeerRef {
+            peer_id: "a".into(),
+            short: "a".into(),
+            name: "a".into(),
+        }),
+    )
+}
+
+#[tokio::test]
+async fn coletor_preserva_notificacao_antes_da_desconexao() {
+    let (tx, mut rx) = broadcast::channel(8);
+    let (notice, disconnected) = eventos_revogacao();
+    tx.send(notice.clone()).unwrap();
+    tx.send(disconnected).unwrap();
+    let removed = coletar_revogacao(&mut rx, "a").await.unwrap();
+    assert_eq!(removed.len(), 1);
+    assert_eq!(UiEvent::Notification(removed[0].clone()), notice);
+}
+
+#[tokio::test]
+async fn coletor_preserva_notificacao_depois_da_desconexao() {
+    let (tx, mut rx) = broadcast::channel(8);
+    let (notice, disconnected) = eventos_revogacao();
+    tx.send(disconnected).unwrap();
+    tx.send(notice.clone()).unwrap();
+    let removed = coletar_revogacao(&mut rx, "a").await.unwrap();
+    assert_eq!(removed.len(), 1);
+    assert_eq!(UiEvent::Notification(removed[0].clone()), notice);
+}
+
+#[tokio::test]
+async fn coletor_nao_oculta_duplicata_entre_as_duas_ordens() {
+    let (tx, mut rx) = broadcast::channel(8);
+    let (notice, disconnected) = eventos_revogacao();
+    tx.send(notice.clone()).unwrap();
+    tx.send(disconnected).unwrap();
+    tx.send(notice.clone()).unwrap();
+    let removed = coletar_revogacao(&mut rx, "a").await.unwrap();
+    assert_eq!(
+        removed.len(),
+        2,
+        "a assert len1 do fluxo real deve detectar duplicatas"
+    );
+    assert!(
+        removed
+            .into_iter()
+            .all(|n| UiEvent::Notification(n) == notice)
+    );
+}
+
+#[tokio::test]
+async fn coletor_recusa_peer_blocked_antes_e_depois_da_desconexao() {
+    let blocked = PeerBlocked {
+        peer_id: Some("a".into()),
+        name: Some("a".into()),
+        module: None,
+        reason: "bloqueio indevido".into(),
+        at_unix_ms: 1,
+        occurrences: 1,
+        last_unix_ms: 1,
+    };
+    for before in [true, false] {
+        let (tx, mut rx) = broadcast::channel(8);
+        let (_, disconnected) = eventos_revogacao();
+        if before {
+            tx.send(UiEvent::PeerBlocked(blocked.clone())).unwrap();
+        }
+        tx.send(disconnected).unwrap();
+        if !before {
+            tx.send(UiEvent::PeerBlocked(blocked.clone())).unwrap();
+        }
+        assert_eq!(
+            coletar_revogacao(&mut rx, "a").await,
+            Err(ErroColetaRevogacao::PeerBlocked(blocked.clone()))
+        );
+    }
+}
+
+#[tokio::test]
+async fn coletor_recusa_lagged_antes_e_depois_da_desconexao() {
+    for after in [false, true] {
+        let (tx, mut rx) = broadcast::channel(1);
+        let (_, disconnected) = eventos_revogacao();
+        let collecting = coletar_revogacao(&mut rx, "a");
+        if after {
+            // Entrega a desconexão antes do overflow, sem sleep nem tarefa concorrente.
+            tx.send(disconnected).unwrap();
+        }
+        tokio::pin!(collecting);
+        if after {
+            assert!(
+                std::future::poll_fn(|cx| std::task::Poll::Ready(collecting.as_mut().poll(cx)))
+                    .await
+                    .is_pending()
+            );
+        }
+        tx.send(UiEvent::resync()).unwrap();
+        tx.send(UiEvent::resync()).unwrap();
+        assert_eq!(collecting.await, Err(ErroColetaRevogacao::Lagged(1)));
+    }
+}
+
+#[tokio::test]
+async fn coletor_recusa_closed_antes_e_depois_da_desconexao() {
+    for after in [false, true] {
+        let (tx, mut rx) = broadcast::channel(8);
+        if after {
+            tx.send(eventos_revogacao().1).unwrap();
+        }
+        drop(tx);
+        assert_eq!(
+            coletar_revogacao(&mut rx, "a").await,
+            Err(ErroColetaRevogacao::Closed)
+        );
     }
 }
 
@@ -104,6 +271,16 @@ async fn perms_need_full_trust_for_input_and_revoke_needs_the_typed_name() {
         send(&pb, ida, "antes").await,
         DeliveryState::Rejected(_)
     ));
+
+    // A recusa acima é parte do setup, não da revogação. Espere seu evento
+    // explícito antes de iniciar a próxima fase, sem descartar bloqueios do revoke.
+    next_event(&mut events_b, "recusa inicial do clipboard", |e| {
+        matches!(e, UiEvent::PeerBlocked(b)
+            if b.peer_id.is_none()
+                && b.module == Some(clipsync_ui::status::ModuleName::Clipboard)
+                && b.reason == "a: recusado")
+    })
+    .await;
 
     let set = |ack: bool| {
         json!({ "cmd": "device_set_perms", "args": {
@@ -206,22 +383,10 @@ async fn perms_need_full_trust_for_input_and_revoke_needs_the_typed_name() {
         ok(&ui_b, json!({ "cmd": "devices_list" })).await["devices"],
         json!([])
     );
-    next_event(
-        &mut events_b,
-        "peer_disconnected a",
-        |e| matches!(e, UiEvent::PeerDisconnected(p) if p.peer_id == ida.to_hex()),
-    )
-    .await;
-    // One notification, and no peer_blocked with it.
-    let mut removed = Vec::new();
-    let quiet = tokio::time::Instant::now() + POLL * 10;
-    while let Ok(Ok(ev)) = tokio::time::timeout_at(quiet, events_b.recv()).await {
-        match ev {
-            UiEvent::Notification(n) => removed.push(n),
-            UiEvent::PeerBlocked(b) => panic!("removal also gave peer_blocked: {b:?}"),
-            _ => {}
-        }
-    }
+    // Colete desde antes da desconexão: a notificação pode vir em outro poll.
+    let removed = coletar_revogacao(&mut events_b, &ida.to_hex())
+        .await
+        .unwrap();
     assert_eq!(removed.len(), 1, "{removed:?}");
     assert_eq!(removed[0].kind, NotificationKind::DeviceRemoved);
     assert_eq!(removed[0].title, "Dispositivo removido");

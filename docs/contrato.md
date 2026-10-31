@@ -1944,3 +1944,10 @@ A API da interface normaliza os códigos internos de inventário para `stale_inv
 Para monitores ausentes, preservar UID/posição e mostrar o último rótulo disponível na sessão. Sem rótulo persistido ou observado, apresentar ausência e UID, sem fabricar nome/geometria ou acrescentar registro de nomes a esta etapa. Dados de apresentação em cache não habilitam aplicar nem substituem inventários atuais.
 
 Precisão dos cantos mortos em v2: ligações geridas persistem segmentos efetivos validados na aplicação. Alterar a opção local não recorta novamente esses segmentos nem altera endpoints recebidos de uma oferta aceita; a opção vigente entra na próxima compilação explícita de prévia/aplicação. Ligações avançadas conservam a validação própria. A interface não deve prometer recomputação retroativa das passagens existentes.
+
+
+### 16.4 Fecho da integração S10
+
+Preparar telas espera consentimento humano: `InputPrepareInventory` tem prazo de 110 segundos no dispatch do agente, inferior aos 120 segundos do controle externo. Consultas de status mantêm 2 segundos. Timeout, pausa, revogação e encerramento conservam o cancelamento e impedem publicar inventário de preparação invalidada; não autorizam consentimento automático.
+
+Aceitar organização e restaurar v1 apresentam separadamente ativação e durabilidade. Quando `durability=unconfirmed`, informar também que a revisão foi publicada mas a persistência após uma queda não foi confirmada. A recarga e a saída do estado ocupado conservam esse aviso visível e acessível, sem repetir a escrita. Esta precisão aplica o §16.2, sem mudança de wire ou persistência.

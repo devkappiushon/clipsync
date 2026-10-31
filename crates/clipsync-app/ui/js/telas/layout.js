@@ -236,12 +236,22 @@ export default function montar({ ir, assinar }) {
       h("div", { class: "layout__lateral" }, painel, areaLigacoes), areaRodape,
       recuperacaoMonitores({ layout, aoRestaurar: async (args) => {
         const r = await api.layoutRestoreV1(args);
-        mostrarAvisoTopo("info", r.activation === "unconfirmed" ? "Organização salva, ativação não confirmada" : "Layout v1 restaurado.");
+        mostrarResultadoOrganizacao(r, "Layout v1 restaurado.");
         monitores = null; await carregar({ silencioso: true });
       } }),
     );
     trocar(corpo, avisoTopo, areaTravessia, areaOferta, areaSimples, ajustes);
     pintarTravessia(); pintarSimples(); pintarOferta(); pintarCanvas(); pintarPainel(); pintarLigacoes(); pintarRodape();
+  }
+
+  function mostrarResultadoOrganizacao(resultado, confirmado) {
+    const ativacao = resultado.activation === "unconfirmed"
+      ? "Organização salva, ativação não confirmada"
+      : confirmado;
+    const durabilidade = resultado.durability === "unconfirmed"
+      ? " A revisão foi publicada, mas a persistência após uma queda não foi confirmada."
+      : "";
+    mostrarAvisoTopo("info", ativacao + durabilidade);
   }
 
   function mostrarAvisoTopo(tom, texto) {
@@ -976,7 +986,7 @@ export default function montar({ ir, assinar }) {
     if (layout.pending_monitor_offer) {
       trocar(areaOferta, ofertaMonitores({ layout, ocupado: operacao, aoResponder: (args) => executar(async () => {
         const r = await api.layoutMonitorOfferAnswer(args);
-        if (!saiu && args.accept) mostrarAvisoTopo("info", r.activation === "unconfirmed" ? "Organização salva, ativação não confirmada" : "Organização aceita. Confira a travessia nas máquinas.");
+        if (!saiu && args.accept) mostrarResultadoOrganizacao(r, "Organização aceita. Confira a travessia nas máquinas.");
         return r;
       }) }));
       return;

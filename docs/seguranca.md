@@ -777,3 +777,12 @@ Foram retirados e refutados nesta rodada os falsos positivos de testes JSON anti
 ### Limites
 
 A rodada não teve Windows, Tauri, Wayland ou portais reais; não cobriu ACL/DACL efetiva, pipe entre contas, hooks/SendInput, gerenciadores de clipboard ou notificação, instaladores, rede física nem auditoria de CVE. Nenhuma pendência manual foi fechada.
+
+
+## S10 · revisão integrada de f3cdd01
+
+Sentinel · segurança conferiu o conjunto c1c9ea5..f3cdd01 e suas interfaces de autorização, invalidação, limites, persistência e ofertas. Nenhum novo Critical/Important/Minor ou BLOCKER de segurança identificado; revisão estática, sem nova execução. T4-SEG-01 permanece Minor aberto e explicitamente diferido: disponibilidade do backup consulta e reabre o caminho, com corrida sob adversário local já capaz de substituir entradas no perfil. A corrida não foi corrigida, sem vetor remoto ou bypass de restore demonstrados.
+
+Esse parecer não atesta CI, pacote, visual, Tauri ou uso físico. As duas correções técnicas de integração continuam pendentes de implementação/re-review.
+
+Adendo da correção integrada: INT-TEC-01/02 foram encerrados em re-review técnico de Argus, sem nova superfície wire/storage ou mudança de autorização. A classificação de timeout e as mensagens não modificam o parecer SEG acima. Prova física e CI final continuam condições independentes.

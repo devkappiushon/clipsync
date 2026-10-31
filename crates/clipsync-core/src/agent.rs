@@ -26,6 +26,8 @@ const MODULE_STOP_GRACE: Duration = Duration::from_secs(3);
 /// Bound on waiting for the UDP port to be free after the mesh shut down.
 const PORT_RELEASE_WAIT: Duration = Duration::from_secs(3);
 const PORT_RELEASE_POLL: Duration = Duration::from_millis(5);
+/// Preparação interativa aguarda consentimento, abaixo dos 120s do controle externo.
+const INPUT_PREPARE_TIMEOUT: Duration = Duration::from_secs(110);
 const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 const CLIP_SEND_TIMEOUT: Duration = Duration::from_secs(15);
 const INPUT_OFFER_TIMEOUT: Duration = Duration::from_secs(5);
@@ -340,6 +342,7 @@ impl Agent {
             ModuleCommand::InputOffer { .. } | ModuleCommand::InputOfferV4 { .. } => {
                 INPUT_OFFER_TIMEOUT
             }
+            ModuleCommand::InputPrepareInventory => INPUT_PREPARE_TIMEOUT,
             ModuleCommand::Status
             | ModuleCommand::ClipInbox
             | ModuleCommand::ClipApply { .. }
@@ -349,7 +352,6 @@ impl Agent {
             | ModuleCommand::InputLock { .. }
             | ModuleCommand::InputSwitch { .. }
             | ModuleCommand::InputOfferClear
-            | ModuleCommand::InputPrepareInventory
             | ModuleCommand::InputPreviewOrganization(_)
             | ModuleCommand::InputApplyOrganization(_)
             | ModuleCommand::InputRestoreLayoutV1 { .. }
