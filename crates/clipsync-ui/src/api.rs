@@ -12,8 +12,8 @@ use serde_json::Value;
 use crate::devices::Perms;
 use crate::prefs::{Appearance, Notifications};
 use crate::{
-    Ctx, agent, clean, clipboard, devices, diag, input, layout, msg, onboarding, pairing, prefs,
-    status,
+    Ctx, agent, clean, clipboard, devices, diag, input, layout, msg, onboarding, organization,
+    pairing, prefs, status,
 };
 
 /// Stable error codes: the front switches on these, never on the message.
@@ -145,7 +145,7 @@ impl From<CoreError> for UiError {
 
 /// Every `cmd` the router knows, in the order of §12.5. A name outside this list is
 /// `unknown_command`; a known name with bad args is `bad_request`.
-pub const COMMANDS: [&str; 40] = [
+pub const COMMANDS: [&str; 46] = [
     "modules_set",
     "app_state",
     "agent_start",
@@ -166,6 +166,12 @@ pub const COMMANDS: [&str; 40] = [
     "pair_cancel",
     "pair_state",
     "layout_get",
+    "layout_prepare_monitors",
+    "layout_preview_organization",
+    "layout_apply_organization",
+    "layout_restore_v1",
+    "layout_copy_monitors",
+    "layout_monitor_offer_answer",
     "layout_set_link",
     "layout_remove_link",
     "layout_set_device",
@@ -222,6 +228,12 @@ pub enum UiRequest {
     PairState,
     // 4 · layout (Vector)
     LayoutGet,
+    LayoutPrepareMonitors,
+    LayoutPreviewOrganization(organization::OrganizationRequest),
+    LayoutApplyOrganization(organization::OrganizationRequest),
+    LayoutRestoreV1(organization::RestoreArgs),
+    LayoutCopyMonitors(organization::CopyArgs),
+    LayoutMonitorOfferAnswer(organization::AnswerArgs),
     LayoutSetLink(layout::SetLinkArgs),
     LayoutRemoveLink(layout::RemoveLinkArgs),
     LayoutSetDevice(layout::SetDeviceArgs),
@@ -503,6 +515,12 @@ async fn route_inner(ctx: &Arc<Ctx>, req: UiRequest) -> Result<Value, UiError> {
         R::PairCancel(a) => json(pairing::cancel(ctx, a)?),
         R::PairState => json(pairing::state(ctx)),
         R::LayoutGet => json(layout::get(ctx).await?),
+        R::LayoutPrepareMonitors => json(organization::prepare(ctx).await?),
+        R::LayoutPreviewOrganization(a) => json(organization::preview(ctx, a).await?),
+        R::LayoutApplyOrganization(a) => json(organization::apply(ctx, a).await?),
+        R::LayoutRestoreV1(a) => json(organization::restore(ctx, a.base_rev).await?),
+        R::LayoutCopyMonitors(a) => json(organization::copy(ctx, a).await?),
+        R::LayoutMonitorOfferAnswer(a) => json(organization::answer_offer(ctx, a).await?),
         R::LayoutSetLink(a) => json(layout::set_link(ctx, a).await?),
         R::LayoutRemoveLink(a) => json(layout::remove_link(ctx, a).await?),
         R::LayoutSetDevice(a) => json(layout::set_device(ctx, a).await?),

@@ -19,6 +19,7 @@ toml.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+clipsync-proto = { path = "../clipsync-proto", features = ["testing"] }
 tempfile.workspace = true
 
 [lints]

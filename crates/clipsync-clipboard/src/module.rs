@@ -677,7 +677,14 @@ impl State {
             | ModuleCommand::InputLock { .. }
             | ModuleCommand::InputSwitch { .. }
             | ModuleCommand::InputOffer { .. }
-            | ModuleCommand::InputOfferClear => {
+            | ModuleCommand::InputOfferClear
+            | ModuleCommand::InputPrepareInventory
+            | ModuleCommand::InputPreviewOrganization(_)
+            | ModuleCommand::InputApplyOrganization(_)
+            | ModuleCommand::InputRestoreLayoutV1 { .. }
+            | ModuleCommand::InputSuspendOrganization
+            | ModuleCommand::InputOfferV4 { .. }
+            | ModuleCommand::InputAnswerOfferV4 { .. } => {
                 let _ = reply.send(ModuleReply::Error(msg::UNSUPPORTED_COMMAND.into()));
             }
         }

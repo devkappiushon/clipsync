@@ -57,95 +57,26 @@ test("formulário cria em cada lacuna da borda parcialmente ligada e também edi
   assert.equal(tela.editada().id, "existente");
 });
 
-function grupo() {
-  const listeners = new Map(); const atributos = new Map();
-  return { listeners, atributos, append() {}, setPointerCapture() {}, classList: { add() {}, remove() {} },
-    addEventListener: (nome, fn) => listeners.set(nome, fn), removeEventListener: (nome) => listeners.delete(nome),
-    setAttribute: (nome, valor) => atributos.set(nome, valor), removeAttribute: (nome) => atributos.delete(nome) };
-}
-function canvas() {
-  const layout = mesa(); const destino = layout.devices[1]; const gravacoes = [];
-  const contexto = { layout, avancado: false, escolha: { peer_id: "remoto", edge: "right" }, proporLigacao, posicionarDestino,
-    escala: 1, encaixar: (n) => Math.round(n / 16) * 16, MALHA_PX: 16,
-    moverDispositivo: (_d, x, y) => { gravacoes.push({ x, y }); }, selecionarDispositivo() {},
-    selecao: null, chave: () => "grupo", ESTADOS: { connected: "conectado" }, tela: (x, y) => ({ x, y }),
-    caber: (texto) => texto, nomeDoMonitor: (m) => m.name, medidasDoMonitor: () => "1000x1000",
-    svg: () => grupo(), envoltorio: { clientWidth: 3000 }, BORDAS: {},
-  };
-  executar(trecho(layoutFonte, "  function retangulos(", "  function calcularEscala(") +
-    trecho(layoutFonte, "  function grupoDispositivo(", "  function zonaBorda(") +
-    "\nthis.retangulosReais = retangulos; this.construir = grupoDispositivo;", contexto);
-  const rects = contexto.retangulosReais(); const g = contexto.construir(destino, rects);
-  return { contexto, destino, g, gravacoes, exibida: { x: rects[1].x, y: rects[1].y } };
-}
-const ponteiro = (g, fim) => {
-  g.listeners.get("pointerdown")({ button: 0, target: { closest: () => null }, preventDefault() {}, clientX: 0, clientY: 0, pointerId: 1 });
-  g.listeners.get("pointermove")({ clientX: 16, clientY: 0 });
-  g.listeners.get(fim)({ type: fim });
-};
-test("arrasto usa a posição realmente desenhada antes de Ligar", () => {
-  const tela = canvas();
-  assert.deepEqual(tela.exibida, { x: 1168, y: 0 });
-  ponteiro(tela.g, "pointerup");
-  assert.deepEqual(tela.gravacoes, [{ x: 1184, y: 0 }]);
+// S10 substitui gravação por grupo: operações por monitor permanecem no rascunho.
+test("posição de monitor só persiste depois da prévia e aplicação explícita", async () => {
+  globalThis.document = { getElementById: () => ({}) };
+  const { controladorMonitores } = await import("../../ui/js/monitores.js");
+  const local = "1".repeat(64), remoto = "2".repeat(64);
+  const inventory = (peer, uid, space) => ({ stamp: { peer, connection: peer === local ? 0 : 3, rev: 1 }, inventory: {
+    rev: 1, space, source: "Observed", capabilities: { internal_edges: space === "Physical", positioned_return: space === "Physical", route_receiver: true },
+    monitors: [{ uid: uid.repeat(32), label: uid, rect: { x: 0, y: 0, width: 1000, height: 1000 }, scale: 1 }],
+  } });
+  const commands = [];
+  const c = controladorMonitores({ layout: { rev: 1, self_id: local, devices: [], inventories: [inventory(local,"1","Physical"), inventory(remoto,"2","Logical")], organization: null }, api: {
+    layoutPreviewOrganization: async (args) => { commands.push("preview"); return { ...args, effective_links: [], preserved_link_ids: [], replaced_link_ids: [], unresolved_link_ids: [] }; },
+    layoutApplyOrganization: async (args) => { commands.push(["apply",args]); return { layout_rev: 2, activation: "confirmed", durability: "confirmed" }; },
+  } });
+  c.mover({ peer: remoto, uid: "2".repeat(32) }, { x: 1000, y: 0 });
+  assert.deepEqual(commands, []);
+  await c.aplicar(); assert.deepEqual(commands, []);
+  await c.prever(); await c.aplicar(); await c.aplicar();
+  assert.equal(commands.length, 2); assert.equal(commands[1][1].positions[1].x, 1000);
 });
-test("seta usa a mesma posição projetada do canvas", () => {
-  const tela = canvas();
-  tela.g.listeners.get("keydown")({ target: tela.g, key: "ArrowRight", preventDefault() {} });
-  assert.deepEqual(tela.gravacoes, [{ x: 1184, y: 0 }]);
-});
-test("pointercancel remove deslocamento visual sem gravar", () => {
-  const tela = canvas();
-  ponteiro(tela.g, "pointercancel");
-  assert.deepEqual(tela.gravacoes, []);
-  assert.equal(tela.g.atributos.has("transform"), false);
-});
-
-for (const recargaImediata of [false, true]) {
-  test(`resposta normalizada mantém prévia e dois Ligar sem regravar posição (recarga imediata: ${recargaImediata})`, async () => {
-    const tela = canvas(); const gravacoes = []; const ligacoes = []; const erros = [];
-    let persistido = structuredClone(tela.contexto.layout);
-    const carregar = async () => { tela.contexto.layout = structuredClone(persistido); };
-    Object.assign(tela.contexto, {
-      api: {
-        layoutSetDevice: async (args) => {
-          gravacoes.push(args);
-          const device = persistido.devices.find((d) => d.peer_id === args.peer_id);
-          Object.assign(device, { x: Math.round(args.x / 16) * 16, y: Math.round(args.y / 16) * 16 });
-          return { device: structuredClone(device), layout_rev: ++persistido.rev };
-        },
-        layoutSetLink: async (args) => {
-          ligacoes.push(args);
-          const link = { id: args.id ?? "nova", a: args.a, b: args.b };
-          persistido.links = [structuredClone(link)];
-          return { link: structuredClone(link), warnings: [], layout_rev: ++persistido.rev };
-        },
-      },
-      executar: async (fn) => { const r = await fn(); if (recargaImediata) await carregar(); return r; },
-      saiu: false, posicaoRelativa, pintarSimples() {},
-      salvando: false, testando: false, guardarFoco: () => null, restaurarFoco() {},
-      no: {}, avisoTopo: {}, trocar() {}, anuncios: { status() {} }, carregar, encontrar() {},
-      mostrarAvisoTopo: (_tom, texto) => erros.push(texto), mensagemDe: (erro) => erro.message, falhaAoLigar: (_c, texto) => texto,
-    });
-    vm.runInContext(trecho(layoutFonte, "  async function moverDispositivo(", "  let larguraPintada") +
-      trecho(layoutFonte, "  async function salvarPosicao(", "  async function testarEntrada(") +
-      "\nthis.moverReal = moverDispositivo; this.ligarReal = salvarPosicao;", tela.contexto);
-    await tela.contexto.moverReal(tela.destino, 1185, 3);
-    assert.deepEqual(simples(tela.contexto.escolha.posicao), { x: 1184, y: 0 });
-    const recebida = tela.contexto.retangulosReais()[1];
-    assert.deepEqual({ x: recebida.x, y: recebida.y }, { x: 1184, y: 0 });
-    await carregar();
-    const recarregada = tela.contexto.retangulosReais()[1];
-    assert.deepEqual({ x: recarregada.x, y: recarregada.y }, { x: 1184, y: 0 });
-    await tela.contexto.ligarReal(proporLigacao(tela.contexto.layout, tela.contexto.escolha));
-    await tela.contexto.ligarReal(proporLigacao(tela.contexto.layout, tela.contexto.escolha));
-    assert.equal(gravacoes.length, 1, "Ligar deve preservar a posição normalizada já salva pelo movimento");
-    assert.equal(ligacoes.length, 2);
-    assert.equal(ligacoes[0].base_rev, 8);
-    assert.equal(ligacoes[1].base_rev, 9);
-    assert.deepEqual(erros, []);
-  });
-}
 
 // O módulo importado fornece a política real de iniciar/cancelar; o sprite é a única fronteira DOM.
 globalThis.document = { getElementById: () => ({}) };

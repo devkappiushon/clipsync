@@ -9,7 +9,8 @@ const LATENCIA_DESPACHO = ["160", "500", "1400"].includes(latenciaPedida) ? Numb
 export const cenario = new URLSearchParams(location.search).get("cenario") ?? "padrao";
 // ?cenario=windows (ou ?plataforma=windows) simula o PC Windows da S7: dois monitores, um com escala 1,5, e o input ligado.
 // ?cenario=windows-recusa é o mesmo, com o Windows tendo recusado o Win+Alt+P de retomar (I-S7-2): abre pausado.
-export const plataforma = cenario.startsWith("windows") || new URLSearchParams(location.search).get("plataforma") === "windows" ? "windows" : "linux";
+export const CENARIOS_MONITORES = new Set(["monitores-independentes", "monitor-ausente", "monitor-ambiguo", "geometria-estimada", "inventario-alterado", "protocolo-v3", "organizacao-nao-confirmada", "oferta-monitores"]);
+export const plataforma = (CENARIOS_MONITORES.has(cenario) || cenario.startsWith("windows")) || new URLSearchParams(location.search).get("plataforma") === "windows" ? "windows" : "linux";
 
 /** Dados mutáveis do mock. Cada domínio usa sua própria chave. */
 export const estado = {};

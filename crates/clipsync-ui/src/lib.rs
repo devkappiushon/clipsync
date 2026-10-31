@@ -19,6 +19,7 @@ pub mod layout;
 pub mod modules;
 pub mod msg;
 pub mod onboarding;
+pub mod organization;
 pub mod pairing;
 pub mod prefs;
 pub mod status;

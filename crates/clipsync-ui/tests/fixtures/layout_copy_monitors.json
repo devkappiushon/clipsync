@@ -1,0 +1,11 @@
+{
+  "rev": 2,
+  "results": [
+    {
+      "peer_id": "2222222222222222222222222222222222222222222222222222222222222222",
+      "name": "notebook",
+      "status": "unsupported",
+      "reason": "Protocolo v4 necessário."
+    }
+  ]
+}

@@ -44,6 +44,15 @@ fn block_defaults(value: &mut Value) {
 /// The type each command answers with (Vector's layout and input commands have their own).
 fn check(name: &str, v: &Value) {
     match name {
+        "layout_get" => same::<clipsync_ui::layout::Layout>(name, v),
+        "layout_prepare_monitors" => same::<()>(name, v),
+        "layout_preview_organization" => {
+            same::<clipsync_ui::organization::OrganizationPreview>(name, v)
+        }
+        "layout_apply_organization" | "layout_restore_v1" | "layout_monitor_offer_answer" => {
+            same::<clipsync_ui::organization::OrganizationApplied>(name, v)
+        }
+        "layout_copy_monitors" => same::<clipsync_ui::layout::CopyReply>(name, v),
         "modules_set" => same::<clipsync_ui::modules::Reply>(name, v),
         "app_state" => same::<status::AppState>(name, v),
         "agent_start" | "agent_stop" => same::<agent::AgentReply>(name, v),

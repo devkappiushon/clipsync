@@ -55,6 +55,12 @@ export const api = {
   pairState: comando("pair_state"),
   // 4 layout
   layoutGet: comando("layout_get"),
+  layoutPrepareMonitors: comando("layout_prepare_monitors"),
+  layoutPreviewOrganization: comando("layout_preview_organization"),
+  layoutApplyOrganization: comando("layout_apply_organization"),
+  layoutRestoreV1: comando("layout_restore_v1"),
+  layoutCopyMonitors: comando("layout_copy_monitors"),
+  layoutMonitorOfferAnswer: comando("layout_monitor_offer_answer"),
   layoutSetLink: comando("layout_set_link"),
   layoutRemoveLink: comando("layout_remove_link"),
   layoutSetDevice: comando("layout_set_device"),

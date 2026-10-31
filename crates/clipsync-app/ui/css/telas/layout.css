@@ -610,3 +610,20 @@
   .layout__popover { width: 100%; max-height: none; }
   .layout__atalho, .layout__pct { min-width: 0; max-width: 100%; }
 }
+
+/* Organização por monitor: a prévia precede o canvas em todas as larguras. */
+.monitores { display: grid; gap: var(--s-3); min-width: 0; }
+.monitores__previa { padding: 1rem; border: 1px solid var(--line-strong); border-radius: .75rem; }
+.monitores__canvas { display: block; width: 100%; height: auto; max-height: 420px; min-height: 200px; border: 1px solid var(--line-strong); border-radius: .75rem; touch-action: none; }
+.monitores__cartao { cursor: grab; outline: none; }
+.monitores__cartao rect { fill: var(--panel); stroke: var(--muted); stroke-width: 3; }
+.monitores__cartao text { fill: var(--text); font-weight: 600; pointer-events: none; }
+.monitores__cartao:focus-visible rect { stroke: var(--focus); stroke-width: 10; }
+.monitores__controles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 1rem; }
+.monitores__ajuste { min-width: 0; display: grid; gap: .75rem; padding: 1rem; border: 1px solid var(--line-strong); border-radius: .75rem; }
+.monitores__ajuste legend { max-width: 100%; }
+.monitores__ajuste legend, .monitores li { overflow-wrap: anywhere; }
+.monitores .campo { display: grid; gap: .4rem; }
+.monitores .entrada { width: 100%; min-width: 0; }
+.monitores__recuperacao { padding-block: 1rem; }
+@media (max-width: 640px) { .monitores__canvas { max-height: 300px; } .monitores .linha { flex-wrap: wrap; } }

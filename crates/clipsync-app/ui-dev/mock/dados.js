@@ -1,7 +1,7 @@
 // Dados compartilhados entre os domínios do mock: esta máquina e os três pares.
 // Os ids seguem o contrato (peer_id = 64 hex; short = 8 hex em dois grupos de 4).
 
-import { agenteDePe, cenario, estado, plataforma } from "./nucleo.js";
+import { agenteDePe, cenario, estado, plataforma, CENARIOS_MONITORES } from "./nucleo.js";
 
 const AGORA = Date.now();
 const MIN = 60_000;
@@ -27,7 +27,7 @@ function par({ short, name, addr, state, blocked_reason = null, perms, remote_mo
     addr,
     perms,
     remote_modules,
-    remote_version: 3,
+    remote_version: CENARIOS_MONITORES.has(cenario) && cenario !== "protocolo-v3" ? 4 : 3,
     paired_at: AGORA - dias * DIA,
   };
 }

@@ -1,8 +1,4 @@
-// Tela 4 · Layout de telas: canvas em SVG com os monitores de cada máquina sobre uma malha de 16 px,
-// arrastar encaixa na malha, clicar numa borda seleciona um trecho (alças para encurtar) e o painel pede
-// o destino num popover sobre o canvas. Ligações como linhas entre bordas; bordas internas travadas.
-// Duas colunas como no quadro: canvas com a barra de ações à esquerda, painel Ligações à direita.
-// Toda mudança grava na hora (layout_set_*), então não há botão "Salvar layout".
+// Layout: rascunho por monitor, prévia do agente e aplicação explícita. Bordas no avançado.
 
 import { api } from "../api.js";
 import { aviso, cabecalho, estadoErro, indisponivel } from "../areas.js";
@@ -13,7 +9,7 @@ import { consumirParDoLayout, obterApp, observarApp, recurso } from "../estado.j
 import { INDISPONIVEL, INDISPONIVEL_NESTE_SISTEMA, mensagemDe, seloDispositivo } from "../formatar.js";
 import { icone, svg } from "../icones.js";
 
-import { configurarPosicao } from "../layout-simples.js";
+import { controladorMonitores, editorMonitores, ofertaMonitores, recuperacaoMonitores } from "../monitores.js";
 import { resumoTravessia } from "../travessia-vista.js";
 import { falhaAoLigar, limitesAlca, ligacoesLocais, proporLigacao, posicionarDestino, posicaoRelativa, resultadoDoTeste, trechosLivres as trechosDisponiveis } from "../travessia.js";
 
@@ -62,11 +58,12 @@ export default function montar({ ir, assinar }) {
   const app = obterApp();
   const corpo = h("div", { class: "layout__corpo" });
   const no = h("div", { class: "layout" });
+  const rotaMontagem = no.ownerDocument.defaultView?.location.href;
 
   if (!recurso("input")) {
     const motivo = app?.input_supported === false ? INDISPONIVEL : app?.modules?.input === false ? "O módulo de teclado e mouse está desligado nesta máquina." : "O agente ainda não informou os recursos de teclado e mouse.";
     no.append(
-      cabecalho({ titulo: "Layout de telas", descricao: "Posicione o outro computador como ele está na sua mesa para passar o mouse entre as telas." }),
+      cabecalho({ titulo: "Layout de telas", descricao: "Organize cada tela, confira a prévia e aplique as passagens entre os computadores." }),
       resumoTravessia(app, { ir }),
       aviso("aviso", h("p", null, `Layout de telas: ${motivo}`)),
       cartao({ filhos: [h("div", { class: "layout__canvas layout__canvas--inerte", "aria-hidden": "true" }), h("p", { class: "nota" }, "O canvas, as ligações, a trava de tela e os cantos mortos ficam desabilitados até o módulo de teclado e mouse funcionar nesta máquina.")] }),
@@ -75,6 +72,9 @@ export default function montar({ ir, assinar }) {
   }
 
   let layout = null;
+  let monitores = null;
+  let ultimoAnuncioMonitores = null;
+  let preparando = false;
   let selecao = null; // { tipo: "borda", ponta, linkId, destino } | { tipo: "dispositivo", peerId }
   let escala = 1;
   let origem = { x: 0, y: 0 };
@@ -125,35 +125,41 @@ export default function montar({ ir, assinar }) {
     trocar(areaTravessia, resumoTravessia(obterApp(), { ir, acoes: false }));
   }
   function pintarSimples() {
-    if (!layout || saiu) return;
-    trocar(areaSimples, configurarPosicao({ layout, escolha, ocupado: testando, salvando, resultado: resultadoTeste, aoGravar: salvarPosicao, aoTestar: testarEntrada, aoAvancado: abrirAvancado, aoParear: () => ir("pareamento"), aoDiagnostico: () => ir("diagnostico"), aoPrevia: pintarCanvas }));
-  }
-  async function salvarPosicao(proposta) {
-    if (salvando || testando) return;
-    const d = layout.devices.find((x) => x.peer_id === proposta.b.peer_id);
-    const pos = posicionarDestino(layout, { peer_id: proposta.b.peer_id, edge: proposta.a.edge, posicao: escolha.posicao });
-    if (!d || !pos) return;
-    const foco = guardarFoco(no);
-    salvando = true;
-    pintarSimples();
-    restaurarFoco(foco, no);
-    let rev = layout.rev;
-    let posicaoSalva = false;
-    try {
-      if (d.x !== pos.x || d.y !== pos.y) {
-        const r = await api.layoutSetDevice({ peer_id: d.peer_id, ...pos, hotkey: d.hotkey, base_rev: rev });
-        rev = r.layout_rev;
-        posicaoSalva = true;
-      }
-      await api.layoutSetLink({ ...proposta, base_rev: rev });
-      trocar(avisoTopo);
-      anuncios.status("Passagem configurada neste computador. Confira a permissão de controle no destino e teste o mouse.");
-    } catch (erro) {
-      mostrarAvisoTopo("aviso", falhaAoLigar(erro?.code, mensagemDe(erro), posicaoSalva));
+    if (!layout || saiu || !monitores) return;
+    const estado = monitores.estado();
+    const foco = guardarFoco(areaSimples);
+    trocar(areaSimples, editorMonitores({ ...estado, ocupado: estado.ocupado || preparando || operacao,
+      aoSelecionar: monitores.selecionar, aoMudar: monitores.alterar,
+      aoPrever: monitores.prever, aoAplicar: async () => { await monitores.aplicar(); await carregar({ silencioso: true }); },
+      aoAtualizar: () => atualizarMonitores(false), aoPreparar: () => atualizarMonitores(true),
+      aoAnunciar: (tipo, texto, origem) => {
+        // Repintura não é uma nova ação: não sobrepõe um alerta mais recente.
+        // A identidade do resultado permite anunciar uma nova prévia de texto igual.
+        if (origem != null) {
+          if (origem === ultimoAnuncioMonitores) return;
+          ultimoAnuncioMonitores = origem;
+        }
+        anuncios[tipo](texto);
+      },
+    }));
+    // Aplicar deixa de estar disponível quando a prévia é consumida, inclusive por erro.
+    // Só transfere o foco que ainda estava nessa ação no instante da repintura.
+    if (foco?.chave === "monitores-aplicar" && !estado.previa && !estado.ocupado &&
+        no.ownerDocument.defaultView?.location.href === rotaMontagem) {
+      restaurarFoco(foco, areaSimples, { fallback: () => encontrar("monitores-prever") });
     }
-    salvando = false;
-    await carregar({ silencioso: true });
-    restaurarFoco(foco, no, { fallback: () => encontrar("layout-ligar") });
+  }
+  async function atualizarMonitores(preparar) {
+    if (preparando || monitores?.estado().ocupado) return;
+    preparando = true; pintarSimples();
+    try {
+      if (preparar) await api.layoutPrepareMonitors();
+      const novo = await api.layoutGet();
+      if (saiu) return;
+      layout = novo; monitores.atualizar(novo, true); pintarTudo();
+      if (!preparar) await monitores.prever();
+    } catch (erro) { mostrarAvisoTopo("aviso", mensagemDe(erro)); }
+    finally { preparando = false; pintarSimples(); }
   }
   async function testarEntrada(peerId) {
     if (testando || salvando) return;
@@ -203,6 +209,8 @@ export default function montar({ ir, assinar }) {
       const proximo = await api.layoutGet();
       if (saiu || minha !== geracaoCarga) return;
       layout = proximo;
+      if (!monitores) monitores = controladorMonitores({ layout, api, aoMudar: pintarSimples });
+      else monitores.atualizar(layout);
     } catch (erro) {
       if (saiu || minha !== geracaoCarga) return;
       trocar(corpo, estadoErro(erro, () => carregar()));
@@ -222,34 +230,18 @@ export default function montar({ ir, assinar }) {
   }
 
   function pintarTudo() {
-    trocar(
-      corpo,
-      avisoTopo,
-      areaTravessia,
-      areaOferta,
-      areaSimples,
-      h(
-        "div",
-        { class: "layout__principal" },
-        cartao({
-          plano: true,
-          filhos: [
-            h("div", { class: "layout__palco" }, envoltorio, popover),
-            ...layout.devices.filter((d) => d.monitors.length === 0).map((d) => h("p", { class: "nota layout__legenda" }, `${d.name}: sem monitores conhecidos. Confira a conexão e o módulo de teclado e mouse.`)),
-            h("p", { class: "nota layout__legenda", id: "layout-canvas-ajuda" }, "Prévia da posição escolhida. Clique em Ligar nessa posição para aplicar. Você também pode arrastar ou usar setas; os ajustes avançados oferecem todos os controles por formulário."),
-          ],
-        }),
-      ),
-      ajustes,
-      h("div", { class: "layout__lateral" }, painel, areaLigacoes),
+    trocar(ajustes, h("summary", null, "Ajustes avançados"),
+      h("p", { class: "nota", id: "layout-canvas-ajuda" }, "Ligações avançadas por borda. Alterar uma ligação gerida a converte em avançada; a próxima organização a preserva ou informa conflito."),
+      h("div", { class: "layout__principal" }, cartao({ plano: true, filhos: [h("div", { class: "layout__palco" }, envoltorio, popover)] })),
+      h("div", { class: "layout__lateral" }, painel, areaLigacoes), areaRodape,
+      recuperacaoMonitores({ layout, aoRestaurar: async (args) => {
+        const r = await api.layoutRestoreV1(args);
+        mostrarAvisoTopo("info", r.activation === "unconfirmed" ? "Organização salva, ativação não confirmada" : "Layout v1 restaurado.");
+        monitores = null; await carregar({ silencioso: true });
+      } }),
     );
-    pintarTravessia();
-    pintarSimples();
-    pintarOferta();
-    pintarCanvas();
-    pintarPainel();
-    pintarLigacoes();
-    pintarRodape();
+    trocar(corpo, avisoTopo, areaTravessia, areaOferta, areaSimples, ajustes);
+    pintarTravessia(); pintarSimples(); pintarOferta(); pintarCanvas(); pintarPainel(); pintarLigacoes(); pintarRodape();
   }
 
   function mostrarAvisoTopo(tom, texto) {
@@ -264,9 +256,11 @@ export default function montar({ ir, assinar }) {
     avisoPainel = null;
     try {
       const r = await fn();
+      if (saiu) return undefined;
       if (depois === "recarregar") await carregar({ silencioso: true, duranteOperacao: true });
       return r;
     } catch (erro) {
+      if (saiu) return undefined;
       if (erro?.code === "stale_rev") {
         mostrarAvisoTopo("aviso", mensagemDe(erro));
         await carregar({ silencioso: true, duranteOperacao: true });
@@ -284,8 +278,13 @@ export default function montar({ ir, assinar }) {
       return undefined;
     } finally {
       operacao = false;
-      restaurarFoco(foco, no, { fallback: fallbackCanvas });
-      if (recargaPendente && !saiu) await carregar({ silencioso: true, duranteOperacao: true });
+      if (!saiu) {
+        // As closures dos controles também capturam ocupado; limpar só a variável
+        // mantém a última renderização bloqueada após a carga durante a operação.
+        pintarSimples(); pintarOferta();
+        restaurarFoco(foco, no, { fallback: fallbackCanvas });
+        if (recargaPendente) await carregar({ silencioso: true });
+      }
     }
   }
 
@@ -432,59 +431,11 @@ export default function montar({ ir, assinar }) {
       grupo.append(linha);
     }
 
-    ligarArrasto(grupo, d);
+    grupo.addEventListener("click", (evento) => { if (evento.target === grupo) selecionarDispositivo(d); });
     grupo.addEventListener("keydown", (evento) => {
-      if (evento.target !== grupo) return;
-      const passo = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[evento.key];
-      if (passo) {
-        evento.preventDefault();
-        const dx = (passo[0] * MALHA_PX) / escala;
-        const dy = (passo[1] * MALHA_PX) / escala;
-        const pos = posicaoVisual(d);
-        moverDispositivo(d, Math.round(pos.x + dx), Math.round(pos.y + dy));
-      } else if (evento.key === "Enter" || evento.key === " ") {
-        evento.preventDefault();
-        selecionarDispositivo(d);
-      }
+      if (evento.target === grupo && ["Enter", " "].includes(evento.key)) { evento.preventDefault(); selecionarDispositivo(d); }
     });
     return grupo;
-  }
-
-  function ligarArrasto(grupo, d) {
-    grupo.addEventListener("pointerdown", (evento) => {
-      if (evento.button !== 0) return;
-      if (evento.target.closest(".layout__borda, .layout__alca, .layout__segmento, .layout__travada")) return;
-      evento.preventDefault();
-      const inicio = { x: evento.clientX, y: evento.clientY };
-      const pos = posicaoVisual(d);
-      let dx = 0;
-      let dy = 0;
-      let moveu = false;
-      grupo.setPointerCapture(evento.pointerId);
-      grupo.classList.add("layout__dispositivo--arrastando");
-      const mover = (e) => {
-        dx = encaixar(e.clientX - inicio.x);
-        dy = encaixar(e.clientY - inicio.y);
-        if (dx !== 0 || dy !== 0) moveu = true;
-        grupo.setAttribute("transform", `translate(${dx} ${dy})`);
-      };
-      const soltar = (eventoFinal) => {
-        grupo.removeEventListener("pointermove", mover);
-        grupo.removeEventListener("pointerup", soltar);
-        grupo.removeEventListener("pointercancel", soltar);
-        grupo.classList.remove("layout__dispositivo--arrastando");
-        grupo.removeAttribute("transform");
-        if (eventoFinal.type === "pointercancel") return;
-        if (!moveu) {
-          selecionarDispositivo(d);
-          return;
-        }
-        moverDispositivo(d, Math.round(pos.x + dx / escala), Math.round(pos.y + dy / escala));
-      };
-      grupo.addEventListener("pointermove", mover);
-      grupo.addEventListener("pointerup", soltar);
-      grupo.addEventListener("pointercancel", soltar);
-    });
   }
 
   function zonaBorda(d, r, rr, edge) {
@@ -1022,14 +973,21 @@ export default function montar({ ir, assinar }) {
   }
 
   function pintarOferta() {
+    if (layout.pending_monitor_offer) {
+      trocar(areaOferta, ofertaMonitores({ layout, ocupado: operacao, aoResponder: (args) => executar(async () => {
+        const r = await api.layoutMonitorOfferAnswer(args);
+        if (!saiu && args.accept) mostrarAvisoTopo("info", r.activation === "unconfirmed" ? "Organização salva, ativação não confirmada" : "Organização aceita. Confira a travessia nas máquinas.");
+        return r;
+      }) }));
+      return;
+    }
     const o = layout.pending_offer;
     if (!o) {
-      trocar(areaOferta, avisoTopo);
+      trocar(areaOferta);
       return;
     }
     trocar(
       areaOferta,
-      avisoTopo,
       aviso(
         "info",
         h("p", null, `${o.from_name} ofereceu um layout (rev ${o.rev}) com ${o.links.length} ${o.links.length === 1 ? "ligação" : "ligações"}. Aceitar substitui as ligações que cruzam as mesmas bordas.`),
@@ -1117,7 +1075,7 @@ export default function montar({ ir, assinar }) {
     };
     const x = coordenada("x"); const y = coordenada("y");
     return h("div", { class: "pilha" }, h("div", { class: "layout__origem" }, x.no, y.no), botao({
-      rotulo: "Aplicar posição", dataset: { focusKey: chave("posicao-aplicar", d.peer_id) },
+      rotulo: "Aplicar posição do computador", dataset: { focusKey: chave("posicao-aplicar", d.peer_id) },
       aoClicar: () => {
         const px = Number(x.entrada.value); const py = Number(y.entrada.value);
         if (!Number.isFinite(px) || !Number.isFinite(py) || !x.entrada.value || !y.entrada.value) { mostrarAvisoTopo("erro", "Informe coordenadas válidas em pixels."); return; }
@@ -1215,7 +1173,7 @@ export default function montar({ ir, assinar }) {
     const foco = guardarFoco(no);
     let r;
     try {
-      r = await api.layoutCopyToPeers({ peer_ids: null });
+      r = layout.organization ? await api.layoutCopyMonitors({ to_peer_ids: layout.devices.filter(d => !d.is_self).map(d => d.peer_id) }) : await api.layoutCopyToPeers({ peer_ids: null });
     } catch (erro) {
       mostrarAvisoTopo("erro", mensagemDe(erro));
       pintarOferta();
@@ -1223,8 +1181,8 @@ export default function montar({ ir, assinar }) {
     }
     if (saiu) return;
     if (!interacaoAtual(foco, no)) {
-      trocar(avisoTopo, h("p", null, "A oferta foi enviada. Abra o resultado para conferir cada computador."), botao({ rotulo: "Ver resultado da oferta", dataset: { focusKey: "layout-resultado-oferta" }, aoClicar: () => exibirResultadoOferta(r) }));
-      anuncios.status("Oferta enviada. O resultado está disponível nesta página.");
+      trocar(avisoTopo, h("p", null, "A cópia foi processada. Abra o resultado para conferir cada computador."), botao({ rotulo: "Ver resultado da oferta", dataset: { focusKey: "layout-resultado-oferta" }, aoClicar: () => exibirResultadoOferta(r) }));
+      anuncios.status("Resultado da cópia disponível nesta página.");
       return;
     }
     await exibirResultadoOferta(r);
@@ -1270,7 +1228,7 @@ export default function montar({ ir, assinar }) {
   no.append(
     cabecalho({
       titulo: "Layout de telas",
-      descricao: "Posicione o outro computador como ele está na sua mesa para passar o mouse entre as telas.",
+      descricao: "Organize cada tela, confira a prévia e aplique as passagens entre os computadores.",
     }),
     anuncios.no,
     corpo,

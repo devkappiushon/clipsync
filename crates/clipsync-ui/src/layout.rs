@@ -13,9 +13,14 @@
 
 use std::path::PathBuf;
 
+use crate::organization as org;
 use clipsync_core::Config;
 use clipsync_input::layout as file;
 use clipsync_input::{InputConfig, LayoutError, trim_dead_corner};
+use clipsync_input::{
+    layout_document::{LayoutDocument, LegacyBinding, Organization},
+    layout_storage::{LayoutGuard, LayoutStorage},
+};
 use clipsync_proto::{
     AgentStatus, Edge as ProtoEdge, InputState, LayoutOffer, MAX_LAYOUT_LINKS, ModuleCommand,
     ModuleKind, ModuleReply, OfferEndpoint, OfferState, PeerId, PeerState, ZoneInfo,
@@ -24,7 +29,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::{self, code as base};
 use crate::devices::DeviceState;
-use crate::events::{LayoutChanged, LayoutReason, UiEvent};
 use crate::{Ctx, UiError, clean, msg, status};
 
 /// Own codes of this screen.
@@ -218,6 +222,16 @@ pub struct Layout {
     pub locked_edges: Vec<Endpoint>,
     pub links: Vec<Link>,
     pub pending_offer: Option<PendingOffer>,
+    #[serde(default)]
+    pub organization: Option<org::Organization>,
+    #[serde(default)]
+    pub inventories: Vec<org::LiveInventory>,
+    #[serde(default)]
+    pub inventory_problem: Option<String>,
+    #[serde(default)]
+    pub pending_monitor_offer: Option<org::Offer>,
+    #[serde(default)]
+    pub v1_backup_available: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -504,6 +518,7 @@ fn layout_error(e: &LayoutError) -> UiError {
         LayoutError::SegmentOverlap { link, other } => err(code::SEGMENT_OVERLAP)
             .with_details(serde_json::json!({ "link": link, "other": other })),
         LayoutError::Io(_) => err(base::IO),
+        LayoutError::Busy | LayoutError::BackupConflict | LayoutError::StaleRev => err(e.code()),
         _ => err(base::CONFIG),
     }
 }
@@ -528,6 +543,8 @@ pub(crate) struct World {
     me: Row,
     peers: Vec<Row>,
     layout: file::Layout,
+    organization: Option<Organization>,
+    v1_backup_available: bool,
     /// `layout.toml` exists on disk.
     saved: bool,
     state: Option<InputState>,
@@ -600,19 +617,79 @@ impl World {
                 name: p.name,
             })
             .collect();
-        let read = file::Layout::read(&path(ctx)).map_err(|e| layout_error(&e))?;
+        let read = LayoutDocument::read(&path(ctx)).map_err(|e| layout_error(&e))?;
         let saved = read.is_some();
-        let layout = normalize(read.unwrap_or_default(), &me, &peers);
+        let document = read.unwrap_or_default();
+        let organization = document.organization;
+        let layout = if organization.is_none() {
+            normalize(document.legacy, &me, &peers)
+        } else {
+            let mut layout = document.legacy;
+            let supplemented = normalize(layout.clone(), &me, &peers);
+            for device in supplemented.devices {
+                if !layout.devices.iter().any(|d| d.peer == device.peer) {
+                    layout.devices.push(device);
+                }
+            }
+            layout
+        };
+        let backup = ctx.profile.dir.join("layout.v1.backup.toml");
+        let v1_backup_available = organization.is_some()
+            && std::fs::symlink_metadata(&backup).is_ok_and(|m| m.is_file())
+            && file::Layout::read(&backup).is_ok_and(|v| v.is_some());
         Ok(World {
             me,
             peers,
             layout,
+            organization,
+            v1_backup_available,
             saved,
             state: input_state(ctx).await,
             status: status::agent_status(ctx).await,
         })
     }
 
+    fn bind_uid(&mut self, e: &file::Endpoint) {
+        let Ok(uid) = clipsync_proto::MonitorUid::from_hex(&e.monitor) else {
+            return;
+        };
+        if let Some(org) = &mut self.organization
+            && !org
+                .legacy_bindings
+                .iter()
+                .any(|b| b.peer == e.peer && b.alias == e.monitor)
+        {
+            org.legacy_bindings.push(LegacyBinding {
+                peer: e.peer,
+                alias: e.monitor.clone(),
+                uid,
+            });
+        }
+    }
+    fn make_advanced(&mut self, id: &str) {
+        let Some(org) = &mut self.organization else {
+            return;
+        };
+        let Some(i) = org.links.iter().position(|l| l.id == id) else {
+            return;
+        };
+        let link = org.links.remove(i);
+        let ep = |e: clipsync_proto::MonitorEndpoint| file::Endpoint {
+            peer: e.key.peer,
+            monitor: e.key.uid.to_hex(),
+            edge: e.edge,
+            from: e.from,
+            to: e.to,
+        };
+        let converted = file::Link {
+            id: link.id,
+            a: ep(link.a),
+            b: ep(link.b),
+        };
+        self.bind_uid(&converted.a);
+        self.bind_uid(&converted.b);
+        self.layout.links.push(converted);
+    }
     fn knows(&self, p: PeerId) -> bool {
         p == self.me.id || self.peers.iter().any(|r| r.id == p)
     }
@@ -648,6 +725,34 @@ impl World {
         let Some(state) = &self.state else {
             return (Vec::new(), MonitorsSource::Absent);
         };
+        if self.organization.is_some()
+            && let Some(live) = state.inventories.iter().find(|v| v.stamp.peer == p)
+        {
+            let monitors = live
+                .inventory
+                .monitors
+                .iter()
+                .enumerate()
+                .map(|(i, m)| Monitor {
+                    monitor_ref: m.uid.to_hex(),
+                    name: clean(&m.label),
+                    index: u32::try_from(i).unwrap_or_default(),
+                    x: m.rect.x,
+                    y: m.rect.y,
+                    width: m.rect.width,
+                    height: m.rect.height,
+                    scale: m.scale,
+                })
+                .collect();
+            return (
+                monitors,
+                if self.peer_state(p) == DeviceState::Connected {
+                    MonitorsSource::Live
+                } else {
+                    MonitorsSource::Cached
+                },
+            );
+        }
         let zones: &[ZoneInfo] = if p == self.me.id {
             &state.local
         } else {
@@ -673,7 +778,8 @@ impl World {
     /// Length in px of the edge `e` sits on, when the monitor is known.
     fn edge_len(&self, e: &file::Endpoint) -> Option<u32> {
         let (ms, _) = self.monitors(e.peer);
-        let m = ms.iter().find(|m| m.monitor_ref == e.monitor)?;
+        let reference = self.projected_endpoint(e).monitor;
+        let m = ms.iter().find(|m| m.monitor_ref == reference)?;
         Some(match e.edge {
             ProtoEdge::Left | ProtoEdge::Right => m.height,
             ProtoEdge::Top | ProtoEdge::Bottom => m.width,
@@ -684,6 +790,17 @@ impl World {
         self.layout
             .devices
             .iter()
+            .filter(|d| {
+                !self.state.as_ref().is_some_and(|s| {
+                    s.inventories.iter().any(|v| {
+                        v.stamp.peer == d.peer
+                            && v.inventory.source == clipsync_proto::GeometrySource::Observed
+                            && v.inventory.space == clipsync_proto::CoordinateSpace::Physical
+                            && v.inventory.capabilities.internal_edges
+                            && self.peer_state(d.peer) == DeviceState::Connected
+                    })
+                })
+            })
             .flat_map(|d| internal_edges(d.peer, &self.monitors(d.peer).0))
             .collect()
     }
@@ -703,19 +820,116 @@ impl World {
         }
     }
 
+    fn projected_endpoint(&self, e: &file::Endpoint) -> Endpoint {
+        let mut view = endpoint_view(e);
+        if let Some(org) = &self.organization {
+            let matches: Vec<_> = org
+                .legacy_bindings
+                .iter()
+                .filter(|b| b.peer == e.peer && b.alias == e.monitor)
+                .collect();
+            if let [binding] = matches.as_slice() {
+                view.monitor = binding.uid.to_hex();
+            } else if matches.is_empty()
+                && let Some(inventory) = self
+                    .state
+                    .as_ref()
+                    .and_then(|s| s.inventories.iter().find(|v| v.stamp.peer == e.peer))
+            {
+                let found: Vec<_> = inventory
+                    .inventory
+                    .monitors
+                    .iter()
+                    .filter(|m| {
+                        inventory.inventory.source == clipsync_proto::GeometrySource::Observed
+                            && inventory.inventory.monitors.len() == 1
+                            && m.label == e.monitor
+                    })
+                    .collect();
+                if let [monitor] = found.as_slice() {
+                    view.monitor = monitor.uid.to_hex();
+                }
+            }
+        }
+        view
+    }
     fn view(&self) -> Layout {
         let locked = self.locked_edges();
-        let links = self
+        let mut links: Vec<Link> = self
             .layout
             .links
             .iter()
             .map(|k| {
-                let bad = touches_locked(&locked, &k.a) || touches_locked(&locked, &k.b);
-                link_view(k, bad.then_some(code::INTERNAL_EDGE_LOCKED))
+                let a = self.projected_endpoint(&k.a);
+                let b = self.projected_endpoint(&k.b);
+                let bad = touches_locked(
+                    &locked,
+                    &file::Endpoint {
+                        monitor: a.monitor.clone(),
+                        ..k.a.clone()
+                    },
+                ) || touches_locked(
+                    &locked,
+                    &file::Endpoint {
+                        monitor: b.monitor.clone(),
+                        ..k.b.clone()
+                    },
+                );
+                Link {
+                    id: k.id.clone(),
+                    a,
+                    b,
+                    problem: bad.then_some(code::INTERNAL_EDGE_LOCKED).map(str::to_owned),
+                }
             })
             .collect();
+        if let Some(organization) = &self.organization {
+            links.extend(organization.links.iter().map(|l| Link {
+                id: l.id.clone(),
+                a: managed_endpoint(&l.a),
+                b: managed_endpoint(&l.b),
+                problem: None,
+            }));
+        }
         let st = self.state.as_ref();
         Layout {
+            organization: self.organization.as_ref().map(|o| org::Organization {
+                positions: o.positions.iter().cloned().map(Into::into).collect(),
+                links: o.links.iter().cloned().map(Into::into).collect(),
+            }),
+            inventories: st
+                .map(|s| s.inventories.iter().cloned().map(Into::into).collect())
+                .unwrap_or_default(),
+            inventory_problem: st.and_then(|s| s.inventory_problem.clone()).or_else(|| {
+                if st.is_none_or(|s| s.inventories.is_empty()) {
+                    Some("inventory_required".into())
+                } else {
+                    None
+                }
+            }),
+            pending_monitor_offer: st.and_then(|s| s.pending_monitor_offer.as_ref()).map(|p| {
+                org::Offer {
+                    from_peer_id: p.from.to_hex(),
+                    from_name: self.name_of(p.from),
+                    connection: p.connection,
+                    rev: p.offer.rev,
+                    positions: p.offer.positions.iter().cloned().map(Into::into).collect(),
+                    links: p.offer.links.iter().cloned().map(Into::into).collect(),
+                    legacy_links: p
+                        .offer
+                        .legacy_links
+                        .iter()
+                        .enumerate()
+                        .map(|(i, l)| Link {
+                            id: format!("oferta-{i}"),
+                            a: offer_endpoint_view(&l.a),
+                            b: offer_endpoint_view(&l.b),
+                            problem: Some("preserved_inactive".into()),
+                        })
+                        .collect(),
+                }
+            }),
+            v1_backup_available: self.v1_backup_available,
             rev: self.layout.rev,
             self_id: self.me.id.to_hex(),
             snap_px: SNAP_PX,
@@ -791,28 +1005,84 @@ fn link_view(k: &file::Link, problem: Option<&str>) -> Link {
 /// The one write path: validate, refuse a manual-barrier clash, write, reload the agent, emit.
 /// The new `rev` is `layout.rev + 1`. When the agent cannot apply the file, it stays saved and
 /// the error says so.
-async fn save(ctx: &Ctx, cfg: &Config, mut layout: file::Layout) -> Result<u64, UiError> {
-    layout.rev += 1;
+async fn save(
+    ctx: &Ctx,
+    cfg: &Config,
+    mut layout: file::Layout,
+    organization: Option<Organization>,
+    guard: LayoutGuard,
+) -> Result<u64, UiError> {
+    layout.rev = layout
+        .rev
+        .checked_add(1)
+        .ok_or_else(|| UiError::bad_request("revisão esgotada"))?;
     layout.validate().map_err(|e| layout_error(&e))?;
     let input = InputConfig::from_table(cfg.input.as_ref())
         .map_err(|e| UiError::new(base::CONFIG, msg::config(&clean(&e.to_string()))))?;
     layout
         .ensure_no_manual_barriers(&input)
         .map_err(|e| layout_error(&e))?;
-    layout.write(&path(ctx)).map_err(|e| layout_error(&e))?;
+    let v2 = organization.is_some();
+    if v2 {
+        match ctx
+            .ask_module(ModuleKind::Input, ModuleCommand::InputSuspendOrganization)
+            .await?
+        {
+            ModuleReply::Done => {}
+            ModuleReply::OrganizationFailure(e) => {
+                return Err(org::failure(&e.code, e.current_rev));
+            }
+            _ => return Err(org::failure("inventory_required", Some(layout.rev - 1))),
+        }
+    }
     let rev = layout.rev;
-    let reloaded = reload(ctx).await;
-    ctx.emit(UiEvent::LayoutChanged(LayoutChanged {
-        rev,
-        reason: LayoutReason::Saved,
-    }));
+    let result = guard.write(&LayoutDocument {
+        legacy: layout,
+        organization,
+    });
+    drop(guard);
+    if let Err(LayoutError::PublishedUnconfirmed { rev }) = result {
+        org::emit(ctx, rev);
+        return Err(UiError::new("published_unconfirmed","Organização salva, ativação não confirmada").with_details(serde_json::json!({"current_rev":rev,"layout_rev":rev,"activation":"unconfirmed","durability":"unconfirmed"})));
+    }
+    result.map_err(|e| layout_error(&e))?;
+    let reloaded = if v2 {
+        match ctx
+            .ask_module(ModuleKind::Input, ModuleCommand::InputReload)
+            .await
+        {
+            Ok(ModuleReply::Done) => Ok(()),
+            Ok(_) => Err(org::failure("activation_unconfirmed", Some(rev))),
+            Err(e) => Err(e),
+        }
+    } else {
+        reload(ctx).await
+    };
+    org::emit(ctx, rev);
+    if v2 && reloaded.is_err() {
+        return Err(UiError::new("activation_unconfirmed","Organização salva, ativação não confirmada").with_details(serde_json::json!({"current_rev":rev,"layout_rev":rev,"activation":"unconfirmed","durability":"confirmed"})));
+    }
     reloaded?;
     Ok(rev)
+}
+fn storage_guard(ctx: &Ctx) -> Result<LayoutGuard, UiError> {
+    LayoutStorage::new(&ctx.profile.dir)
+        .try_lock()
+        .map_err(|e| layout_error(&e))
+}
+fn managed_endpoint(e: &clipsync_proto::MonitorEndpoint) -> Endpoint {
+    Endpoint {
+        peer_id: e.key.peer.to_hex(),
+        monitor: e.key.uid.to_hex(),
+        edge: e.edge.into(),
+        from: clean_f(e.from),
+        to: clean_f(e.to),
+    }
 }
 
 fn stale(current: u64) -> UiError {
     UiError::new(code::STALE_REV, txt::STALE_REV)
-        .with_details(serde_json::json!({ "rev": current }))
+        .with_details(serde_json::json!({ "rev": current, "current_rev": current }))
 }
 
 fn unknown_peer(field: &str) -> UiError {
@@ -834,7 +1104,13 @@ fn parse_endpoint(w: &World, e: &Endpoint, side: &str) -> Result<file::Endpoint,
     let (ms, _) = w.monitors(peer);
     let monitor_ok = !e.monitor.is_empty()
         && e.monitor.len() <= clipsync_proto::MAX_NAME_BYTES
-        && (ms.is_empty() || ms.iter().any(|m| m.monitor_ref == e.monitor));
+        && (ms.is_empty()
+            || ms.iter().any(|m| m.monitor_ref == e.monitor)
+            || w.organization.as_ref().is_some_and(|o| {
+                o.positions
+                    .iter()
+                    .any(|p| p.key.peer == peer && p.key.uid.to_hex() == e.monitor)
+            }));
     if !monitor_ok {
         return Err(UiError::new(base::BAD_REQUEST, txt::BAD_MONITOR)
             .with_field(&format!("{side}.monitor")));
@@ -863,6 +1139,7 @@ pub(crate) async fn get(ctx: &Ctx) -> Result<Layout, UiError> {
 pub(crate) async fn set_link(ctx: &Ctx, args: SetLinkArgs) -> Result<SetLinkReply, UiError> {
     let cfg = require_input(ctx)?;
     let _guard = WRITE.lock().await;
+    let disk_guard = storage_guard(ctx)?;
     let mut w = World::load(ctx).await?;
     let a = parse_endpoint(&w, &args.a, "a")?;
     let b = parse_endpoint(&w, &args.b, "b")?;
@@ -906,9 +1183,53 @@ pub(crate) async fn set_link(ctx: &Ctx, args: SetLinkArgs) -> Result<SetLinkRepl
                 .with_details(serde_json::json!({ "link": k.id })));
         }
     }
+    if let Some(org) = &w.organization {
+        for managed in &org.links {
+            if args.id.as_deref() == Some(&managed.id) {
+                continue;
+            }
+            for candidate in [&a, &b] {
+                for endpoint in [&managed.a, &managed.b] {
+                    let uid_match = candidate.monitor == endpoint.key.uid.to_hex()
+                        || org.legacy_bindings.iter().any(|binding| {
+                            binding.peer == candidate.peer
+                                && binding.alias == candidate.monitor
+                                && binding.uid == endpoint.key.uid
+                        })
+                        || w.state.as_ref().is_some_and(|s| {
+                            s.inventories
+                                .iter()
+                                .filter(|v| v.stamp.peer == candidate.peer)
+                                .flat_map(|v| &v.inventory.monitors)
+                                .filter(|m| m.label == candidate.monitor)
+                                .collect::<Vec<_>>()
+                                .as_slice()
+                                .first()
+                                .is_some_and(|m| m.uid == endpoint.key.uid)
+                        });
+                    if candidate.peer == endpoint.key.peer
+                        && uid_match
+                        && candidate.edge == endpoint.edge
+                        && candidate.from < endpoint.to
+                        && candidate.to > endpoint.from
+                    {
+                        return Err(UiError::new(
+                            code::SEGMENT_OVERLAP,
+                            txt::overlap(&managed.id),
+                        ));
+                    }
+                }
+            }
+        }
+    }
     if args.base_rev != w.layout.rev {
         return Err(stale(w.layout.rev));
     }
+    if let Some(id) = &args.id {
+        w.make_advanced(id);
+    }
+    w.bind_uid(&a);
+    w.bind_uid(&b);
     let editing = match &args.id {
         Some(id) => Some(
             w.layout
@@ -947,7 +1268,7 @@ pub(crate) async fn set_link(ctx: &Ctx, args: SetLinkArgs) -> Result<SetLinkRepl
         Some(i) => w.layout.links[i] = link.clone(),
         None => w.layout.links.push(link.clone()),
     }
-    let layout_rev = save(ctx, &cfg, w.layout).await?;
+    let layout_rev = save(ctx, &cfg, w.layout, w.organization, disk_guard).await?;
     Ok(SetLinkReply {
         link: link_view(&link, None),
         layout_rev,
@@ -958,7 +1279,9 @@ pub(crate) async fn set_link(ctx: &Ctx, args: SetLinkArgs) -> Result<SetLinkRepl
 pub(crate) async fn remove_link(ctx: &Ctx, args: RemoveLinkArgs) -> Result<RevReply, UiError> {
     let cfg = require_input(ctx)?;
     let _guard = WRITE.lock().await;
+    let disk_guard = storage_guard(ctx)?;
     let mut w = World::load(ctx).await?;
+    w.make_advanced(&args.id);
     let Some(i) = w.layout.links.iter().position(|k| k.id == args.id) else {
         return Err(UiError::new(code::LINK_NOT_FOUND, txt::LINK_NOT_FOUND).with_field("id"));
     };
@@ -967,13 +1290,14 @@ pub(crate) async fn remove_link(ctx: &Ctx, args: RemoveLinkArgs) -> Result<RevRe
     }
     w.layout.links.remove(i);
     Ok(RevReply {
-        layout_rev: save(ctx, &cfg, w.layout).await?,
+        layout_rev: save(ctx, &cfg, w.layout, w.organization, disk_guard).await?,
     })
 }
 
 pub(crate) async fn set_device(ctx: &Ctx, args: SetDeviceArgs) -> Result<SetDeviceReply, UiError> {
     let cfg = require_input(ctx)?;
     let _guard = WRITE.lock().await;
+    let disk_guard = storage_guard(ctx)?;
     let mut w = World::load(ctx).await?;
     let peer = known_peer(&w, &args.peer_id, "peer_id")?;
     if let Some(n) = args.hotkey
@@ -1008,7 +1332,14 @@ pub(crate) async fn set_device(ctx: &Ctx, args: SetDeviceArgs) -> Result<SetDevi
         d.y = i32::try_from(y).unwrap_or(0);
         d.hotkey = args.hotkey;
     }
-    let layout_rev = save(ctx, &cfg, w.layout.clone()).await?;
+    let layout_rev = save(
+        ctx,
+        &cfg,
+        w.layout.clone(),
+        w.organization.clone(),
+        disk_guard,
+    )
+    .await?;
     let device = w
         .layout
         .devices
@@ -1025,6 +1356,7 @@ pub(crate) async fn set_options(
 ) -> Result<SetOptionsReply, UiError> {
     let cfg = require_input(ctx)?;
     let _guard = WRITE.lock().await;
+    let disk_guard = storage_guard(ctx)?;
     let mut w = World::load(ctx).await?;
     if args.dead_corner_px > file::MAX_DEAD_CORNER_PX {
         return Err(
@@ -1052,7 +1384,7 @@ pub(crate) async fn set_options(
         return Err(stale(w.layout.rev));
     }
     w.layout.options.dead_corner_px = args.dead_corner_px;
-    let layout_rev = save(ctx, &cfg, w.layout).await?;
+    let layout_rev = save(ctx, &cfg, w.layout, w.organization, disk_guard).await?;
     Ok(SetOptionsReply {
         options: Options {
             dead_corner_px: args.dead_corner_px,
@@ -1082,8 +1414,17 @@ fn copy_result(w: &World, peer: PeerId, state: OfferState) -> CopyResult {
 /// Sends the saved layout to the peers (`InputOffer`). The peer decides; `denied` is a peer that
 /// did not grant this device control of it.
 pub(crate) async fn copy_to_peers(ctx: &Ctx, args: CopyToPeersArgs) -> Result<CopyReply, UiError> {
+    copy_impl(ctx, args, false).await
+}
+async fn copy_impl(ctx: &Ctx, args: CopyToPeersArgs, v4: bool) -> Result<CopyReply, UiError> {
     require_input(ctx)?;
     let w = World::load(ctx).await?;
+    if v4 && w.organization.is_none() {
+        return Err(UiError::new(
+            "no_organization",
+            "Aplique uma organização antes de copiar.",
+        ));
+    }
     let mut targets: Vec<PeerId> = Vec::new();
     match &args.peer_ids {
         None => targets.extend(w.peers.iter().map(|r| r.id)),
@@ -1110,8 +1451,14 @@ pub(crate) async fn copy_to_peers(ctx: &Ctx, args: CopyToPeersArgs) -> Result<Co
     }
     let outcomes = match ask(
         ctx,
-        ModuleCommand::InputOffer {
-            to: targets.clone(),
+        if v4 || w.organization.is_some() {
+            ModuleCommand::InputOfferV4 {
+                to: targets.clone(),
+            }
+        } else {
+            ModuleCommand::InputOffer {
+                to: targets.clone(),
+            }
         },
     )
     .await?
@@ -1133,6 +1480,17 @@ pub(crate) async fn copy_to_peers(ctx: &Ctx, args: CopyToPeersArgs) -> Result<Co
         rev: w.layout.rev,
         results,
     })
+}
+
+pub(crate) async fn copy_monitors(ctx: &Ctx, targets: Vec<String>) -> Result<CopyReply, UiError> {
+    copy_impl(
+        ctx,
+        CopyToPeersArgs {
+            peer_ids: Some(targets),
+        },
+        true,
+    )
+    .await
 }
 
 /// The offer replaces the links and the device positions with the sender's; it keeps this
@@ -1176,6 +1534,7 @@ pub(crate) async fn offer_answer(ctx: &Ctx, args: OfferAnswerArgs) -> Result<Rev
     let cfg = require_input(ctx)?;
     let seen_from = api::peer_id(&args.from_peer_id, "from_peer_id")?;
     let _guard = WRITE.lock().await;
+    let disk_guard = storage_guard(ctx)?;
     let state = match ask(ctx, ModuleCommand::InputState).await? {
         ModuleReply::InputState(s) => s,
         _ => return Err(UiError::internal(msg::UNEXPECTED_REPLY)),
@@ -1195,14 +1554,21 @@ pub(crate) async fn offer_answer(ctx: &Ctx, args: OfferAnswerArgs) -> Result<Rev
         })));
     }
     if !args.accept {
+        drop(disk_guard);
         ask(ctx, ModuleCommand::InputOfferClear).await?;
         return Ok(RevReply {
             layout_rev: w.layout.rev,
         });
     }
+    if w.organization.is_some() {
+        return Err(UiError::new(
+            "incompatible_offer",
+            "Esta oferta antiga não preserva os monitores. Peça uma oferta v4.",
+        ));
+    }
     let mut layout = std::mem::take(&mut w.layout);
     apply_offer(&mut layout, &pending.offer, |p| w.knows(p));
-    let layout_rev = save(ctx, &cfg, layout).await?;
+    let layout_rev = save(ctx, &cfg, layout, w.organization, disk_guard).await?;
     ask(ctx, ModuleCommand::InputOfferClear).await?;
     Ok(RevReply { layout_rev })
 }

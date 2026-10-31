@@ -1,0 +1,19 @@
+{
+  "rev": 1,
+  "self_id": "1111111111111111111111111111111111111111111111111111111111111111",
+  "snap_px": 16,
+  "options": {
+    "dead_corner_px": 8
+  },
+  "screen_locked": false,
+  "active_peer_id": null,
+  "devices": [],
+  "locked_edges": [],
+  "links": [],
+  "pending_offer": null,
+  "organization": null,
+  "inventories": [],
+  "inventory_problem": null,
+  "pending_monitor_offer": null,
+  "v1_backup_available": false
+}
