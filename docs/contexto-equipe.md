@@ -1,5 +1,21 @@
 # ClipSync: contexto comum dos andares
 
+## Estado vigente da fonte · S10 / candidata 0.5.0
+
+João autorizou concluir clareza e monitores independentes, e publicar somente após todos os gates. Clareza e T1–T3 estão implementadas/revisadas; T3 inclui o commit aef92b6. T4 está no fix final do editor por Pixel · UI, sob Maestro #3. Testes positivos reais da API foram acrescentados por Rivet e aprovados por Argus. DOC prepara o guia; TESTES prepara o oráculo físico. O Maestro central executa integração, CI e runtime. Nenhuma tag/release S10 foi publicada.
+
+Novas delegações usam apenas os terminais conectados no Maestri, sem subagentes internos. Posse e evidências: `.superpowers/sdd/2026-10-30-monitores-independentes/progress.md`. Contrato §16 é vinculante; a versão candidata não fecha aceites físicos pendentes. A publicação v0.4.0 descrita abaixo permanece histórica e disponível.
+
+
+
+## S10 em implementação · 30/10/2026
+
+João aprovou clareza de disponibilidade e monitores independentes, com release **somente após tudo finalizado**. Contrato §16 e designs/plans 2026-10-30 em docs/superpowers são a fonte vigente. O Maestro coordena implementação nativa por posse; UX/TESTES preparam e executam aceites quando houver diff estável/runtime anunciado. Oito nós em uso foram recuperados, com identidade/notas confirmadas. A instalação0.4.0 permanece intacta.
+
+Clareza: código e revisão técnica aprovados, commit `a6e9a10`. PX-A01 de Dispositivos e PG-P01 de Pareamento corrigidos e aprovados no recorte DOM, commits `92daf71` e `de44267`; evidências e limites nos relatórios `portal-css.md` e `portal-pareamento-css.md` do plano. Todas as janelas foram devolvidas e o root encerrou o simulador 5174; nova coleta aguarda novo anúncio. Isso não fecha raster, prova assistiva ou física. Monitores: T1 de identidade/arquivo/compilador concluída e revisada, commit `c2f2630`; T2 wire concluída e revisada, commit `464c4f6`. T3 runtime está em implementação com `s10_runtime`. Em paralelo, `s10_editor_modelo` possui somente `monitores-geometria.js` e `monitores-modelo.test.mjs` para o rascunho puro T4a, sem API/persistência/DOM; a integração T4 e T5 gates seguem pendentes. DOC entregou e devolveu `docs/telas.md` e o README da UI; revisão e commit `d3cd768` concluídos, sem nova publicação. Job Node do CI preparado no commit `6c7e12e`, ainda sem execução remota. Posse e evidências atuais estão nos `progress.md` dos dois planos em `.superpowers/sdd/`; nenhum outro agente edita produto sem atribuição. Maestro possui contrato/contexto/release e runtime. CONTEXTO.md tem alteração automática anterior preservada. Sem publicação enquanto restar aceite obrigatório, inclusive travessia física do novo percurso; nenhuma equivalência entre CI e prova nas duas máquinas. O teclado do incidente anterior segue adiado.
+
+Os blocos abaixo são históricos da versão publicada e das rodadas anteriores.
+
 ## v0.4.0 publicada · 30/10/2026
 
 [Release disponível](https://github.com/devkappiushon/clipsync/releases/tag/v0.4.0), código `6cc1384a7d036877e7077d3c6b63838c64750d4b`. Commit, push e publicação concluídos com a autorização de João. CI Linux/Windows `41006607785` e empacotamento `41006610958` aprovados no mesmo commit; seis pacotes e `SHA256SUMS` publicados, sete tamanhos/digests remotos conferidos.
@@ -127,3 +143,12 @@ B01 foi aprovado no delta por revisão independente (`task-3-review.md`); I01 é
 maestri list confirmou Maestro · scaffold, maestro:true e os cinco coordenadores existentes. Reativação enviada uma vez em ask --batch, prompts preservados em .superpowers/retomada-s9-2026-10-30/reativacao-prompts.json; respostas ainda pendentes, não declarar andares operacionais por mero envio. Sem troca de nó/programa/permissão.
 B01 revisado por fonte/logs, I01 nomes históricos corrigido com testes focais verdes e em revisão independente. Pareamento round4 tem38/38verdes, falta alinhar inicializador do harness consumidores e re-review. B07 novos casos11/11 verdes e suite input concluída segundo autor, manifesto/review pendentes. Aviso W-S9-PREF-01 integrado/revisado. C01+B09FIX1/B03/WTS/B05 preservados. Nenhuma aprovação Tauri/Windows físico/zoom/leitor/mouse real.
 Posse produto: nativos b07_finaliza input; pareamento_r4_finaliza pareamento+testes; I01 diagUI congelado para reviewer. DOC recebeu posse apenas ui/README.md e docs/telas.md. Maestro central mantém contrato/contexto/workboard e runtime. Porta5174 não iniciada ainda. Sem commit/push/release.
+
+
+### S10 · implementação em revisão final, 30/10/2026
+
+A clareza de disponibilidade foi implementada e revisada. Monitores independentes têm identidade/documento v2, wire v4 e motor de entrada/retorno entregues; o motor T3 está no commit aef92b6, com FIX2 aprovado por Argus e Sentinel. O editor T4 está em correção de nomes longos, encerramento de operação e foco; não está concluído. A primeira validação integrada, CI e candidato da S10 ainda não foram concluídos. A v0.4.0 publicada continua a versão instalada anterior a estas alterações.
+
+João determinou que as próximas implementações e revisões usem exclusivamente os terminais conectados por nó no Maestri, sem novos subagentes internos. Pixel · UI é dono do fix frontend via Maestro #3; Rivet · slice fecha a evidência positiva da API real em teste separado; DOC prepara o guia; TESTES prepara o oráculo físico. Posse exata e evidências estão no ledger `.superpowers/sdd/2026-10-30-monitores-independentes/progress.md`. O Maestro central continua dono do runtime e das operações Git.
+
+Release autorizado somente após os gates do contrato §16.3. Windows/duas máquinas, leitor/zoom Tauri e percurso físico não são comprovados pelo simulador ou pela compilação cruzada. O incidente anterior de teclado permanece adiado.

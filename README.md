@@ -4,6 +4,8 @@ Teclado, mouse e área de transferência entre os meus computadores, em um aplic
 
 Estado em 2026-10-30: a v0.4.0 reúne as correções S9 de controle de entrada, pausa, pareamento, configuração de módulos e acessibilidade. A v0.3.1 introduziu o Layout simples por posição; essa configuração continua sendo o caminho normal. **O mouse entre suas duas máquinas ainda precisa de teste físico.** Veja [o que falta validar](docs/pendencias-v0.4.0.md) e as [notas da versão](docs/releases/v0.4.0.md). O roteiro detalhado está em `docs/contrato.md` §13.12.
 
+A fonte atual prepara a **v0.5.0 candidata**, com disponibilidade mais clara e um mapa independente por monitor, para posicionar o notebook entre duas telas do desktop. Veja o [guia dos monitores](docs/monitores-independentes.md). Essa versão ainda depende dos gates de integração e dos testes reais antes de ser publicada. As instruções de download e configuração abaixo continuam referentes à v0.4.0 publicada.
+
 ## Baixar
 
 Baixe a [v0.4.0 publicada](https://github.com/devkappiushon/clipsync/releases/tag/v0.4.0). Cada release traz o app de desktop e a linha de comando, mais o `SHA256SUMS`:

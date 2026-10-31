@@ -1,6 +1,6 @@
 # Interface do ClipSync (ui)
 
-Frontend estático do app Tauri 2: HTML, CSS e JavaScript puros, sem npm, sem bundler e sem conteúdo remoto. A casca (`crates/clipsync-app`) serve esta pasta como `frontendDist`. A lógica das telas fica no crate `clipsync-ui`; aqui só há apresentação. Contrato: `docs/contrato.md` §12, §14 e §16.1.
+Frontend estático do app Tauri 2: HTML, CSS e JavaScript puros, sem npm, sem bundler e sem conteúdo remoto. A casca (`crates/clipsync-app`) serve esta pasta como `frontendDist`. A lógica das telas fica no crate `clipsync-ui`; aqui só há apresentação. Contrato: `docs/contrato.md` §12, §14 e §16.
 
 ## Regras que valem em todo arquivo
 
@@ -55,6 +55,14 @@ Escolha pela URL: `/?cenario=<nome>#/<tela>`.
 
 | Parâmetro | Efeito |
 |---|---|
+| `cenario=monitores-independentes` | desktop Windows com A, notebook, B; prévia e aplicação explícita de uma revisão |
+| `cenario=monitor-ausente` | posição salva sem monitor observado, cartão inativo e UID explícito |
+| `cenario=monitor-ambiguo` | identidade ambígua; não permite aplicar |
+| `cenario=geometria-estimada` | rascunho com geometria estimada, aplicação recusada |
+| `cenario=inventario-alterado` | primeira prévia encontra inventário alterado; atualizar conserva posições |
+| `cenario=protocolo-v3` | organização exige v4; cópia informa falta de suporte |
+| `cenario=organizacao-nao-confirmada` | grava revisão única e informa ativação não confirmada, sem repetição |
+| `cenario=oferta-monitores` | oferta com posições e aceite explícito; opções/atalhos locais preservados |
 | `cenario=padrao` | três pares, um bloqueio, layout com uma ligação |
 | `cenario=vazio` | sem pares, caixa e bloqueios vazios, layout só com esta máquina |
 | `cenario=sem-perfil` | perfil não criado: tudo cai no onboarding |
@@ -179,3 +187,23 @@ Inter no corpo, Geist nos títulos, Geist Mono em código, ids e valores de tabe
 ## Crédito
 
 `<meta name="author">` no `index.html` e "feito por montesouza.dev" na seção Sobre de Preferências.
+
+## Organização por monitor (S10)
+
+O editor principal mantém o rascunho até **Conferir prévia** e **Aplicar organização**. Arrasto, setas, X/Y e encaixe não gravam. A prévia vem do agente; uma aplicação envia exatamente o snapshot conferido. Revisão ou inventário alterados conservam posições para uma atualização explícita da prévia. Com vários notebooks compatíveis, escolha o destino; outros pares continuam preservados.
+
+A jornada começa no desktop Windows. **Preparar telas** atua somente na máquina local; faça a preparação também no notebook e confirme pessoalmente eventual diálogo do sistema. Geometria estimada e cache não comprovam capacidade de ativação. Monitores ausentes mantêm posição e UID, sem dimensão inventada; rótulos anteriores só estão disponíveis no cache desta sessão.
+
+**Ajustes avançados** conserva ligações por borda e oferece recuperação v1. A versão v0.4.0 não lê v2. A restauração exige backup válido, confirmação explícita com foco inicial em Cancelar e revalidação pelo agente. Identidade, pares e permissões permanecem fora do mapa e da recuperação. Organização salva com ativação ou durabilidade não confirmada nunca é reaplicada automaticamente.
+
+Esses cenários e testes Node verificam o consumidor/simulador. Não comprovam a travessia física, leitores de tela, zoom do sistema nem permissões reais do portal; esses aceites pertencem ao gate integrado.
+
+### Guia, versão candidata e limites do mapa
+
+O [guia de monitores independentes](../../../docs/monitores-independentes.md) descreve preparação local das telas, consentimento humano do portal, rascunho, prévia, aplicação, ofertas e recuperação. A fonte está na **0.5.0 candidata, ainda não publicada**; **v0.4.0 continua publicada**. O funcionamento nas máquinas físicas ainda precisa de comprovação.
+
+O primeiro percurso usa mouse/teclado físicos no desktop Windows com dois monitores, A ↔ notebook GNOME Wayland de uma tela ↔ B. A organização exige protocolo v4 nas duas pontas. Não muda a disposição nativa do SO, não transforma monitor em par e não concede controle ao copiar/aceitar. Notebook como origem e divisórias internas Linux multitelas permanecem fora deste recorte. A seção de configuração por posição de computador acima descreve o fluxo legado; no editor por monitor, arrasto/setas/X/Y só mudam o rascunho até prévia e aplicação explícitas.
+
+Cantos mortos novos entram na próxima compilação explícita de prévia/aplicação. Não recortam novamente os segmentos efetivos já salvos nem os endpoints de uma oferta aceita. `unconfirmed` exige consultar o estado, sem repetir escrita automaticamente nem presumir rollback. A v0.4.0 não lê v2; a recuperação explícita depende de backup v1 válido, revalidado pelo agente, e preserva identidade, pares e permissões.
+
+Os oito cenários `monitores-independentes`, `monitor-ausente`, `monitor-ambiguo`, `geometria-estimada`, `inventario-alterado`, `protocolo-v3`, `organizacao-nao-confirmada` e `oferta-monitores` estão registrados em `ui-dev/mock/nucleo.js` e modelados em `ui-dev/mock/layout.js`. O cenário de organização não confirmada simula **ativação** não confirmada com durabilidade confirmada; não reproduz falha física de disco. Nenhum deles comprova coleta real de geometria, diálogo do sistema, captura física ou percurso entre máquinas.

@@ -1900,3 +1900,47 @@ Adendo v1.38, Maestro, 30/10/2026. Correção I1 da revisão integrada: prazo de
 Schema local da §15.14: `HostLifecycle { paused: bool, pause_generation: u64, stopped: bool }`, Copy/Default/Eq, não serializado. `ModuleHost::lifecycle_receiver() -> Option<watch::Receiver<HostLifecycle>>`, default None para implementações legadas; Mesh e MemHub sempre Some. Fonte Some encerrada equivale a parado. None conserva caminho legado de autoridade/controle e não recebe a promessa de retenção de épocas coalescidas; wrappers usados para validar Mesh/MemHub devem encaminhar a fonte. `pause_generation` invalida ao pausar, não dá wrap; esgotamento de u64 mantém falha fechada. Snapshot inicial real deve ser publicado antes de servir o receptor; `Default` não é evidência de runtime ativo. Alteração de pares/conexões acorda o watch e exige consulta da autoridade vigente, comparando geração de conexão independentemente da permissão de entrada local. Estado stopped prevalece sobre resume.
 
 Extensão focal do gate integrado (30/10): `FakeCapture::standalone(zones: Vec<Zone>) -> Self` mantém o sender da fonte dentro do adaptador e publica `CaptureLifecycle` inicial conhecido e válido do fake (desbloqueado, desktop disponível e zonas), antes de disponibilizar observação. Somente `build(AdapterChoice::Fake)` usa esse modo. `FakeCapture::new` continua retornando adaptador/handle separado e conserva EOF ao perder o injector, para testes controlados. Stop deve encerrar e aguardar o produtor; restart exige novo receptor e snapshot. Isso não abre gates nem presume estado de adaptadores reais. Posse ampliada ao mesmo implementador em `input/src/adapter/fake.rs`, `input/src/lib.rs` e testes focais. A falha UI de switch deve ser corrigida no ciclo do fake, sem retry/sleep ou redução de assert no consumidor. Wrappers de MemHub usados na prova de contrapressão encaminham `lifecycle_receiver`, conforme o schema acima.
+
+
+## 16. S10 · clareza e monitores independentes
+
+Adendo v1.39, Maestro, 30/10/2026. João autorizou executar os dois recortes apresentados e publicar release **somente após tudo finalizado**. Designs vinculantes: [clareza](superpowers/specs/2026-10-30-clareza-disponibilidade-design.md) e [monitores independentes](superpowers/specs/2026-10-30-monitores-independentes-design.md). A S9 e seus invariantes continuam vigentes.
+
+### 16.1 Clareza de disponibilidade e concessão no destino
+
+Nas telas Dispositivos/Pareamento, distinguir suporte explicitamente ausente, módulo local explicitamente desligado e estado não confirmado usando os dados existentes. Dentro de ramo já desabilitado, mudar apenas a descrição; preservar equivalência dos motivos nulos/não nulos, prioridade de confiança bloqueada, etapa, handlers e confirmação de confiança total. Ausência de observação remota não prova módulo removido; disponibilidade agregada não atribui causa exclusiva ao par.
+
+O placeholder sempre falso “Controlar {nome} a partir deste computador” passa a orientação estática no mesmo grupo, sem interruptor e sem ação de escrita: “Para controlar {nome} a partir deste computador, autorize este computador na tela Dispositivos de {nome}. O ClipSync não informa aqui se essa autorização já foi concedida.” Esta é exceção explícita à apresentação anterior do placeholder; o controle real de conceder entrada nesta máquina e sua confirmação permanecem. Nenhum grant remoto/local é criado por orientação, navegação ou teste de texto.
+
+Clipboard: enabled=false apresenta a classificação de plataforma como não avaliada com módulo desligado, sem inferir incompatibilidade; ausência de enabled booleano permanece não confirmada; enabled=true conserva a classificação recebida. Diagnóstico vazio não promete latência, e a ausência dessa medição é explicada. Demais recursos futuros permanecem visíveis/desabilitados. Nenhuma API, dependência, capability ou protocolo muda nesta fatia.
+
+Posse de implementação: nativo s10_clareza, quatro telas dispositivos/pareamento/clipboard/diagnostico, helper disponibilidade.js e testes focais conforme plano 2026-10-30-clareza-disponibilidade.md. Contrato/documentação/release só Maestro. Aceite: regressões de causas/gates/etapas/consentimento/texto seguro; revisão independente de spec e qualidade; visual focal nos temas/larguras do plano, com limitações explícitas.
+
+### 16.2 Mapa por monitor, identidade e saídas por sessão
+
+O primeiro aceite é desktop Windows com dois monitores e notebook GNOME Wayland com uma tela, usando mouse/teclado físicos do desktop. O mapa organiza A ↔ notebook ↔ B sem mudar a disposição nativa do SO, sem bordas técnicas obrigatórias e sem novo peer/grant. Movimento é rascunho; aplicação explícita valida/grava o arranjo inteiro e informa separadamente persistência/aplicação observada/travessia comprovada. Notebook como origem e captura de divisória interna em Linux multitelas mantêm os limites declarados no design.
+
+Registro privado monitor-identities.toml independente de layout: UID não pode apontar silenciosamente para outra tela; correspondência ambígua/falha/versão futura preserva dados e não anuncia identidade estável suposta. O receptor pode fornecer inventário sem criar/migrar layout. Layout v2 e passagens derivadas usam transação única com base_rev e inventários vigentes, backup privado obrigatório antes da primeira migração v1, recuperação explícita e preservação de links/atalhos/opções legados não substituídos. Abrir não migra.
+
+Evolução de protocolo para v4, mínimo de conexão1: variantes novas só ao fim; estruturas/índices das mensagens antigas preservados. Entrada oferece até duas rotas de retorno validadas/vinculadas à conexão/sessão/inventário. A origem conserva a tabela local imutável, o destino escolhe somente rota oferecida; monitor ausente/ambíguo não cai em primeira tela. Inventário mantém privacidade de Zones e autorização input_in. Oferta nova conserva posições individuais e aceitação explícita; par antigo não recebe fallback silencioso para rota errada. S9 mantém invalidação/soltura local independente da rede e fronteira de filas/sessões.
+
+Detalhes de tipos, arquivos e testes serão fixados no plano de implementação correspondente antes da posse de código de cada tarefa. Geometria Linux exige observação real, sem tratar DRM estimado como autorização de ativação; preparação de portal não aceita diálogo do SO automaticamente.
+
+Precisão da persistência S10: erro anterior ao rename preserva o arquivo anterior; erro na sincronização do diretório após rename identifica explicitamente a revisão nova já visível, com durabilidade não confirmada. Write e recuperação não prometem rollback nem repetem escrita automaticamente. A transação mantém passagens suspensas, responde revisão publicada/ativação não confirmada/durabilidade não confirmada, e a UI distingue isso de erro sem gravação. Registro de identidades não publica snapshot após falha de confirmação de persistência. O Debug público também omite aliases potencialmente sensíveis, não apenas Evidence.
+
+### 16.3 Finalização e publicação
+
+Release está autorizado somente após conclusão dos dois recortes, revisões sem pendência impeditiva, verificações locais/integradas, CI Linux/Windows no mesmo commit, empacotamento e hashes conferidos, e aceites obrigatórios visuais/físicos do novo percurso. Preparar candidato de teste não equivale a publicar release. Fakes/cross-compilação/CI não fecham prova física. Limite de acesso a Windows, portal ou diálogo deve permanecer visível; nenhuma pendência é reclassificada como sucesso para publicar. O incidente anterior de teclado continua adiado, separado dos testes de regressão do novo recurso.
+
+O gate inclui execução dos consumidores Node no CI do candidato: job separado `ui-node`, Node 24, todos `ui-dev/testes/*.test.mjs`, heap 512 MiB por processo e concorrência 2, sem npm/navegador. Usa actions oficiais e somente `contents: read`, preservando os jobs Rust e o workflow de release. A revisão do YAML não comprova execução remota.
+
+
+### §16 · precisões de integração da interface
+
+A API da interface normaliza os códigos internos de inventário para `stale_inventory` e `inventory_required`. As funções Rust que recebem o contexto privado permanecem `pub(crate)`; a superfície externa continua sendo `Ui::call`, sem comando Tauri adicional.
+
+`layout_get` acrescenta `v1_backup_available` booleano com default conservador false. True exige leitura e validação de backup v1 no perfil, sem expor caminho ou conteúdo. Trata-se de observação: a restauração revalida o backup, a revisão e a exclusão sob lock no serviço; organização ausente desativa recuperação na tela.
+
+Para monitores ausentes, preservar UID/posição e mostrar o último rótulo disponível na sessão. Sem rótulo persistido ou observado, apresentar ausência e UID, sem fabricar nome/geometria ou acrescentar registro de nomes a esta etapa. Dados de apresentação em cache não habilitam aplicar nem substituem inventários atuais.
+
+Precisão dos cantos mortos em v2: ligações geridas persistem segmentos efetivos validados na aplicação. Alterar a opção local não recorta novamente esses segmentos nem altera endpoints recebidos de uma oferta aceita; a opção vigente entra na próxima compilação explícita de prévia/aplicação. Ligações avançadas conservam a validação própria. A interface não deve prometer recomputação retroativa das passagens existentes.
