@@ -4893,3 +4893,37 @@ A rechecagem após selecionar um evento agora atribui stop/pause conforme a auto
 Evidência própria: `CARGO_BUILD_JOBS=2 RUST_TEST_THREADS=2 cargo test -p clipsync-input --locked --test s11_log`: **23 passed, 0 failed**. Harness por stdin com `rustc --edition=2024 --test`, fonte de `e0e549d` e rlibs selecionados pelo Cargo, `/tmp/argus-bis4-race-kwbvc8fb/check review_terminal_lifecycle_races --test-threads=1 --nocapture`: **1 passed**, 160 rodadas, `fechamento incorreto=None`.
 
 A sonda concorrente exerceu erro terminal; a distinção de pausa/parada nessa rechecagem foi conferida por leitura, sem afirmar teste concorrente de cada combinação. Suíte ampla, clippy/fmt e portais físicos não repetidos. Somente esta entrada acrescentada a docs/verdicts.md; nenhum código editado.
+
+
+## S11 T11 · b968bfd · funcional · não passa · 04/11/2026
+
+Sentinel · segurança, revisão funcional solicitada pelo Maestro em substituição ao Argus. Commit `b968bfdcb3be429ddd34ade247a452185aeb882a`, com §17.3 atualizado em `fd4b078`. **Não passa: um Important e um Minor.** Os três cenários reais de campo passam como esperado e os 35 testes existentes estão verdes; as sondas adicionais abaixo encontraram resíduos não cobertos.
+
+1. **Important · S11-T11-FUNC-01 · reinício do destino dentro da divergência de relógio permite usar a execução anterior e esconder uma falha atual.** `crates/clipsync-cli/src/verificar.rs:429` escolhe o último `agent.up` cujo timestamp bruto é menor ou igual ao marco da origem. A tolerância de 30 s só é aplicada depois, aos eventos (`verificar.rs:449`); o recorte da execução já foi escolhido. Fixture com origem reiniciada às **14:01:00**, tentativa às **14:01:01** e fechamento às **14:01:10**; destino com provas antigas da mesma combinação peer/session às **14:00:38–14:00:43** e novo `agent.up` às **14:01:02**. Com o deslocamento conhecido de **+1,6 s**, esse reinício remoto ocorreu antes da tentativa na origem, mas o verificador escolhe a execução anterior, admite suas provas pela margem de 30 s e devolve **onze ok, quebra=null, parada=null, exit 0**. No controle com o reinício remoto marcado às 14:01:00.500, as provas antigas são corretamente excluídas.
+
+   Segunda sonda do mesmo defeito: retirado o `return.sent` antigo e acrescentado **`return.failed{session:101,peer:bb,erro:transport}` às 14:01:08.600**, na execução nova do destino. Resultado: **retorno=ok, motivo=confirmado só na origem, onze ok, exit 0**; a prova explícita de falha foi descartada na seleção da execução. A precedência de `return.failed` dentro de `cadeia` (`verificar.rs:560`) está correta quando o evento chega até ela. O defeito é a atribuição de execução antes desse passo. Manter os limites internos do destino estritos, mas não afirmar correlação com a execução anterior quando um reinício dentro da faixa de incerteza entre relógios a torna ambígua; nesse caso, produzir `SemDado/execução não comprovada`. Acrescentar regressão com reinício adiantado e número de sessão reutilizado entre execuções. Nenhum desses dados é de máquina real.
+
+2. **Minor · S11-T11-FUNC-02 · N/A legado é aplicado sem sessão selecionada.** `verificar.rs:652` compara dois `Option<u32>` sem exigir um número presente: `None == None` satisfaz a condição. Fixture com `inventory.missing`, tentativa e `session.open{mensagem:enter_span}` **sem campo session** produz **sessao=null, inventario_destino=ok/não se aplica, quebra=null**. Ao remover somente essa abertura incompleta, a mesma prova volta a produzir **inventario_destino=falhou, quebra=inventario_destino**. Ambos terminam em exit 1 por cadeia incompleta; não houve falso sucesso global nesta sonda. O registro é semanticamente incompleto, mas aceito pelo parser de JSON/esquema, portanto o parecer não afirma emissão desse formato pelo agente real. Exigir sessão selecionada válida/não zero e abertura correspondente antes da exceção; sem isso, conservar as regras anteriores de inventário.
+
+**Cenários de campo, conferidos em texto e JSON:**
+
+Diretório `<campo>`: `/tmp/claude-1000/-home-kappxs-Documentos-ANTIGOS-clipsync--maestri-roles-83bcaab5-84f6-0d02-2adf-b22d1f6ccdd4/b120769c-728e-4919-8aa6-d79bbd949b6c/scratchpad/campo-2026-11-04`.
+
+| Comando/cenário | Resultado próprio |
+| --- | --- |
+| `target/debug/clipsync verificar-travessia --origem <campo>/pc.jsonl --destino <campo>/notebook.jsonl` | **11 ok, exit 0**; inventário remoto N/A por `enter_span`; datagramas e retorno confirmados nos dois lados. |
+| Mesmo comando com `--sessao 69759769` | **11 ok, exit 0**, mesma sessão/provas. |
+| Recorte de `pc.jsonl` com `ts < 2026-11-04T17:50:00Z`, sem `--destino` | **tentativa=falhou, motivo=peer_offline, quebra=tentativa, exit 1**. |
+
+As linhas cruas dos logs de campo não foram copiadas para o repositório nem para este parecer. Os arquivos originais foram somente lidos e seus hashes SHA-256 conferiram iguais antes/depois. O recorte ficou exclusivamente em diretório temporário privado, com arquivo 0600.
+
+**Demais controles:** limites inferior/superior de 30 s aceitos, 1 ms além recusado; eventos de outro peer, outra sessão ou identidade incompatível não provaram os passos remotos. Reinício com marcador inequivocamente anterior ao marco da origem excluiu os eventos velhos. `return.failed` correlacionado prevaleceu sobre `return.received` inclusive no limite de +30 s; falha de outro peer foi ignorada. Datagramas/retorno somente na origem ou somente no destino usaram a linha do lado existente; ausência nos dois produziu `SemDado`. As três variantes legadas deram N/A com `session.open` da sessão pedida; abertura de outra sessão não ativou N/A. As ressalvas são os dois achados acima.
+
+**Evidência própria e recursos usados:**
+
+- `CARGO_BUILD_JOBS=1 target/debug/deps/verificar_travessia-1ae0e384b7de0bed --test-threads=1`: **35 passed, 0 failed**. Executado o binário de testes já existente; nenhum Cargo/build iniciado.
+- **33 cenários sintéticos** executados sequencialmente pelo `target/debug/clipsync` existente, em `/tmp/sentinel-t11-64py631k`: scripts `sondas.py`/`sondas-adicionais.py`, fixtures e saídas por cenário, resultados em `sondas-resultados.json`. Eles incluem os controles aprovados e as reproduções dos defeitos; o sucesso do script não aprova os resíduos.
+- Campo: seis invocações do binário, três cenários em texto e JSON. Resumos sem linhas cruas e hashes dos originais em `campo-resumos.json`, no mesmo diretório temporário.
+- Fonte/testes sem diferenças contra `b968bfd`. SHA-256: `verificar.rs` = `81f114b73e97a206824ef4fa590d5a09b8b0b37a29a01b54cf5ee9ef7a4dd7f5`; `verificar_travessia.rs` = `830432b557fa72a28421c21ba203ca4232cfc36fdbbb78821eb148bcaf5d7ee6`.
+
+Revisão da interpretação offline; sem rebuild do workspace, clippy/fmt, novo teste físico ou agente iniciado. Nenhum fonte editado, commit ou push. Somente acréscimo deste parecer em `docs/verdicts.md`.
