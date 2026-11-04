@@ -20,6 +20,13 @@ fn same<T: DeserializeOwned + Serialize>(name: &str, original: &Value) {
         .unwrap_or_else(|e| panic!("{name}.json does not fit its type: {e}"));
     let mut expected = original.clone();
     // Os JSON antigos continuam como entrada; só a saída ganha defaults aditivos B01.
+    if name == "app_state" {
+        expected
+            .as_object_mut()
+            .unwrap()
+            .entry("log_path")
+            .or_insert(Value::String(String::new()));
+    }
     if name == "event_peer_blocked" {
         block_defaults(&mut expected["data"]);
     }

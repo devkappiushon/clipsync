@@ -246,6 +246,7 @@ mod tests {
 
     fn state() -> AgentStatus {
         AgentStatus {
+            log_path: None,
             device_name: "origem".into(),
             id: PeerId([1; 32]),
             listen: "127.0.0.1:47800".parse().unwrap(),

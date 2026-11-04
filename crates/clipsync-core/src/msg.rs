@@ -22,3 +22,6 @@ pub const STATE_NOT_SAVED: &str =
     "aplicado agora, mas não foi possível gravar state.toml: não sobrevive a reinício";
 /// ReloadPeers could not read peers.toml.
 pub const PEERS_NOT_LOADED: &str = "não foi possível ler peers.toml";
+
+/// O agente segue com stderr quando o arquivo de log não pode ser aberto.
+pub const LOG_NOT_OPENED: &str = "não foi possível abrir o arquivo de log";

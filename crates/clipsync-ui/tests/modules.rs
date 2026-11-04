@@ -328,6 +328,7 @@ async fn externo_perde_status(failure: u8) {
     let (p, id) = init_profile(d.path(), "p", CLIPBOARD_ONLY);
     p.set_paused(false).unwrap();
     let status = AgentStatus {
+        log_path: None,
         device_name: "externo-fake".into(),
         id,
         listen: p.load_config().unwrap().listen,

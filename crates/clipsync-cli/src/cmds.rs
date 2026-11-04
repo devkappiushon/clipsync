@@ -49,6 +49,14 @@ pub async fn status(profile: &Profile) -> Result<(), Fail> {
                     s.paused
                 )
             );
+            println!(
+                "{}",
+                msg::log_line(
+                    &clipsync_core::logging::log_path(&profile.dir)
+                        .display()
+                        .to_string()
+                )
+            );
             println!("{}", msg::PEERS_HEADER);
             if s.peers.is_empty() {
                 println!("  {}", msg::NO_PEERS);
@@ -111,6 +119,14 @@ pub async fn status(profile: &Profile) -> Result<(), Fail> {
                     text::perms(p.perms)
                 );
             }
+            println!(
+                "{}",
+                msg::log_line(
+                    &clipsync_core::logging::log_path(&profile.dir)
+                        .display()
+                        .to_string()
+                )
+            );
             Err(Fail {
                 code: 4,
                 message: String::new(),

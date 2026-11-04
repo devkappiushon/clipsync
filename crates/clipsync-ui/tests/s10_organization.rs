@@ -307,6 +307,7 @@ impl Real {
         let request = json!({"base_rev":1,"inventories":state.inventories.iter().map(|v|json!({"peer":v.stamp.peer.to_hex(),"connection":v.stamp.connection,"rev":v.stamp.rev})).collect::<Vec<_>>(),"positions":state.inventories.iter().flat_map(|v|v.inventory.monitors.iter().map(|m|json!({"key":{"peer":v.stamp.peer.to_hex(),"uid":m.uid},"x":if v.stamp.peer==a.id{m.rect.x*2}else{1000},"y":0}))).collect::<Vec<_>>(),"replace_link_ids":[]});
         let calls = Arc::new(Mutex::new(vec![]));
         let status = AgentStatus {
+            log_path: None,
             device_name: "A".into(),
             id: a.id,
             listen: profile.load_config().unwrap().listen,

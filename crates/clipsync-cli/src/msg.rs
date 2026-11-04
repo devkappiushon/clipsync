@@ -48,6 +48,10 @@ pub const NO_PEERS: &str = "nenhum par pareado";
 pub const MODULES_HEADER: &str = "Módulos:";
 pub const PEERS_HEADER: &str = "Pares:";
 
+pub fn log_line(path: &str) -> String {
+    format!("log: {path}")
+}
+
 pub fn status_head(name: &str, id: &str, listen: &str, paused: bool) -> String {
     format!(
         "{name} · id {id} · escuta {listen} · {}",
@@ -171,3 +175,14 @@ pub const PROBE_CLIPBOARD_LINUX_ONLY: &str =
 pub const INPUT_UNAVAILABLE: &str = "input (teclado e mouse): indisponível nesta versão neste sistema; o agente segue com os demais módulos";
 pub const RUN_NO_MODULE: &str = "nenhum módulo para ligar neste sistema: o input (teclado e mouse) é indisponível nesta versão e o clipboard está desligado; rode `clipsync init` e ligue o clipboard";
 pub const INIT_NO_USABLE_MODULE: &str = "neste sistema o input (teclado e mouse) é indisponível nesta versão; ligue o clipboard para criar o perfil";
+
+#[cfg(test)]
+mod log_tests {
+    #[test]
+    fn linha_do_log_preserva_o_caminho() {
+        assert_eq!(
+            super::log_line("perfil com espaço/logs/clipsync.jsonl"),
+            "log: perfil com espaço/logs/clipsync.jsonl"
+        );
+    }
+}

@@ -880,7 +880,7 @@ impl Inner {
         if let Some(old) = old {
             close(&old, CloseCode::Duplicate);
         }
-        tracing::info!(peer = %peer, name = %info.name, "connected");
+        tracing::info!(evento = "peer.connected", peer = %peer, name = %info.name, "connected");
         tokio::spawn(
             self.clone()
                 .control_task(peer, conn.clone(), send, recv, revoke),
@@ -919,7 +919,7 @@ impl Inner {
         };
         if lost {
             self.lifecycle.send_modify(|_| {});
-            tracing::info!(peer = %peer, reason = %reason, "disconnected");
+            tracing::info!(evento = "peer.disconnected", peer = %peer, reason = %reason, "disconnected");
             self.broadcast(|| ModuleInput::PeerDown(peer)).await;
         }
     }

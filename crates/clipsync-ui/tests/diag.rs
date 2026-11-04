@@ -77,6 +77,7 @@ async fn support_preview_and_export_redact_every_observation_of_the_same_peer() 
         occurrences: count,
     };
     let status = AgentStatus {
+        log_path: None,
         device_name: "suporte-i01".into(),
         id: ours,
         listen: profile.load_config().unwrap().listen,

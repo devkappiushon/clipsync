@@ -761,6 +761,7 @@ mod lifecycle_tests {
                 if matches!(request, ControlRequest::Status) {
                     let cfg = self.profile.load_config().unwrap();
                     return ControlResponse::Status(clipsync_proto::AgentStatus {
+                        log_path: None,
                         device_name: cfg.device_name,
                         id: self.profile.load_identity().unwrap().id(),
                         listen: cfg.listen,

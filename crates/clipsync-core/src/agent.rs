@@ -110,6 +110,12 @@ pub async fn run_reserved(
     let identity = p.load_identity()?;
     let peers = p.load_peers()?;
     let state = p.load_state()?;
+    if let Err(error) = crate::logging::open_file(&p.dir, &cfg.device_name) {
+        static REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !REPORTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            tracing::warn!(%error, "{}", msg::LOG_NOT_OPENED);
+        }
+    }
 
     let mut channels = HashMap::new();
     let mut adapters = HashMap::new();
@@ -162,7 +168,7 @@ pub async fn run_reserved(
             let _ = tx.send(ModuleInput::Paused(true)).await;
         }
     }
-    tracing::info!(id = %mesh.local_id(), addr = ?mesh.local_addr().ok(), "agent up");
+    tracing::info!(evento = "agent.up", descartados = crate::logging::preopen_dropped(), id = %mesh.local_id(), addr = ?mesh.local_addr().ok(), "agent up");
 
     let handler = Arc::new(Agent {
         profile: p.clone(),
@@ -429,6 +435,11 @@ impl Agent {
             modules.push(self.module_status(kind).await);
         }
         AgentStatus {
+            log_path: Some(
+                crate::logging::log_path(&self.profile.dir)
+                    .display()
+                    .to_string(),
+            ),
             device_name: self.device_name.clone(),
             id: self.mesh.local_id(),
             listen: self

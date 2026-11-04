@@ -60,17 +60,8 @@ fn ui_options(profile: Option<PathBuf>) -> UiOptions {
     }
 }
 
-fn init_logging() {
-    let filter = tracing_subscriber::EnvFilter::try_from_env("CLIPSYNC_LOG")
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .init();
-}
-
 fn main() {
-    init_logging();
+    clipsync_core::logging::init();
     let args = parse_args(std::env::args_os().skip(1));
     let options = ui_options(args.profile);
 

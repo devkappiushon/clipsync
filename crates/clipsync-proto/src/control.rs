@@ -52,6 +52,8 @@ pub enum ControlResponse {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AgentStatus {
+    #[serde(default)]
+    pub log_path: Option<String>,
     pub device_name: String,
     pub id: PeerId,
     pub listen: SocketAddr,
@@ -360,5 +362,25 @@ mod block_compat_tests {
         let round: BlockRecord =
             serde_json::from_str(&serde_json::to_string(&record).unwrap()).unwrap();
         assert_eq!(round, record);
+    }
+}
+
+#[cfg(test)]
+mod log_tests {
+    use super::*;
+    #[test]
+    fn status_antigo_sem_log_e_novo_com_caminho() -> Result<(), Box<dyn std::error::Error>> {
+        let old = serde_json::json!({
+            "device_name": "t", "id": PeerId([7; 32]), "listen": "127.0.0.1:47800",
+            "paused": false, "peers": [], "modules": []
+        });
+        let mut status: AgentStatus = serde_json::from_value(old)?;
+        assert!(status.log_path.is_none());
+        status.log_path = Some("perfil/logs/clipsync.jsonl".into());
+        assert_eq!(
+            serde_json::to_value(status)?["log_path"],
+            "perfil/logs/clipsync.jsonl"
+        );
+        Ok(())
     }
 }

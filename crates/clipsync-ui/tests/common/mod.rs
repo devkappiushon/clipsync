@@ -207,6 +207,7 @@ pub async fn fake_agent(
     let cfg = profile.load_config().unwrap();
     let handler = Answers {
         status: AgentStatus {
+            log_path: None,
             device_name: cfg.device_name,
             id: profile.load_identity().unwrap().id(),
             listen: cfg.listen,

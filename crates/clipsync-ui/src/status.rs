@@ -132,6 +132,8 @@ impl Features {
 pub struct AppState {
     pub initialized: bool,
     pub profile_dir: String,
+    #[serde(default)]
+    pub log_path: String,
     pub device: Option<DeviceSelf>,
     pub agent: AgentMode,
     pub agent_error: Option<String>,
@@ -276,6 +278,9 @@ pub(crate) async fn app_state(ctx: &Ctx) -> Result<AppState, UiError> {
     Ok(AppState {
         initialized,
         profile_dir: p.dir.display().to_string(),
+        log_path: clipsync_core::logging::log_path(&p.dir)
+            .display()
+            .to_string(),
         device,
         agent: o.agent,
         agent_error: o.agent_error,
@@ -349,6 +354,25 @@ pub(crate) async fn pause_set(ctx: &Ctx, paused: bool) -> Result<PausedReply, Ui
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn caminho_do_log_com_agente_parado() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let ui = crate::Ui::start(crate::UiOptions {
+            profile: Some(tmp.path().to_path_buf()),
+            ..Default::default()
+        })
+        .await?;
+        let state = ui.call(serde_json::json!({"cmd": "app_state"})).await?;
+        ui.shutdown().await;
+        assert_eq!(state["agent"], "stopped");
+        assert_eq!(
+            state["log_path"],
+            tmp.path().join("logs/clipsync.jsonl").display().to_string()
+        );
+        assert!(!tmp.path().join("logs").exists());
+        Ok(())
+    }
 
     #[test]
     fn resposta_antiga_nao_apaga_falha_mais_recente() {

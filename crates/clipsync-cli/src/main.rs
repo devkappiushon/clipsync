@@ -46,6 +46,11 @@ enum Cmd {
     },
     /// Mostra o agente, os pares e os módulos
     Status,
+    /// Localiza o arquivo de log deste perfil
+    Log {
+        #[command(subcommand)]
+        what: LogKind,
+    },
     /// Pareia este dispositivo com outro
     Pair {
         #[command(subcommand)]
@@ -76,6 +81,12 @@ enum Cmd {
 }
 
 #[derive(Subcommand)]
+enum LogKind {
+    /// Mostra o caminho previsto, sem criar arquivo
+    Caminho,
+}
+
+#[derive(Subcommand)]
 enum PairSide {
     /// Aceita um pareamento por tempo limitado
     Host {
@@ -103,15 +114,6 @@ enum ProbeKind {
     #[cfg(not(target_os = "linux"))]
     Clipboard,
     Input(clipsync_input::probe::ProbeArgs),
-}
-
-fn init_logging() {
-    let filter = tracing_subscriber::EnvFilter::try_from_env("CLIPSYNC_LOG")
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .init();
 }
 
 async fn diagnose(profile: &Profile) -> Result<(), Fail> {
@@ -186,6 +188,15 @@ async fn dispatch(cli: Cli) -> Result<(), Fail> {
             )
         }
         Cmd::Status => cmds::status(&profile).await,
+        Cmd::Log {
+            what: LogKind::Caminho,
+        } => {
+            println!(
+                "{}",
+                clipsync_core::logging::log_path(&profile.dir).display()
+            );
+            Ok(())
+        }
         Cmd::Pair {
             side:
                 PairSide::Host {
@@ -210,7 +221,7 @@ async fn dispatch(cli: Cli) -> Result<(), Fail> {
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse(); // usage errors exit 2 here
-    init_logging();
+    clipsync_core::logging::init();
     match dispatch(cli).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(f) => {

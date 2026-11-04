@@ -432,6 +432,7 @@ fn revoked_bye_and_status_without_the_rings() {
         }
     ));
     let status = AgentStatus {
+        log_path: None,
         device_name: "a".into(),
         id: PeerId([7; 32]),
         listen: "127.0.0.1:47800".parse().unwrap(),
