@@ -36,6 +36,8 @@ use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 pub use api::{UiError, UiRequest};
+/// Reexportado para a casca Tauri, que depende só desta crate (contrato §12.1).
+pub use clipsync_core::logging;
 pub use events::UiEvent;
 
 /// Events waiting for a slow subscriber; past this it gets `Lagged` and the casca sends

@@ -61,7 +61,7 @@ fn ui_options(profile: Option<PathBuf>) -> UiOptions {
 }
 
 fn main() {
-    clipsync_core::logging::init();
+    clipsync_ui::logging::init();
     let args = parse_args(std::env::args_os().skip(1));
     let options = ui_options(args.profile);
 
