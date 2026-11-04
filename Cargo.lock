@@ -699,6 +699,7 @@ dependencies = [
  "clipsync-proto",
  "humantime",
  "serde",
+ "serde_json",
  "tempfile",
  "time",
  "tokio",

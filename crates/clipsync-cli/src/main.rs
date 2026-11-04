@@ -7,6 +7,7 @@ mod msg;
 mod pair;
 mod prompt;
 mod text;
+mod verificar;
 
 use clap::{Parser, Subcommand};
 use clipsync_core::{Profile, diag};
@@ -44,6 +45,8 @@ enum Cmd {
         #[arg(long)]
         fake_adapters: bool,
     },
+    /// Verifica a travessia nos arquivos de log, sem acessar o agente
+    VerificarTravessia(verificar::Entrada),
     /// Mostra o agente, os pares e os módulos
     Status,
     /// Localiza o arquivo de log deste perfil
@@ -166,6 +169,9 @@ async fn probe(profile: &Profile, what: ProbeKind) -> Result<(), Fail> {
 }
 
 async fn dispatch(cli: Cli) -> Result<(), Fail> {
+    if let Cmd::VerificarTravessia(ref entrada) = cli.cmd {
+        return verificar_logs(entrada);
+    }
     let profile = Profile::resolve(cli.profile)?;
     match cli.cmd {
         Cmd::Init {
@@ -187,6 +193,7 @@ async fn dispatch(cli: Cli) -> Result<(), Fail> {
                 &mut ui,
             )
         }
+        Cmd::VerificarTravessia(entrada) => verificar_logs(&entrada),
         Cmd::Status => cmds::status(&profile).await,
         Cmd::Log {
             what: LogKind::Caminho,
@@ -215,6 +222,20 @@ async fn dispatch(cli: Cli) -> Result<(), Fail> {
         Cmd::Inbox => cmds::inbox(&profile).await,
         Cmd::Diagnose => diagnose(&profile).await,
         Cmd::Probe { what } => probe(&profile, what).await,
+    }
+}
+
+fn verificar_logs(entrada: &verificar::Entrada) -> Result<(), Fail> {
+    let output = verificar::executar(entrada).map_err(|error| Fail::refused(error.to_string()))?;
+    if entrada.json {
+        println!("{}", output.json());
+    } else {
+        println!("{}", output.texto());
+    }
+    if output.quebra.is_some() {
+        Err(Fail::error(String::new()))
+    } else {
+        Ok(())
     }
 }
 
