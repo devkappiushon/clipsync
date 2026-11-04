@@ -1,57 +1,35 @@
-# Contexto: clipsync
+# Contexto — clipsync
 
-## v0.4.0 publicada · 30/10/2026
-
-[Release disponível](https://github.com/devkappiushon/clipsync/releases/tag/v0.4.0), código `6cc1384a7d036877e7077d3c6b63838c64750d4b`. Commit, push e publicação concluídos com a autorização de João. CI Linux/Windows `41006607785` e empacotamento `41006610958` aprovados no mesmo commit; seis pacotes e `SHA256SUMS` publicados, sete tamanhos/digests remotos conferidos.
-
-Linux: 624 testes principais aprovados, cinco execuções auxiliares e três testes gráficos ignorados. Windows: 614 principais aprovados, cinco auxiliares e um gráfico ignorado; inclui 11 de emulação, 14 de captura, 10 do módulo Windows e 27 do app. Node local: 164/164. A execução no runner fecha a pendência de build/testes nativos, sem provar interação no desktop ou mouse físico.
-
-**Falta validar nas máquinas:** passagem e retorno do cursor (inclusive salto ao centro), soltura/teclado, ambas autorizando entrada, permissões/UAC, bandeja/notificações, zoom e leitores; também permanecem lacunas de foco/fluxo no portal. Instalar a mesma 0.4.0 nas duas máquinas preservando o perfil. Runtime de revisão encerrado. Nenhuma nova implementação atribuída aos andares.
-
-Evidência: [publicação e verificações](docs/evidencias/release-v0.4.0.md). Lista de aceites ainda abertos: [pendências da versão](docs/pendencias-v0.4.0.md). Os blocos abaixo são históricos; não reabrem tarefas nem mudam o estado publicado acima.
-
-## Preparação da v0.4.0 · 30/10/2026
-
-João autorizou agora commit, push, CI, empacotamento e publicação, ao responder “então faça” ao roteiro desses passos. Esta autorização substitui o limite anterior de não publicar nesta rodada. Preparar os seis pacotes no workflow manual, conferir CI e hashes antes de publicar. Última publicada neste registro ainda é v0.3.1; v0.4.0 está em preparação, não deve ser anunciada como disponível antes da confirmação remota.
-
-Validação local S9 encerrada:597 testes Rust principais passaram,0falhas,3gráficos ignorados e5execuções auxiliares separadas; Node164/164. Revisão integrada aprovada. [Pendências explícitas da próxima versão](docs/pendencias-v0.4.0.md): mouse nas duas máquinas,Tauri interativo,zoom/leitores e lacunas de portal. [Resumo da validação local](docs/evidencias/s9-local-2026-10-30.md).
-
-O material automático abaixo é histórico e não pode reabrir tarefas já concluídas nem revogar a autorização acima.
-
-**Atualizado:** 2026-10-29 07:27 (automático, resumo-diario, a partir dos logs do Claude e do Codex)
+**Atualizado:** 2026-11-04 (sessão do Maestro · scaffold)
 
 ## Onde estou
-Na S9: corrigir o que as auditorias da rodada achou, em segurança, acessibilidade, UX e backend. Os agentes Codex implementam por fatia e os Sentinel/Argus revisam por leitura. Nada foi commitado nem publicado. A travessia real do mouse (Linux e Windows) e o incidente do cursor continuam com o andar TESTES.
+A v0.5.0 está publicada (31/10/2026, commit `590c137`, o mesmo da `main`). Esta sessão preparou o repositório para ficar público, fechou a documentação da versão (andar DOC: README e quatro guias) e concluiu a revisão visual da interface. Tudo está no checkout, nada commitado.
 
 ## Estado real (verificado)
-- git em 2026-10-29 07:27: branch `main`, 129 arquivo(s) sem commit, 0 commit(s) sem push (`git status`, `git rev-list @{u}..HEAD`)
-- último commit: `d41aa65` "registra o release 0.3.1 e o contexto compartilhado dos andares" em 2026-10-28 21:31 (`git log -1`)
-- Release v0.3.1: CI 40783057611 e empacotamento 40783058074 aprovados em f700caa. SHA256SUMS conferiu 6 de 6 arquivos (registro no CONTEXTO.md). (segundo o log da sessão)
-- Git em 2026-10-28: 0 commits sem push. Os 129 arquivos sem commit vêm do git informado pelo script. (segundo o log da sessão)
-- Sentinel: B05 aprovado por leitura e o wrapper WTS aprovado, sem achados. Nenhum teste de B05 foi executado (relatórios /tmp/clipsync-s9-b05-review.md e /tmp/clipsync-s9-wts-seguranca-review.md). (segundo o log da sessão)
-- Portal com coleta ocioso e manifesto de 49 arquivos com zero divergências, no início e no fim da coleta (relatório do Argus). (segundo o log da sessão)
+- `main` = tag `v0.5.0` = `590c137`; release com 6 pacotes + `SHA256SUMS`, CI `41161430657` e empacotamento `41161435861` verdes (`gh release view`, `gh run list`).
+- Árvore sem segredo, chave ou token; caminhos `/home/...`, nome de host, IP da LAN e ids reais anonimizados em `docs/` (`git grep`: zero ocorrências). O histórico do git ainda os contém; reescrever invalidaria as 7 tags e os links dos releases.
+- `.superpowers/` (834 MB) e `retomada-b07/` entraram no `.gitignore`.
+- Revisão visual feita em 04/11 pelo portal `Telas Maestro` (10 capturas, 1280×800 e 960×640, claro e escuro). Quatro ajustes de CSS e a versão do mock em 0.5.0, registrados em `docs/contrato.md` §16.6; tabelas com `scrollWidth` igual a `clientWidth` em 1280 e 960 (portal `evaluate`).
+- Capturas novas em `docs/telas/v0.5.0/` (sete telas, webp); o README mostra Dispositivos e Layout.
+- Node 268/268; `conferir-unsafe.sh` e `conferir-privacidade.sh` ok; grep do critério §12.9 item 5 (estilo em linha, `innerHTML`, travessão) vazio em `ui/`.
+- Portal criado novo pelo CLI fica fora da área visível do canvas e não renderiza para `screenshot`; o portal antigo `Telas Maestro` (do Maestro #3) captura normalmente.
+- Guias do andar DOC aplicados a partir de `/tmp/clipsync-doc-r3-2026-11-03` (hashes 6/6, 0 links quebrados, Sentinel PASSA 5/5, Fact e Argus sem achado remanescente).
 
 ## Próximo passo
-Rode `git status --short | head -30` em ~/Documentos/ANTIGOS/clipsync e depois `tail -20 /tmp/clipsync-b01-diag-red.log`, para ver se o teste de diag da B01 passou.
+Usuário decide o commit (sugestão: um commit de docs e capturas, um da interface) e o push; depois do push, atualizar o corpo do release v0.5.0 no GitHub com a versão de links absolutos (`gh release edit v0.5.0 --notes-file`).
 
 ## Decidido (não reabrir)
-- Licença: continua 'Todos os direitos reservados' até você escolher. Razão: não escolher licença aberta por você.
-- Input Leap fica até o módulo de entrada do ClipSync rodar nas três máquinas. Razão: você quer usar só o ClipSync.
-- Borda por monitor e por segmento é requisito central. Razão: o Input Leap trata o PC como um retângulo só.
-- Mock e galeria de componentes ficam fora do pacote (ui-dev). Razão: segurança, achado S6-03.
-- O trabalho passou do Claude para o Codex em 2026-10-28. Razão: você pediu para o Codex continuar.
-- Incidente do cursor pulando e contador de sessão desconhecida vai para o andar TESTES. Razão: você adiou.
-- Em 2026-10-28 às 23:20 você autorizou fechar a DOC, implementar as correções das auditorias e testar. Razão: superou o limite antigo de só auditar.
-- Sem commit, push, tag nem release na rodada S9. Razão: regra dada aos agentes.
+- Licença continua "Todos os direitos reservados" até o usuário escolher.
+- Input Leap fica até o módulo de entrada do ClipSync rodar nas máquinas reais.
+- Borda por monitor e por segmento é requisito central.
+- Mock e galeria de componentes ficam fora do pacote (`ui-dev`), achado S6-03.
+- Incidente do teclado que não digita foi adiado em 2026-10-30.
+- T4-SEG-01 (corrida no backup) fica diferido e não bloqueia release.
+- Nenhum agente sobe servidor: o simulador em 5174 é do Maestro.
+- Recurso sem backend permanece visível e desabilitado (regra do `ui/README.md`): a tabela de Atalhos no Linux não vira um aviso único.
 
 ## Aberto
-- Falta ver o roteiro real Windows/Linux (§13.12): ligação de borda no Layout, versões nas duas máquinas, `status` e `diagnose`. Ainda não há prova de uso nem de instalação da 0.3.1 no Windows.
-- A causa do mouse que não passa no PC depende dos dados das duas máquinas. H-01/B-02 (MAJOR no estado emulado) não são causa provada do relato.
-- Permissões reais do portal e atalhos físicos não foram verificados. Também faltam leitor de tela (Orca/NVDA), teste do app Tauri por AT-SPI e zoom real do sistema.
-- Licença, terceiro PC, instaladores e backlog antigo seguem abertos.
-- Você ainda não revisou nem commitou o trabalho da S9. Falta decidir quando commitar e se a S9 vira release.
-- A S9 está sem commit: 129 arquivos modificados no checkout compartilhado, entre eles events.rs, state.rs, tray.rs e msg.rs do clipsync-app.
-- B01 (aviso de bloqueio) estava sendo implementado no Rust: ui/events.rs, diag.rs, app/state.rs e events.rs. O teste vermelho de diag ainda não tinha passado quando o material termina.
-- Pareamento: o foco vai para o BODY ao clicar em Conectar ou Recomeçar (P2). A expiração mostra dois role=alert com a mesma frase (P3). Falta corrigir e retestar.
-- Pareamento: com um endereço errado, o único botão é Recomeçar, que repete o mesmo erro. Não há campo para corrigir o endereço.
-- Falta rodar nativamente no Windows os 11 testes de B05. Só foram escritos e cross-compilados. O gate de B07 e de H01/B02 continua fechado.
+- Tornar o repositório público: decisão do usuário. Se sim: proteger a `main` e decidir se aceita o histórico com caminhos antigos.
+- Figma não reflete a v0.5.0.
+- Teste físico nas duas máquinas: lista única em `docs/pendencias-v0.5.0.md`.
+- O script `resumo-diario` sobrescreve este arquivo com conteúdo de outros projetos (Roblox apareceu aqui em 03/11); decidir se o arquivo sai do git ou se o script passa a escrever só sobre este projeto.

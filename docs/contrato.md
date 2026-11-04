@@ -84,7 +84,7 @@ Sem versão fixada pelo spike (Bolt resolve a última estável e fixa com `=`): 
 Adicionada em v1.6 (pedido do Rivet, aprovada pelo Maestro): quinn-proto =0.11.19 (default-features=false; mesma versão que o quinn 0.11.12 puxa; só no core, para embrulhar quinn::crypto e controlar o reason do CONNECTION_CLOSE).
 Adicionada em v1.5 (pedido do Vector): futures-util =0.3.34 (default-features=false; a MESMA versão que ashpd/zbus já puxam no Cargo.lock; só `StreamExt` em clipsync-input; se precisar de método que exige `alloc`/`std`, ligar só essa feature).
 Provedor TLS: **ring em todo lugar**. aws-lc-sys exige cmake e nasm, ausentes aqui: rustls e quinn com default-features=false. Nenhuma lib de sistema é necessária (nem pkg-config).
-Build: frio ~6 min, incremental ~30 s. Os quatro builders trabalham no MESMO checkout e compartilham o `target/` da raiz (padrão do cargo; não setar target-dir em arquivo versionado). Se o Maestro separar builders em andares, todos exportam `CARGO_TARGET_DIR=/home/kappxs/.cache/clipsync-target`. Compilar com `-p <crate>` para reduzir espera de lock.
+Build: frio ~6 min, incremental ~30 s. Os quatro builders trabalham no MESMO checkout e compartilham o `target/` da raiz (padrão do cargo; não setar target-dir em arquivo versionado). Se o Maestro separar builders em andares, todos exportam `CARGO_TARGET_DIR=~/.cache/clipsync-target`. Compilar com `-p <crate>` para reduzir espera de lock.
 
 ## 2. Convenções (vinculantes)
 1. Código, identificadores e comentários em inglês. Texto para o usuário em português, só em `src/msg.rs` de cada crate (consts ou fns). `RejectReason::pt()` fica em `clipsync-proto/src/msg.rs`.
@@ -714,7 +714,7 @@ Regras do módulo:
 11. **P4c automatizado:** emulação via RemoteDesktop dispara a barreira da captura, então o loopback pode rodar sem mão humana. Uma em três tentativas não ativou no spike: o teste tenta até 3 vezes e só falha se as 3 falharem, registrando quantas precisou.
 
 ## 9. Critérios de pronto (passa/não passa)
-Todos os comandos rodam de `/home/kappxs/Documentos/ANTIGOS/clipsync` com `source ~/.cargo/env`. "M" = manual em sessão gráfica (usuário/Maestro executa; builder entrega o comando e a saída esperada).
+Todos os comandos rodam de `~/clipsync` com `source ~/.cargo/env`. "M" = manual em sessão gráfica (usuário/Maestro executa; builder entrega o comando e a saída esperada).
 
 ### S0 · Bolt
 1. `cat rust-toolchain.toml` mostra channel "1.99.1" e components rustfmt, clippy; `rustup show active-toolchain` começa com `1.99.1`.
@@ -1951,3 +1951,11 @@ Precisão dos cantos mortos em v2: ligações geridas persistem segmentos efetiv
 Preparar telas espera consentimento humano: `InputPrepareInventory` tem prazo de 110 segundos no dispatch do agente, inferior aos 120 segundos do controle externo. Consultas de status mantêm 2 segundos. Timeout, pausa, revogação e encerramento conservam o cancelamento e impedem publicar inventário de preparação invalidada; não autorizam consentimento automático.
 
 Aceitar organização e restaurar v1 apresentam separadamente ativação e durabilidade. Quando `durability=unconfirmed`, informar também que a revisão foi publicada mas a persistência após uma queda não foi confirmada. A recarga e a saída do estado ocupado conservam esse aviso visível e acessível, sem repetir a escrita. Esta precisão aplica o §16.2, sem mudança de wire ou persistência.
+
+### 16.5 Precisão pós-publicação · 03/11/2026 · atalhos globais só onde existem
+
+A interface anuncia um atalho Win+Alt (tecla no botão Pausar tudo, rótulos e `aria-label` dos dispositivos no canvas do Layout, lista de ligações, Travar nesta tela e Ir para dispositivo) somente quando `app_state.features.global_shortcuts` é `true`, isto é, no Windows com o módulo de entrada ativo (§13.6 e `clipsync-ui/src/status.rs`). No Linux, com o módulo desligado ou com o estado do agente não confirmado, a tecla não aparece, porque o sistema não registra o atalho; Preferências continua explicando a indisponibilidade. O seletor de atalho do painel do dispositivo segue como está (já desabilitado sem `switch_device`). Mudança só de apresentação: nenhum comando, evento, campo de estado ou persistência foi alterado. Helper único `atalhoGlobal()` em `ui/js/estado.js`, com teste puro em `ui-dev/testes/atalhos-globais.test.mjs`; conferido no simulador pelo DOM nos cenários `padrao`, `windows` e `input-desligado`.
+
+### 16.6 Polimento visual pós-publicação · 04/11/2026
+
+Revisão raster das telas no simulador (portal do Maestri, 1280×800 e 960×640, temas claro e escuro), só apresentação, sem mudança no contrato de dados. Quatro ajustes: a célula Permissões da tabela de Dispositivos quebra linha, e a tabela cabe ao lado do painel sem rolagem horizontal; a região viva `.anunciador` fica fora do fluxo e deixa de abrir um vão de `gap` acima do primeiro aviso (Dispositivos e Layout), e a mensagem de topo vazia do Layout não ocupa linha da grade; o cabeçalho de coluna do tipo mono (Endereço, Tipo) usa a fonte de texto; o simulador declara a versão 0.5.0. Evidência: capturas em `docs/telas/v0.5.0/`, `scrollWidth` igual a `clientWidth` nas tabelas em 1280 e 960, Node 268/268, `conferir-unsafe.sh` e `conferir-privacidade.sh` ok.

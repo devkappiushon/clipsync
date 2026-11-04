@@ -7,7 +7,7 @@ Cada célula aponta a evidência. Nada aqui vale para outra máquina até rodar 
 
 | Plataforma | Clipboard: observar | Clipboard: ler | Clipboard: escrever | Input: captura | Input: emulação |
 |---|---|---|---|---|---|
-| Ubuntu 26.04.1 · GNOME 50.1 · Wayland · x86_64 (notebook `kappxs-Aspire-A515-57`) | validada [C1] | validada [C2] | validada [C3] | validada para ponteiro [I1] | validada para movimento [I2] |
+| Ubuntu 26.04.1 · GNOME 50.1 · Wayland · x86_64 (notebook `notebook-linux`) | validada [C1] | validada [C2] | validada [C3] | validada para ponteiro [I1] | validada para movimento [I2] |
 | Windows (PC servidor do Input Leap, versão a confirmar) | não testada | não testada | não testada | não testada | não testada |
 | PC de casa (SO a confirmar) | não testada | não testada | não testada | não testada | não testada |
 

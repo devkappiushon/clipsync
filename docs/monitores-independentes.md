@@ -1,6 +1,6 @@
 # Monitores independentes
 
-Este guia descreve a fonte da **0.5.0 candidata, ainda não publicada**. A **v0.4.0 continua publicada** e seus instaladores não incluem esta organização por monitor. O número do protocolo, v4, não é a versão do aplicativo. O funcionamento nas máquinas físicas ainda precisa de comprovação.
+Este guia descreve a **v0.5.0, publicada no GitHub em 31/10/2026** (commit `590c137`). A v0.4.0 anterior não lê o layout v2 usado por esta organização. O número do protocolo, v4, não é a versão do aplicativo. A publicação não comprova o funcionamento nas máquinas físicas.
 
 ## 1. Entenda o percurso
 
@@ -10,7 +10,7 @@ O recorte é um desktop **Windows com dois monitores**, A e B, e um **notebook G
 Monitor A do Windows ↔ tela do notebook ↔ monitor B do mesmo Windows
 ```
 
-A organização permite configurar A → notebook → B, B → notebook → A e retorno pelo lado de entrada. Ao sair do notebook pelo lado de A ou B, a sessão usa a rota correspondente oferecida pelo desktop. Isso é o comportamento contratado, ainda sem aprovação física nesta rodada.
+A organização permite configurar A → notebook → B, B → notebook → A e retorno pelo lado de entrada. Ao sair do notebook pelo lado de A ou B, a sessão usa a rota correspondente oferecida pelo desktop. Isso é o comportamento contratado, ainda sem aprovação física.
 
 A e B continuam pertencendo ao mesmo computador, com uma conexão e suas permissões existentes. O mapa do ClipSync não muda a disposição das telas nas configurações do Windows ou do Linux. Fora dos trechos configurados, a navegação local continua sob controle do sistema operacional.
 
@@ -18,7 +18,7 @@ A mesma jornada com mouse físico no notebook não está coberta: o retorno posi
 
 ## 2. Prepare as duas máquinas
 
-1. Use um candidato compatível com **protocolo v4 nas duas pontas**. Pares de protocolo v1 a v3 podem continuar conectados para funções compatíveis, mas não recebem esta organização com retorno silenciosamente reduzido à tela de entrada.
+1. Use uma versão compatível com **protocolo v4 nas duas pontas**. Pares de protocolo v1 a v3 podem continuar conectados para funções compatíveis, mas não recebem esta organização com retorno silenciosamente reduzido à tela de entrada.
 2. Pareie as máquinas e confira a disponibilidade de teclado e mouse. No notebook, em **Dispositivos**, autorize o desktop a controlar sua entrada mediante a confirmação apresentada. Criar cartões, aplicar organização, copiar ou aceitar mapa não concede essa autorização.
 3. No Layout, use **Preparar telas** em cada máquina que precise atualizar suas telas. O botão atua somente na máquina em que foi acionado; preparar no desktop não prepara o notebook à distância.
 4. No notebook, confirme pessoalmente eventual diálogo do portal do sistema. A preparação consulta a geometria real em uma sessão de captura desativada; não aprova o diálogo nem instala barreiras por você. Se recusar, o rascunho permanece e a aplicação pode continuar indisponível.
@@ -50,7 +50,7 @@ Aceitar aplica o mapa apresentado e pode migrar o layout local para v2; opções
 | “Tela não identificada com segurança” | A aplicação fica bloqueada. Confira conexão e identificação e obtenha inventário inequívoco; não há escolha automática da primeira tela. |
 | Geometria estimada ou inventário ausente | Prepare as telas e obtenha observação real. Cache e estimativa não comprovam capacidade de ativação. |
 | Revisão ou inventário alterado | Atualize a prévia conservando o rascunho; confira o novo resultado antes de aplicar. |
-| Protocolo antigo | Use candidatos compatíveis com v4 nas duas máquinas. Não confunda esse requisito com uma nova versão publicada. |
+| Protocolo antigo | Use versões compatíveis com v4 nas duas máquinas. Protocolo v4 não é a versão do aplicativo. |
 | Organização salva, ativação não confirmada (`unconfirmed`) | A revisão já foi publicada, mas a ativação não está comprovada. Consulte novamente o estado e o Diagnóstico antes de decidir outra ação; não repita a escrita às cegas. |
 | Durabilidade não confirmada | A revisão nova pode estar visível sem confirmação de que resistirá a uma queda do sistema. Não presuma rollback nem tente sobrescrever automaticamente. |
 
@@ -70,6 +70,6 @@ Os ajustes avançados conservam a edição por borda. No layout v2, os segmentos
 
 Nenhum resultado físico é aprovado por este guia. Continuam necessários os percursos A → notebook → B, B → notebook → A e retorno pelo mesmo lado em hardware real, com posição do cursor e soltura de teclas/botões observadas; também escalas, coordenadas negativas, pausa/revogação, UAC, desconexão e permissões reais. Leitor de tela e zoom do app exigem verificação própria. O incidente anterior de teclado permanece adiado.
 
-Os oito [cenários DEV e limites do simulador](../crates/clipsync-app/ui/README.md#cenários) ajudam a verificar a interface. Testes Node, fakes, API real com adaptadores de teste e compilação cruzada não substituem Windows e GNOME físicos. A publicação depende dos gates do [contrato §16](contrato.md#16-s10--clareza-e-monitores-independentes); este guia não declara a candidata disponível em release.
+Os oito [cenários DEV e limites do simulador](../crates/clipsync-app/ui/README.md#cenários) ajudam a verificar a interface. Testes Node, fakes, API real com adaptadores de teste e compilação cruzada não substituem Windows e GNOME físicos. A v0.5.0 está publicada no GitHub, mas isso não comprova o funcionamento físico; os gates do [contrato §16](contrato.md#16-s10--clareza-e-monitores-independentes) seguem como referência.
 
 Referências de implementação: [design aprovado](superpowers/specs/2026-10-30-monitores-independentes-design.md) e [plano](superpowers/plans/2026-10-30-monitores-independentes.md).

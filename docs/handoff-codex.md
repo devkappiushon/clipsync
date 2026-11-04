@@ -15,8 +15,8 @@ Escrito em 2026-10-28 pelo Maestro (Claude), que coordenou o time do Maestri de 
 
 | Máquina | Sistema | Papel | Observações |
 |---|---|---|---|
-| Notebook `kappxs-Aspire-A515-57` (este repositório) | Ubuntu 26.04, GNOME 50 Wayland com XWayland, 1 monitor `eDP-1` | recebe teclado e mouse | sem sudo; perfil em `~/.config/clipsync` |
-| PC `DESKTOP-LSSO4ID`, 192.168.1.11 | Windows | tem o teclado e o mouse físicos, 2 monitores | era o servidor do Input Leap |
+| Notebook `notebook-linux` (este repositório) | Ubuntu 26.04, GNOME 50 Wayland com XWayland, 1 monitor `eDP-1` | recebe teclado e mouse | sem sudo; perfil em `~/.config/clipsync` |
+| PC `pc-windows`, 192.168.0.11 | Windows | tem o teclado e o mouse físicos, 2 monitores | era o servidor do Input Leap |
 | Terceiro PC | a confirmar | | pergunta aberta no contrato §13.14 |
 
 O Input Leap fica instalado até o módulo de input do ClipSync rodar nas máquinas reais. Os dois não podem capturar ao mesmo tempo; hoje o Input Leap está parado.
@@ -104,9 +104,9 @@ $ dpkg -s clip-sync | grep Version
 Version: 0.2.1                         # o notebook roda o app 0.2.1 (.deb), não o 0.3.0
 
 $ clipsync status
-kappxs-Aspire-A515-57 · id 35a0-f4de-fbbb-167b · escuta 0.0.0.0:47800 · ativo
+notebook-linux · id 5555-6666-7777-8888 · escuta 0.0.0.0:47800 · ativo
 Pares:
-  DESKTOP-LSSO4ID (8327-f0aa-7ee7-6a61) · conectado · 192.168.1.11:47800 · módulos do par: clipboard, input · permissões: clipboard-in, clipboard-out, input-in
+  pc-windows (1111-2222-3333-4444) · conectado · 192.168.0.11:47800 · módulos do par: clipboard, input · permissões: clipboard-in, clipboard-out, input-in
 Módulos:
   clipboard: ligado · adaptador x11-xfixes · último evento: oferta enviada a 1 par(es)
   input: ligado · adaptador portal-inputcapture+portal-remotedesktop · último evento: nenhum · último bloqueio: nenhum

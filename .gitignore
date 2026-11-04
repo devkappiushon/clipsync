@@ -24,3 +24,7 @@ apps/desktop/src-tauri/target/
 .idea/
 .vscode/
 .DS_Store
+
+# Evidências de rodada e pacotes de revisão (fora do repositório público)
+.superpowers/
+/retomada-b07/

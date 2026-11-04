@@ -1,6 +1,10 @@
 # workboard · ClipSync MVP de hoje
 
-## Estado atual S10 · candidata 0.5.0, ainda não publicada
+## Estado atual · v0.5.0 publicada · 31/10/2026
+
+[Release v0.5.0](https://github.com/devkappiushon/clipsync/releases/tag/v0.5.0) publicada a partir de `590c137`, o mesmo commit da `main`; CI `41161430657` e empacotamento `41161435861` aprovados no mesmo commit; seis pacotes e `SHA256SUMS` publicados. Evidência: [publicação](evidencias/release-v0.5.0.md). Nada físico foi comprovado: a lista única do que falta está em [pendências da v0.5.0](pendencias-v0.5.0.md). Em 03/11/2026 o andar DOC reescreve README e guias; o Maestro anonimizou caminhos e nomes reais nos documentos para o repositório poder ficar público. Os blocos abaixo são históricos.
+
+## S10 · candidata 0.5.0 (histórico, anterior à publicação)
 
 Clareza e organização independente por monitor implementadas e revisadas. INT-TEC-01/02 encerrados após correção de Rivet e re-review de Argus: preparação interativa usa 110 segundos e aceite/restauração conservam o aviso de durabilidade. Sentinel concluiu a revisão integrada sem novo achado de segurança. T4-SEG-01 continua Minor aberto, explicitamente diferido; corrida de check/open do backup não foi corrigida.
 

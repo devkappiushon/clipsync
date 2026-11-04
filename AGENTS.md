@@ -4,7 +4,7 @@ Instruções para agentes de código (Codex e outros) neste repositório. Leia i
 
 ## O projeto
 
-ClipSync compartilha teclado, mouse e área de transferência entre os computadores do usuário, num app só, sem servidor central, para substituir o Input Leap. Rust (workspace com 8 crates), app de desktop em Tauri 2, Linux (GNOME Wayland) e Windows. Versão deste checkout: **v0.5.0 candidata**, ainda não publicada. A v0.4.0 é a publicação anterior. Consulte `docs/contexto-equipe.md` e o contrato §16 para o estado e os gates da S10; `docs/pendencias-v0.4.0.md` preserva os aceites anteriores.
+ClipSync compartilha teclado, mouse e área de transferência entre os computadores do usuário, num app só, sem servidor central, para substituir o Input Leap. Rust (workspace com 8 crates), app de desktop em Tauri 2, Linux (GNOME Wayland) e Windows. Versão deste checkout: **v0.5.0, publicada em 31/10/2026** (commit `590c137`, o mesmo da `main`). O que ainda está aberto fica em `docs/pendencias-v0.5.0.md`; o contrato §16 registra a S10 e `docs/pendencias-v0.4.0.md` preserva os aceites anteriores.
 
 ## Comece por aqui
 

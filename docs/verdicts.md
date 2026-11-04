@@ -29,7 +29,7 @@ Argus só altera este relatório; não edita código, não roda git e não inici
 Atualização operacional do Maestro: julgar somente o export limpo informado, atualmente `e611a88`; fontes em `~/.cache/clipsync-verdict/src`, cache em `~/.cache/clipsync-verdict/target`. Não executar gates na árvore compartilhada em edição nem no export antigo de /tmp. Todos os blocos abaixo usam a raiz do export, após carregar o ambiente Cargo:
 
 ```sh
-cd /home/kappxs/.cache/clipsync-verdict/src
+cd ~/.cache/clipsync-verdict/src
 source ~/.cargo/env
 export CARGO_TARGET_DIR="$HOME/.cache/clipsync-verdict/target"
 date --iso-8601=seconds
@@ -293,7 +293,7 @@ Publicar achados detalhados em `## Findings` e comunicar o veredito ao Maestro p
 
 Solicitação: revisar os sete critérios da §9 S0; commit informado pelo Maestro: `79be293`. **Não consultei git e não certifiquei o conteúdo desse commit.** A evidência abaixo é do checkout compartilhado, que já contém implementação de S1/S2. As falhas localizadas nesses crates não são atribuídas ao trabalho do Bolt sem comparação com uma cópia estável de S0.
 
-Diretório: `/home/kappxs/Documentos/ANTIGOS/clipsync`. Cada comando abaixo foi executado em zsh após `source ~/.cargo/env`. Hashes dos arquivos antes/depois dos 13 comandos foram idênticos; não houve mudança detectada durante essa janela. Os cinco crates têm `[lints] workspace = true`; as 25 dependências de workspace têm versões iniciadas por `=`. Manifestos conferidos por leitura e parse de TOML. Código-fonte não foi editado.
+Diretório: `~/clipsync`. Cada comando abaixo foi executado em zsh após `source ~/.cargo/env`. Hashes dos arquivos antes/depois dos 13 comandos foram idênticos; não houve mudança detectada durante essa janela. Os cinco crates têm `[lints] workspace = true`; as 25 dependências de workspace têm versões iniciadas por `=`. Manifestos conferidos por leitura e parse de TOML. Código-fonte não foi editado.
 
 | §9 S0 | Resultado observado |
 |---|---|
@@ -323,7 +323,7 @@ Comando: `rustup show active-toolchain`. Início: `2026-10-27T12:04:33.598252-03
 stdout:
 
 ```text
-1.99.1-x86_64-unknown-linux-gnu (overridden by '/home/kappxs/Documentos/ANTIGOS/clipsync/rust-toolchain.toml')
+1.99.1-x86_64-unknown-linux-gnu (overridden by '~/clipsync/rust-toolchain.toml')
 ```
 
 Comando: `cargo build --workspace`. Início: `2026-10-27T12:04:33.621930-03:00`. Exit code: **0**.
@@ -331,10 +331,10 @@ Comando: `cargo build --workspace`. Início: `2026-10-27T12:04:33.621930-03:00`.
 stderr:
 
 ```text
-   Compiling clipsync-proto v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-proto)
-   Compiling clipsync-core v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-core)
-   Compiling clipsync-input v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-input)
-   Compiling clipsync-clipboard v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard)
+   Compiling clipsync-proto v0.1.0 (~/clipsync/crates/clipsync-proto)
+   Compiling clipsync-core v0.1.0 (~/clipsync/crates/clipsync-core)
+   Compiling clipsync-input v0.1.0 (~/clipsync/crates/clipsync-input)
+   Compiling clipsync-clipboard v0.1.0 (~/clipsync/crates/clipsync-clipboard)
 warning: method `forget` is never used
   --> crates/clipsync-clipboard/src/ledger.rs:30:12
    |
@@ -364,7 +364,7 @@ warning: associated items `new` and `insert_new` are never used
    |            ^^^^^^^^^^
 
 warning: `clipsync-clipboard` (lib) generated 3 warnings
-   Compiling clipsync-cli v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-cli)
+   Compiling clipsync-cli v0.1.0 (~/clipsync/crates/clipsync-cli)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.21s
 ```
 
@@ -373,7 +373,7 @@ Comando: `cargo test --workspace`. Início: `2026-10-27T12:04:34.877864-03:00`. 
 stderr:
 
 ```text
-   Compiling clipsync-proto v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-proto)
+   Compiling clipsync-proto v0.1.0 (~/clipsync/crates/clipsync-proto)
 error[E0583]: file not found for module `testing`
   --> crates/clipsync-proto/src/lib.rs:16:1
    |
@@ -401,7 +401,7 @@ Comando: `cargo clippy --workspace --all-targets -- -D warnings`. Início: `2026
 stderr:
 
 ```text
-    Checking clipsync-proto v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-proto)
+    Checking clipsync-proto v0.1.0 (~/clipsync/crates/clipsync-proto)
 error[E0583]: file not found for module `testing`
   --> crates/clipsync-proto/src/lib.rs:16:1
    |
@@ -429,7 +429,7 @@ Comando: `cargo fmt --all --check`. Início: `2026-10-27T12:04:36.249759-03:00`.
 Trecho literal inicial de stdout:
 
 ```diff
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:1:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:1:
  use super::{ChangeEvent, ClipError, ClipSnapshot, ClipboardAdapter, WatchMode};
 -use clipsync_proto::{mono_us, MIME_TEXT_UTF8};
 +use clipsync_proto::{MIME_TEXT_UTF8, mono_us};
@@ -439,54 +439,54 @@ Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/a
 Locais reportados por rustfmt (extraídos de stdout, sem inventar diferenças):
 
 ```text
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:1:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:25:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:43:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:51:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:95:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:102:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:106:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/mod.rs:30:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:1:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:8:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:11:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:42:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:49:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:61:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:69:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:74:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:133:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:140:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:151:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/config.rs:1:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/config.rs:33:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/config.rs:40:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/config.rs:48:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:9:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:16:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:22:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:30:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:43:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:56:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:63:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:67:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:79:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/diag.rs:98:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/ledger.rs:33:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/ledger.rs:47:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/ledger.rs:54:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/lib.rs:6:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/msg.rs:14:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/probe.rs:1:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/probe.rs:41:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/probe.rs:54:
-Diff in /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-clipboard/src/probe.rs:78:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:1:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:25:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:43:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:51:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:95:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:102:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/fake.rs:106:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/mod.rs:30:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:1:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:8:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:11:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:42:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:49:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:61:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:69:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:74:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:133:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:140:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/adapter/x11.rs:151:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/config.rs:1:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/config.rs:33:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/config.rs:40:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/config.rs:48:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/diag.rs:9:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/diag.rs:16:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/diag.rs:22:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/diag.rs:30:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/diag.rs:43:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/diag.rs:56:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/diag.rs:63:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/diag.rs:67:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/diag.rs:79:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/diag.rs:98:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/ledger.rs:33:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/ledger.rs:47:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/ledger.rs:54:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/lib.rs:6:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/msg.rs:14:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/probe.rs:1:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/probe.rs:41:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/probe.rs:54:
+Diff in ~/clipsync/crates/clipsync-clipboard/src/probe.rs:78:
 ```
 
 stderr integral:
 
 ```text
-Error writing files: failed to resolve mod `testing`: /home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-proto/src/testing.rs does not exist
+Error writing files: failed to resolve mod `testing`: ~/clipsync/crates/clipsync-proto/src/testing.rs does not exist
 ```
 
 Stdout completo preservado em `/tmp/clipsync-argus-s0-miuoxq64/results.json`; o trecho acima não é a saída completa de fmt.
@@ -523,12 +523,12 @@ stdout:
 ring v0.17.14
 ├── quinn-proto v0.11.19
 │   └── quinn v0.11.12
-│       └── clipsync-core v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-core)
-│           └── clipsync-cli v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-cli)
+│       └── clipsync-core v0.1.0 (~/clipsync/crates/clipsync-core)
+│           └── clipsync-cli v0.1.0 (~/clipsync/crates/clipsync-cli)
 ├── rcgen v0.14.10
-│   └── clipsync-core v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-core) (*)
+│   └── clipsync-core v0.1.0 (~/clipsync/crates/clipsync-core) (*)
 ├── rustls v0.23.46
-│   ├── clipsync-core v0.1.0 (/home/kappxs/Documentos/ANTIGOS/clipsync/crates/clipsync-core) (*)
+│   ├── clipsync-core v0.1.0 (~/clipsync/crates/clipsync-core) (*)
 │   ├── quinn v0.11.12 (*)
 │   └── quinn-proto v0.11.19 (*)
 └── rustls-webpki v0.103.16
@@ -583,7 +583,7 @@ Logs integrais e inventários: `/tmp/clipsync-argus-s0-miuoxq64/{results,before,
 
 ### S0 · reemissão 2026-10-27T12:20:54-03:00 · Passa
 
-Base local: export limpo **e611a88**, informado pelo Maestro, em `/home/kappxs/.cache/clipsync-verdict/src`; `CARGO_TARGET_DIR=/home/kappxs/.cache/clipsync-verdict/target`, `source ~/.cargo/env` antes de cada comando. Execução 12:15:05–12:16:07 -03:00. Todos os arquivos inventariados permaneceram idênticos antes/depois e na conferência posterior. Nenhum git foi executado; o hash de commit é a identificação fornecida pelo Maestro, os SHA-256 abaixo são a evidência local.
+Base local: export limpo **e611a88**, informado pelo Maestro, em `~/.cache/clipsync-verdict/src`; `CARGO_TARGET_DIR=~/.cache/clipsync-verdict/target`, `source ~/.cargo/env` antes de cada comando. Execução 12:15:05–12:16:07 -03:00. Todos os arquivos inventariados permaneceram idênticos antes/depois e na conferência posterior. Nenhum git foi executado; o hash de commit é a identificação fornecida pelo Maestro, os SHA-256 abaixo são a evidência local.
 
 **Este veredito substitui o “não passa no checkout atual” das 12:04 para a fatia S0.** Aquela observação continua no histórico, mas era da árvore compartilhada em edição. A rodada intermediária em /tmp foi descartada como base de aprovação: houve troca de export e cota de disco; os comandos foram repetidos no novo caminho com sucesso.
 
@@ -634,7 +634,7 @@ Comando: `rustup show active-toolchain`. Início: `2026-10-27T12:15:05.292622-03
 stdout:
 
 ```text
-1.99.1-x86_64-unknown-linux-gnu (overridden by '/home/kappxs/.cache/clipsync-verdict/src/rust-toolchain.toml')
+1.99.1-x86_64-unknown-linux-gnu (overridden by '~/.cache/clipsync-verdict/src/rust-toolchain.toml')
 ```
 
 Comando: `cargo build --workspace`. Início: `2026-10-27T12:15:05.313777-03:00`. Exit code: **0**.
@@ -806,21 +806,21 @@ Trechos literais de stderr que identificam executáveis e conclusão:
 
 ```text
     Finished `test` profile [unoptimized + debuginfo] target(s) in 5.98s
-     Running unittests src/main.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync-be9f8c6ccda39f75)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-ed14c5d2789ba84f)
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_clipboard-baed76060361b842)
-     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-c494c8daf81d2787)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-85906dbb9d313bfa)
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-92d4afbd93db2a46)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-6d4b6b899601d3c6)
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_input-e5c8f10e63c27e5a)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-6f0702f4c653dfde)
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_proto-0c66604f71ca982e)
-     Running tests/authorize.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/authorize-e391bd3d15518a60)
-     Running tests/ids.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/ids-dc4409c0c4cc9425)
-     Running tests/memhub.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/memhub-08e08ec1e88b0447)
-     Running tests/redact.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/redact-b33032db01aafc8d)
-     Running tests/wire.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/wire-bc8f4451e647d888)
+     Running unittests src/main.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync-be9f8c6ccda39f75)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-ed14c5d2789ba84f)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_clipboard-baed76060361b842)
+     Running tests/module_mem.rs (~/.cache/clipsync-verdict/target/debug/deps/module_mem-c494c8daf81d2787)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-85906dbb9d313bfa)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_core-92d4afbd93db2a46)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-6d4b6b899601d3c6)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_input-e5c8f10e63c27e5a)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-6f0702f4c653dfde)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_proto-0c66604f71ca982e)
+     Running tests/authorize.rs (~/.cache/clipsync-verdict/target/debug/deps/authorize-e391bd3d15518a60)
+     Running tests/ids.rs (~/.cache/clipsync-verdict/target/debug/deps/ids-dc4409c0c4cc9425)
+     Running tests/memhub.rs (~/.cache/clipsync-verdict/target/debug/deps/memhub-08e08ec1e88b0447)
+     Running tests/redact.rs (~/.cache/clipsync-verdict/target/debug/deps/redact-b33032db01aafc8d)
+     Running tests/wire.rs (~/.cache/clipsync-verdict/target/debug/deps/wire-bc8f4451e647d888)
    Doc-tests clipsync_clipboard
    Doc-tests clipsync_core
    Doc-tests clipsync_input
@@ -871,12 +871,12 @@ stdout:
 ring v0.17.14
 ├── quinn-proto v0.11.19
 │   └── quinn v0.11.12
-│       └── clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
-│           └── clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+│       └── clipsync-core v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-core)
+│           └── clipsync-cli v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-cli)
 ├── rcgen v0.14.10
-│   └── clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core) (*)
+│   └── clipsync-core v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-core) (*)
 ├── rustls v0.23.46
-│   ├── clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core) (*)
+│   ├── clipsync-core v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-core) (*)
 │   ├── quinn v0.11.12 (*)
 │   └── quinn-proto v0.11.19 (*)
 └── rustls-webpki v0.103.16
@@ -921,11 +921,11 @@ a17fc31e789ac923ae55a5b2e620b7f561bb62d53fa6bebc968e07353d68e69c  rustfmt.toml
 512b073c27ebfb1579bb83f4a2226bf24f78cce86e422b3f4915fb40255ae009  docs/contrato.md
 ```
 
-Logs integrais e inventários: `/home/kappxs/.cache/clipsync-verdict/argus-e611a88-3609dhci/{meta,results,before,after}.json`.
+Logs integrais e inventários: `~/.cache/clipsync-verdict/argus-e611a88-3609dhci/{meta,results,before,after}.json`.
 
 ### S2 · v1.3 · 2026-10-27T12:20:54-03:00 · Não passa
 
-Base: export **e611a88** em `/home/kappxs/.cache/clipsync-verdict/src`, cache em `/home/kappxs/.cache/clipsync-verdict/target`. O módulo e os testes de clipboard têm os mesmos hashes da entrega final 18a461c; contrato v1.3 desta base, incluindo regra 6 de TTL e regra 9 de Unreachable. A leitura parcial anterior foi substituída por esta revisão da versão final. Nenhuma fonte do projeto/export foi editada.
+Base: export **e611a88** em `~/.cache/clipsync-verdict/src`, cache em `~/.cache/clipsync-verdict/target`. O módulo e os testes de clipboard têm os mesmos hashes da entrega final 18a461c; contrato v1.3 desta base, incluindo regra 6 de TTL e regra 9 de Unreachable. A leitura parcial anterior foi substituída por esta revisão da versão final. Nenhuma fonte do projeto/export foi editada.
 
 **Itens automáticos:** `cargo test -p clipsync-clipboard` = 12 aprovados (11 funcionais + 1 smoke), 0 falhos, 0 ignorados; Clippy com `-D warnings` = 0; fmt do crate = 0. **Veredito de comportamento: não passa**, pelos dois casos adicionais reproduzidos abaixo. **Itens 2–4: pendentes**, conforme ordem do Maestro, até o CLI/manual; não executei probes nem declarei clipboard gráfico validado.
 
@@ -974,9 +974,9 @@ Trechos literais de stderr que identificam executáveis e conclusão:
 
 ```text
     Finished `test` profile [unoptimized + debuginfo] target(s) in 7.75s
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_clipboard-d5b415483d8ba192)
-     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-a2a6cec29a2a4f52)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-034f1adebe3f47bd)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_clipboard-d5b415483d8ba192)
+     Running tests/module_mem.rs (~/.cache/clipsync-verdict/target/debug/deps/module_mem-a2a6cec29a2a4f52)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-034f1adebe3f47bd)
    Doc-tests clipsync_clipboard
 ```
 
@@ -1016,13 +1016,13 @@ O harness foi fornecido ao rustc por stdin (nenhum .rs do projeto/export criado 
 Comando de compilação reexecutável, com o mesmo stdin:
 
 ```sh
-rustc --edition=2024 --test --crate-name argus_s2_boundary - -o /home/kappxs/.cache/clipsync-verdict/argus-e611a88-3609dhci/boundary-tests -L dependency=/home/kappxs/.cache/clipsync-verdict/target/debug/deps --extern clipsync_clipboard=/home/kappxs/.cache/clipsync-verdict/target/debug/deps/libclipsync_clipboard-ad5d540442636c69.rlib --extern clipsync_proto=/home/kappxs/.cache/clipsync-verdict/target/debug/deps/libclipsync_proto-200667442ae0d934.rlib --extern tokio=/home/kappxs/.cache/clipsync-verdict/target/debug/deps/libtokio-f1ce68d902523d30.rlib --extern sha2=/home/kappxs/.cache/clipsync-verdict/target/debug/deps/libsha2-dd923891c50e1b65.rlib < /home/kappxs/.cache/clipsync-verdict/argus-e611a88-3609dhci/probe-stdin.txt
+rustc --edition=2024 --test --crate-name argus_s2_boundary - -o ~/.cache/clipsync-verdict/argus-e611a88-3609dhci/boundary-tests -L dependency=~/.cache/clipsync-verdict/target/debug/deps --extern clipsync_clipboard=~/.cache/clipsync-verdict/target/debug/deps/libclipsync_clipboard-ad5d540442636c69.rlib --extern clipsync_proto=~/.cache/clipsync-verdict/target/debug/deps/libclipsync_proto-200667442ae0d934.rlib --extern tokio=~/.cache/clipsync-verdict/target/debug/deps/libtokio-f1ce68d902523d30.rlib --extern sha2=~/.cache/clipsync-verdict/target/debug/deps/libsha2-dd923891c50e1b65.rlib < ~/.cache/clipsync-verdict/argus-e611a88-3609dhci/probe-stdin.txt
 ```
 
 Comando executado:
 
 ```sh
-/home/kappxs/.cache/clipsync-verdict/argus-e611a88-3609dhci/boundary-tests --nocapture --test-threads=1
+~/.cache/clipsync-verdict/argus-e611a88-3609dhci/boundary-tests --nocapture --test-threads=1
 ```
 
 Exit code: **101**. Saída real:
@@ -1067,11 +1067,11 @@ Os dois testes verificam requisitos de comportamento; falharam com `duplicate_ac
 14aa4f0445d1dbf0fb4b082d9d1bb5bb8f2d065f88ecbebf097a4f9d7d180e68  crates/clipsync-proto/src/control.rs
 ```
 
-Inventários antes/depois iguais; conferência posterior também sem alterações. Evidência persistente: `/home/kappxs/.cache/clipsync-verdict/argus-e611a88-3609dhci` (results.json, before.json, after.json, boundary-results.json, probe-stdin.txt e boundary-tests).
+Inventários antes/depois iguais; conferência posterior também sem alterações. Evidência persistente: `~/.cache/clipsync-verdict/argus-e611a88-3609dhci` (results.json, before.json, after.json, boundary-results.json, probe-stdin.txt e boundary-tests).
 
 ### S2 · v1.4 · 2026-10-27T12:28:01-03:00 · Passa no escopo automático
 
-Base informada pelo Maestro: export **7923e20**, em `/home/kappxs/.cache/clipsync-verdict/src`; cache `/home/kappxs/.cache/clipsync-verdict/target`. Gates executados de 12:25:23 a 12:25:30 -03:00, após `source ~/.cargo/env`. **Substitui a reprovação de S2 v1.3 no escopo automático e encerra S2-1/S2-2.** Itens manuais S2.2–S2.4 permanecem pendentes; não há aprovação de clipboard gráfico. S4 parcial (profile/control/diag/init) não foi revisada nem aprovada neste bloco.
+Base informada pelo Maestro: export **7923e20**, em `~/.cache/clipsync-verdict/src`; cache `~/.cache/clipsync-verdict/target`. Gates executados de 12:25:23 a 12:25:30 -03:00, após `source ~/.cargo/env`. **Substitui a reprovação de S2 v1.3 no escopo automático e encerra S2-1/S2-2.** Itens manuais S2.2–S2.4 permanecem pendentes; não há aprovação de clipboard gráfico. S4 parcial (profile/control/diag/init) não foi revisada nem aprovada neste bloco.
 
 Resultado: **15 testes oficiais aprovados** (2 unitários de ledger, 12 de módulo, 1 smoke), zero falhos/ignorados; Clippy e fmt saem 0. As duas reproduções independentes foram recompiladas com as bibliotecas novas, usando o stdin **idêntico byte a byte** ao da reprovação: SHA-256 `ecb744ef315336cdfa81b59db54d78a79651d01b2aee29eddaf688918d224ad7`. Ambas agora passam, sem enfraquecer as asserções.
 
@@ -1131,12 +1131,12 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 stderr:
 
 ```text
-   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
-   Compiling clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+   Compiling clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-clipboard v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 1.40s
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_clipboard-d5b415483d8ba192)
-     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-a2a6cec29a2a4f52)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-034f1adebe3f47bd)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_clipboard-d5b415483d8ba192)
+     Running tests/module_mem.rs (~/.cache/clipsync-verdict/target/debug/deps/module_mem-a2a6cec29a2a4f52)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-034f1adebe3f47bd)
    Doc-tests clipsync_clipboard
 ```
 
@@ -1145,8 +1145,8 @@ Comando: `cargo clippy -p clipsync-clipboard --all-targets -- -D warnings`; iní
 stderr:
 
 ```text
-    Checking clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
-    Checking clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+    Checking clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
+    Checking clipsync-clipboard v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.71s
 ```
 
@@ -1156,10 +1156,10 @@ stdout/stderr vazios.
 
 #### Reexecução dos casos originais
 
-Compilação por stdin (exit 0), texto original preservado em `/home/kappxs/.cache/clipsync-verdict/argus-7923e20-3po5__ky/probe-stdin.txt`; comando completo e bibliotecas em `boundary-results.json`. O harness inclui também dois testes unitários do novo ledger; cada execução abaixo seleciona exatamente o caso original, por isso três testes ficam filtrados.
+Compilação por stdin (exit 0), texto original preservado em `~/.cache/clipsync-verdict/argus-7923e20-3po5__ky/probe-stdin.txt`; comando completo e bibliotecas em `boundary-results.json`. O harness inclui também dois testes unitários do novo ledger; cada execução abaixo seleciona exatamente o caso original, por isso três testes ficam filtrados.
 
 ```sh
-/home/kappxs/.cache/clipsync-verdict/argus-7923e20-3po5__ky/boundary-tests --exact duplicate_at_capacity_must_still_be_duplicate --nocapture
+~/.cache/clipsync-verdict/argus-7923e20-3po5__ky/boundary-tests --exact duplicate_at_capacity_must_still_be_duplicate --nocapture
 ```
 
 Exit **0**.
@@ -1175,7 +1175,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; fini
 ```
 
 ```sh
-/home/kappxs/.cache/clipsync-verdict/argus-7923e20-3po5__ky/boundary-tests --exact pause_during_prewrite_read_must_prevent_write --nocapture
+~/.cache/clipsync-verdict/argus-7923e20-3po5__ky/boundary-tests --exact pause_during_prewrite_read_must_prevent_write --nocapture
 ```
 
 Exit **0**.
@@ -1202,11 +1202,11 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; fini
 14aa4f0445d1dbf0fb4b082d9d1bb5bb8f2d065f88ecbebf097a4f9d7d180e68  crates/clipsync-proto/src/control.rs
 ```
 
-Evidência persistente: `/home/kappxs/.cache/clipsync-verdict/argus-7923e20-3po5__ky` (meta/results/before/after/boundary-results.json, probe-stdin.txt e boundary-tests).
+Evidência persistente: `~/.cache/clipsync-verdict/argus-7923e20-3po5__ky` (meta/results/before/after/boundary-results.json, probe-stdin.txt e boundary-tests).
 
 ### S3 · Vector · 2026-10-27T12:35:27-03:00 · Não passa
 
-Base informada pelo Maestro: export **3eaa730**, em `/home/kappxs/.cache/clipsync-verdict/src`; `CARGO_TARGET_DIR=/home/kappxs/.cache/clipsync-verdict/target`. §9 S3 itens 1 e 5 executados de **12:28:30 a 12:28:49 -03:00**, após `source ~/.cargo/env`. Os critérios S3 do contrato no export são idênticos aos do contrato atual no repositório (workboard v1.8). Nenhum arquivo do export mudou entre o inventário inicial, os gates e as reproduções, inclusive Cargo.lock.
+Base informada pelo Maestro: export **3eaa730**, em `~/.cache/clipsync-verdict/src`; `CARGO_TARGET_DIR=~/.cache/clipsync-verdict/target`. §9 S3 itens 1 e 5 executados de **12:28:30 a 12:28:49 -03:00**, após `source ~/.cargo/env`. Os critérios S3 do contrato no export são idênticos aos do contrato atual no repositório (workboard v1.8). Nenhum arquivo do export mudou entre o inventário inicial, os gates e as reproduções, inclusive Cargo.lock.
 
 **Veredito: Não passa**, por S3-1/S3-2 reproduzidos abaixo. Os gates oficiais passam: **16 testes aprovados** (8 de módulo, 7 unitários de integração, 1 smoke), zero falhos, **1 ignorado** (`portal_loopback`, requer sessão gráfica); Clippy e fmt saem 0. A aprovação automática de S2 v1.4 permanece no bloco anterior; este bloco não aprova S1/S4/integração.
 
@@ -1296,16 +1296,16 @@ stderr:
    Compiling futures-util v0.3.34
    Compiling zbus v5.19.0
    Compiling reis v0.7.1
-   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
    Compiling tempfile v3.27.0
    Compiling ashpd v0.13.13
-   Compiling clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+   Compiling clipsync-input v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-input)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 10.97s
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_input-17510809f8dddc56)
-     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-6791af65086b93b6)
-     Running tests/portal_loopback.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/portal_loopback-637131c0ec0c5ce4)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-3665d3e3b17d8b56)
-     Running tests/units.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/units-1b23caa983c13b1f)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_input-17510809f8dddc56)
+     Running tests/module_mem.rs (~/.cache/clipsync-verdict/target/debug/deps/module_mem-6791af65086b93b6)
+     Running tests/portal_loopback.rs (~/.cache/clipsync-verdict/target/debug/deps/portal_loopback-637131c0ec0c5ce4)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-3665d3e3b17d8b56)
+     Running tests/units.rs (~/.cache/clipsync-verdict/target/debug/deps/units-1b23caa983c13b1f)
    Doc-tests clipsync_input
 ```
 
@@ -1321,10 +1321,10 @@ stderr:
     Checking rustix v1.1.6
     Checking zbus v5.19.0
     Checking reis v0.7.1
-    Checking clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+    Checking clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
     Checking tempfile v3.27.0
     Checking ashpd v0.13.13
-    Checking clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+    Checking clipsync-input v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-input)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.13s
 ```
 
@@ -1336,7 +1336,7 @@ stdout/stderr vazios.
 
 Harness compilado por stdin contra as bibliotecas produzidas pelo gate; texto preservado como `s3-probe-stdin.txt` e comando completo em `s3-boundary-results.json`. SHA-256 do stdin: `4e68bae1e65b6a61f23df78b63c0457e707ef9d3f88dc246cd76af4aafd3836b`. Não foi acrescentado nem editado arquivo .rs no repositório/export. O primeiro comando de compilação do harness escolheu um artefato Tokio com features diferentes e falhou; após selecionar as dependências exatas do fingerprint de clipsync-input, compilou com exit 0. O histórico completo está no JSON. Os quatro warnings de helpers não usados são só do harness; o Clippy do crate permanece verde.
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/argus-3eaa730-7l7l0kyr/s3-boundary-tests --exact rate_budget_must_survive_new_session_from_same_peer --nocapture`; exit **101**.
+Comando: `~/.cache/clipsync-verdict/argus-3eaa730-7l7l0kyr/s3-boundary-tests --exact rate_budget_must_survive_new_session_from_same_peer --nocapture`; exit **101**.
 
 stdout:
 
@@ -1364,7 +1364,7 @@ a new session must not renew the peer's rate budget
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/argus-3eaa730-7l7l0kyr/s3-boundary-tests --exact hash_zero_monitor_must_be_zone_index_zero --nocapture`; exit **101**.
+Comando: `~/.cache/clipsync-verdict/argus-3eaa730-7l7l0kyr/s3-boundary-tests --exact hash_zero_monitor_must_be_zone_index_zero --nocapture`; exit **101**.
 
 stdout:
 
@@ -1404,11 +1404,11 @@ dd4b79f976853aae21339e388354c06ac561bae8b9f9afcba61bc866b9902e36  crates/clipsyn
 907ad512ba7c0a719d52064ddddfedcce2dbe6d11f5cdd824a37879dc778afd9  Cargo.lock
 ```
 
-Evidência persistente: `/home/kappxs/.cache/clipsync-verdict/argus-3eaa730-7l7l0kyr` (meta/results/before/after.json, s3-probe-stdin.txt, s3-boundary-results.json e s3-boundary-tests). Argus não aplicou correções e não executou git.
+Evidência persistente: `~/.cache/clipsync-verdict/argus-3eaa730-7l7l0kyr` (meta/results/before/after.json, s3-probe-stdin.txt, s3-boundary-results.json e s3-boundary-tests). Argus não aplicou correções e não executou git.
 
 ### S3 · v1.1 · 2026-10-27T12:42:05-03:00 · Passa no escopo automático
 
-Base informada: **30dcd43**, export `/home/kappxs/.cache/clipsync-verdict/src`, cache `/home/kappxs/.cache/clipsync-verdict/target`. **Encerra S3-1 e S3-2**; substitui a reprovação de 3eaa730 no escopo automático. Gates oficiais: **18 aprovados, 0 falhos, 1 ignorado** (portal_loopback); clippy/fmt saem 0. Inventário antes/depois idêntico. Itens gráficos §9 S3.2/3/4/6/7 continuam pendentes do Maestro.
+Base informada: **30dcd43**, export `~/.cache/clipsync-verdict/src`, cache `~/.cache/clipsync-verdict/target`. **Encerra S3-1 e S3-2**; substitui a reprovação de 3eaa730 no escopo automático. Gates oficiais: **18 aprovados, 0 falhos, 1 ignorado** (portal_loopback); clippy/fmt saem 0. Inventário antes/depois idêntico. Itens gráficos §9 S3.2/3/4/6/7 continuam pendentes do Maestro.
 
 - S3-1: `module.rs:103` implementa token bucket monotônico, capacidade 2.000 e reposição de 2.000/s; mapa por PeerId separado de Incoming, consultado em `:489`, removido somente em PeerDown (`:363`). Enter não renova o orçamento. Novo teste oficial `rate_limit_survives_a_new_enter` passa.
 - A reprodução original, sem alterar o stdin, resultou em **2.022 aceitos em 11.192 µs** e exit 101: a asserção antiga exigia no máximo 2.000, ignorando a reposição contínua do token bucket informado pelo Maestro. Preservei esse resultado. Adaptei somente o teto da asserção para `2000 + ceil(elapsed_seconds * 2000)`, mantendo o mesmo peer, duas sessões e 3.000 envios. Resultado **2.024 aceitos, teto 2.025, 12.152 µs**, exit 0. Isso aprova a semântica de token bucket solicitada (burst 2.000 + reposição), não afirma um teto rígido de 2.000 em toda janela móvel de um segundo.
@@ -1477,14 +1477,14 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 stderr:
 
 ```text
-   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
-   Compiling clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+   Compiling clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-input v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-input)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 2.80s
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_input-17510809f8dddc56)
-     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-6791af65086b93b6)
-     Running tests/portal_loopback.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/portal_loopback-637131c0ec0c5ce4)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-3665d3e3b17d8b56)
-     Running tests/units.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/units-1b23caa983c13b1f)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_input-17510809f8dddc56)
+     Running tests/module_mem.rs (~/.cache/clipsync-verdict/target/debug/deps/module_mem-6791af65086b93b6)
+     Running tests/portal_loopback.rs (~/.cache/clipsync-verdict/target/debug/deps/portal_loopback-637131c0ec0c5ce4)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-3665d3e3b17d8b56)
+     Running tests/units.rs (~/.cache/clipsync-verdict/target/debug/deps/units-1b23caa983c13b1f)
    Doc-tests clipsync_input
 ```
 
@@ -1493,8 +1493,8 @@ Comando: `cargo clippy -p clipsync-input --all-targets -- -D warnings`; exit **0
 stderr:
 
 ```text
-    Checking clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
-    Checking clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
+    Checking clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
+    Checking clipsync-input v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-input)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.27s
 ```
 
@@ -1502,7 +1502,7 @@ Comando: `cargo fmt -p clipsync-input --check`; exit **0**.
 
 stdout/stderr vazios.
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/s3-original-tests --exact rate_budget_must_survive_new_session_from_same_peer --nocapture`; exit **101**.
+Comando: `~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/s3-original-tests --exact rate_budget_must_survive_new_session_from_same_peer --nocapture`; exit **101**.
 
 stdout:
 
@@ -1530,7 +1530,7 @@ a new session must not renew the peer's rate budget
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/s3-original-tests --exact hash_zero_monitor_must_be_zone_index_zero --nocapture`; exit **0**.
+Comando: `~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/s3-original-tests --exact hash_zero_monitor_must_be_zone_index_zero --nocapture`; exit **0**.
 
 stdout:
 
@@ -1544,7 +1544,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; fini
 
 ```
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/s3-bucket-tests --exact rate_budget_must_survive_new_session_from_same_peer --nocapture`; exit **0**.
+Comando: `~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/s3-bucket-tests --exact rate_budget_must_survive_new_session_from_same_peer --nocapture`; exit **0**.
 
 stdout:
 
@@ -1566,7 +1566,7 @@ Hashes de reprodução (stdin):
 c3957b861828cfef5e00f5b238350b5a233ec0b289f48f2f4a322e67731b794f  s3-bucket-stdin.txt
 ```
 
-Evidências completas e hashes do export: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p` (s3-results.json, s3-boundary-results.json, before.json/after-s3.json).
+Evidências completas e hashes do export: `~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p` (s3-results.json, s3-boundary-results.json, before.json/after-s3.json).
 
 ### S1 · Rivet · 2026-10-27T12:45:23-03:00 · Passa nos testes solicitados; auditoria separada
 
@@ -1677,14 +1677,14 @@ stderr:
 ```text
    Compiling rustix v1.1.6
    Compiling linux-raw-sys v0.12.1
-   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 3.02s
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_proto-4b49005cfb6ac050)
-     Running tests/authorize.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/authorize-951137c2be6334f2)
-     Running tests/ids.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/ids-13024bae7b84b7f7)
-     Running tests/memhub.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/memhub-7439a3a7f369aeb3)
-     Running tests/redact.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/redact-567bd45310785f8c)
-     Running tests/wire.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/wire-e2699de60d8c4ef6)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_proto-4b49005cfb6ac050)
+     Running tests/authorize.rs (~/.cache/clipsync-verdict/target/debug/deps/authorize-951137c2be6334f2)
+     Running tests/ids.rs (~/.cache/clipsync-verdict/target/debug/deps/ids-13024bae7b84b7f7)
+     Running tests/memhub.rs (~/.cache/clipsync-verdict/target/debug/deps/memhub-7439a3a7f369aeb3)
+     Running tests/redact.rs (~/.cache/clipsync-verdict/target/debug/deps/redact-567bd45310785f8c)
+     Running tests/wire.rs (~/.cache/clipsync-verdict/target/debug/deps/wire-e2699de60d8c4ef6)
    Doc-tests clipsync_proto
 ```
 
@@ -1736,18 +1736,18 @@ stderr:
    Compiling rustix v1.1.6
    Compiling rustls v0.23.46
    Compiling quinn-udp v0.5.16
-   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
    Compiling tempfile v3.27.0
    Compiling quinn-proto v0.11.19
    Compiling quinn v0.11.12
-   Compiling clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
+   Compiling clipsync-core v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-core)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 7.37s
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
-     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
-     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
-     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
-     Running tests/profile.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
+     Running tests/control.rs (~/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
+     Running tests/diag.rs (~/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
+     Running tests/mesh.rs (~/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
+     Running tests/profile.rs (~/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
 ```
 
 Comando: `cargo test -p clipsync-core pairing_`; exit **0**.
@@ -1799,12 +1799,12 @@ stderr:
 
 ```text
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
-     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
-     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
-     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
-     Running tests/profile.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
+     Running tests/control.rs (~/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
+     Running tests/diag.rs (~/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
+     Running tests/mesh.rs (~/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
+     Running tests/profile.rs (~/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
 ```
 
 Comando: `cargo test -p clipsync-core mesh_`; exit **0**.
@@ -1853,12 +1853,12 @@ stderr:
 
 ```text
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
-     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
-     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
-     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
-     Running tests/profile.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
+     Running tests/control.rs (~/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
+     Running tests/diag.rs (~/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
+     Running tests/mesh.rs (~/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
+     Running tests/profile.rs (~/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
 ```
 
 Comando: `cargo test -p clipsync-core stream_and_datagram -- --nocapture`; exit **0**.
@@ -1904,13 +1904,13 @@ stderr:
 
 ```text
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
-     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
-     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
-     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
+     Running tests/control.rs (~/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
+     Running tests/diag.rs (~/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
+     Running tests/mesh.rs (~/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
 RTT fluxo 1 frame: p50 519.715µs p95 629.432µs · datagrama 4 eventos: p50 177.177µs p95 405.839µs (300 de 300)
-     Running tests/profile.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
+     Running tests/profile.rs (~/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
 ```
 
 Comando: `cargo clippy --workspace --all-targets -- -D warnings`; exit **0**.
@@ -1918,11 +1918,11 @@ Comando: `cargo clippy --workspace --all-targets -- -D warnings`; exit **0**.
 stderr:
 
 ```text
-    Checking clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
-    Checking clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
-    Checking clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
-    Checking clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
-    Checking clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Checking clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
+    Checking clipsync-core v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-core)
+    Checking clipsync-input v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-input)
+    Checking clipsync-clipboard v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+    Checking clipsync-cli v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-cli)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.93s
 ```
 
@@ -1930,7 +1930,7 @@ Comando: `cargo fmt --all --check`; exit **0**.
 
 stdout/stderr vazios.
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/p2-exact-tests --nocapture`; exit **0**.
+Comando: `~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/p2-exact-tests --nocapture`; exit **0**.
 
 stdout:
 
@@ -1955,7 +1955,7 @@ c915f90d97c2bc68460be58a977189311c4f98007498ed20687571a7d4681970  crates/clipsyn
 781aa047350e2b4926333536600a85785329c06491582cc524cf45e62e753158  p2-exact-stdin.txt
 ```
 
-Evidência integral: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p` (s1-results.json, p2-exact-results.json, p2-exact-stdin.txt e inventários).
+Evidência integral: `~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p` (s1-results.json, p2-exact-results.json, p2-exact-stdin.txt e inventários).
 
 ### S4 · Flux · 2026-10-27T12:50:23-03:00 · Não passa (flake reproduzido)
 
@@ -1975,7 +1975,7 @@ Base informada: **30dcd43**, export/cache em `~/.cache/clipsync-verdict/{src,tar
 | Diagnose | Executado por Argus: Ubuntu/Wayland, DISPLAY :0, Input Leap Flatpak em execução, Barrier não detectado, XFixes disponível, data-control ausente, InputCapture v1 e RemoteDesktop v2. Exit 0. Sem DISPLAY, marca as dependências do clipboard ausentes e continua com exit 0. |
 | Lints/formato | Clippy workspace --all-targets -D warnings e fmt --all --check já executados nesta mesma base na revisão S1, ambos 0; nenhuma mudança de fonte desde então. |
 
-**Códigos observados:** 0 em help/diagnose/init; 1 em módulos vazios, stdin vazio e probe sem DISPLAY; 2 em --listen removido e send sem --stdin; 3 na recusa de pareamento, send com destino pausado/desligado (asserções do roteiro e log manual); 4 em status/pause sem agente. Init com resposta vazia de clipboard grava desligado; `stat` observou diretório 700 e chave 600. Perfis de revisão novos ficaram em `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles`, sem usar os perfis do Maestro.
+**Códigos observados:** 0 em help/diagnose/init; 1 em módulos vazios, stdin vazio e probe sem DISPLAY; 2 em --listen removido e send sem --stdin; 3 na recusa de pareamento, send com destino pausado/desligado (asserções do roteiro e log manual); 4 em status/pause sem agente. Init com resposta vazia de clipboard grava desligado; `stat` observou diretório 700 e chave 600. Perfis de revisão novos ficaram em `~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles`, sem usar os perfis do Maestro.
 
 **Evidência manual incorporada (executada pelo Maestro, não por Argus):** [roteiro-2026-10-27.md](evidencias/roteiro-2026-10-27.md), release **30dcd43**, SHA-256 `b944a4bd391a624a017177adb7436a89a2cefb11ae974fbeadc6c2a4a1422709`. §14 itens 1/2/3/4/4b/6/7 mostram init, pareamento com mesmo código, status conectado, clipboard sintético aplicado/inbox bytes=10, pausa com rc=3, resume sem replay, módulo desligado rc=3 e diagnose rc=0. Complementam S4 e I.1/I.2; esse roteiro não exercita toda a troca de identidade do teste mesh_ e não encerra S4-1. Item 5/input gráfico segue pendente do usuário.
 
@@ -2034,12 +2034,12 @@ stderr:
 
 ```text
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
-     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
-     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
-     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
-     Running tests/profile.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
+     Running tests/control.rs (~/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
+     Running tests/diag.rs (~/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
+     Running tests/mesh.rs (~/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
+     Running tests/profile.rs (~/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
 ```
 
 Comando: `cargo test -p clipsync-core control_`; exit **0**.
@@ -2084,12 +2084,12 @@ stderr:
 
 ```text
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
-     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
-     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
-     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
-     Running tests/profile.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_core-8a5c11d448b87ec2)
+     Running tests/control.rs (~/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
+     Running tests/diag.rs (~/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
+     Running tests/mesh.rs (~/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
+     Running tests/profile.rs (~/.cache/clipsync-verdict/target/debug/deps/profile-e544e2ce5ee9f983)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-d94961f944997205)
 ```
 
 Comando: `cargo test -p clipsync-core --test diag`; exit **0**.
@@ -2109,7 +2109,7 @@ stderr:
 
 ```text
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
-     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
+     Running tests/diag.rs (~/.cache/clipsync-verdict/target/debug/deps/diag-cc5f117a17034f5d)
 ```
 
 Comando: `cargo test -p clipsync-cli --test roteiro`; exit **101**.
@@ -2153,13 +2153,13 @@ test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; 
 stderr:
 
 ```text
-   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
-   Compiling clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
-   Compiling clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
-   Compiling clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
-   Compiling clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+   Compiling clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-core v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-core)
+   Compiling clipsync-input v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-input)
+   Compiling clipsync-clipboard v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+   Compiling clipsync-cli v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-cli)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 6.17s
-     Running tests/roteiro.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/roteiro-8bb0db80bf9a908a)
+     Running tests/roteiro.rs (~/.cache/clipsync-verdict/target/debug/deps/roteiro-8bb0db80bf9a908a)
 error: test failed, to rerun pass `-p clipsync-cli --test roteiro`
 ```
 
@@ -2180,7 +2180,7 @@ stderr:
 
 ```text
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
-     Running tests/roteiro.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/roteiro-8bb0db80bf9a908a)
+     Running tests/roteiro.rs (~/.cache/clipsync-verdict/target/debug/deps/roteiro-8bb0db80bf9a908a)
 ```
 
 Comando: `cargo test -p clipsync-core --test control`; exit **0**.
@@ -2200,7 +2200,7 @@ stderr:
 
 ```text
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
+     Running tests/control.rs (~/.cache/clipsync-verdict/target/debug/deps/control-b1ac902e50280f98)
 ```
 
 Comando: `cargo run -q -p clipsync-cli -- --help`; exit **0**.
@@ -2231,7 +2231,7 @@ Options:
   -V, --version        Print version
 ```
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync run --help`; exit **0**.
+Comando: `~/.cache/clipsync-verdict/target/debug/clipsync run --help`; exit **0**.
 
 stdout:
 
@@ -2245,7 +2245,7 @@ Options:
   -h, --help           Print help
 ```
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync diagnose`; exit **0**.
+Comando: `~/.cache/clipsync-verdict/target/debug/clipsync diagnose`; exit **0**.
 
 stdout:
 
@@ -2264,7 +2264,7 @@ stdout:
 [aviso] input · Input Leap / Barrier: em execução: input-leapc; podem disputar a captura
 ```
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync init --profile /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a` · stdin nome + resposta vazia de clipboard; exit **0**.
+Comando: `~/.cache/clipsync-verdict/target/debug/clipsync init --profile ~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a` · stdin nome + resposta vazia de clipboard; exit **0**.
 
 stdout:
 
@@ -2272,7 +2272,7 @@ stdout:
 Módulos do ClipSync (nada é transmitido agora, e cada permissão é concedida depois, no pareamento):
   • input: este computador pode enviar teclado e mouse a um par, e receber os de um par que você autorizar.
   • clipboard: textos copiados aqui podem ser enviados a pares autorizados, e os deles chegam aqui.
-Nome deste dispositivo [kappxs-Aspire-A515-57]: Ligar o módulo de clipboard? [s/N] Perfil criado em /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a
+Nome deste dispositivo [notebook-linux]: Ligar o módulo de clipboard? [s/N] Perfil criado em ~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a
   dispositivo: argus-fixture
   id: 03fd-b3c5-bb4c-a2d5
   escuta: 0.0.0.0:47800
@@ -2281,16 +2281,16 @@ Nada foi transmitido.
 Próximo passo: `clipsync pair host` neste computador e `clipsync pair join ENDEREÇO` no outro.
 ```
 
-Comando: `stat -c '%a %n' /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a/identity.key.pem`; exit **0**.
+Comando: `stat -c '%a %n' ~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a ~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a/identity.key.pem`; exit **0**.
 
 stdout:
 
 ```text
-700 /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a
-600 /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a/identity.key.pem
+700 ~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a
+600 ~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a/identity.key.pem
 ```
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync status --profile /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a`; exit **4**.
+Comando: `~/.cache/clipsync-verdict/target/debug/clipsync status --profile ~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a`; exit **4**.
 
 stdout:
 
@@ -2300,7 +2300,7 @@ Pares:
   nenhum par pareado
 ```
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync --profile /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a pause`; exit **4**.
+Comando: `~/.cache/clipsync-verdict/target/debug/clipsync --profile ~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a pause`; exit **4**.
 
 stderr:
 
@@ -2308,7 +2308,7 @@ stderr:
 erro: agente parado (suba com `clipsync run`)
 ```
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync init --profile /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/off --name off --modules ''`; exit **1**.
+Comando: `~/.cache/clipsync-verdict/target/debug/clipsync init --profile ~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/off --name off --modules ''`; exit **1**.
 
 stderr:
 
@@ -2316,7 +2316,7 @@ stderr:
 erro: pelo menos um módulo precisa estar ligado
 ```
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync run --listen 127.0.0.1:0`; exit **2**.
+Comando: `~/.cache/clipsync-verdict/target/debug/clipsync run --listen 127.0.0.1:0`; exit **2**.
 
 stderr:
 
@@ -2328,7 +2328,7 @@ Usage: clipsync run [OPTIONS]
 For more information, try '--help'.
 ```
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync send --profile /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a`; exit **2**.
+Comando: `~/.cache/clipsync-verdict/target/debug/clipsync send --profile ~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a`; exit **2**.
 
 stderr:
 
@@ -2341,7 +2341,7 @@ Usage: clipsync send --stdin --profile <DIR>
 For more information, try '--help'.
 ```
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync send --stdin --profile /home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a`; exit **1**.
+Comando: `~/.cache/clipsync-verdict/target/debug/clipsync send --stdin --profile ~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/cli-profiles/a`; exit **1**.
 
 stderr:
 
@@ -2349,7 +2349,7 @@ stderr:
 erro: nada para enviar: a entrada está vazia
 ```
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync probe clipboard --write` · env -u DISPLAY; exit **1**.
+Comando: `~/.cache/clipsync-verdict/target/debug/clipsync probe clipboard --write` · env -u DISPLAY; exit **1**.
 
 stderr:
 
@@ -2357,7 +2357,7 @@ stderr:
 erro: a ponte de clipboard exige XWayland ativo (DISPLAY)
 ```
 
-Comando: `/home/kappxs/.cache/clipsync-verdict/target/debug/clipsync diagnose` · env -u DISPLAY; exit **0**.
+Comando: `~/.cache/clipsync-verdict/target/debug/clipsync diagnose` · env -u DISPLAY; exit **0**.
 
 stdout:
 
@@ -2376,7 +2376,7 @@ stdout:
 [aviso] input · Input Leap / Barrier: em execução: input-leapc; podem disputar a captura
 ```
 
-Evidência integral: `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p` (s4-results.json, s4-mesh-isolated.json, s4-extra-results.json, cli-binary.sha256 e after-all.json). Nenhum fonte foi editado, nenhum git executado.
+Evidência integral: `~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p` (s4-results.json, s4-mesh-isolated.json, s4-extra-results.json, cli-binary.sha256 e after-all.json). Nenhum fonte foi editado, nenhum git executado.
 
 ### S2 · adendo manual · 2026-10-27T12:52:13-03:00 · Evidências M incorporadas
 
@@ -2410,11 +2410,11 @@ erro: a ponte de clipboard exige XWayland ativo (DISPLAY)
 
 A aprovação automática de S2 v1.4 consta no bloco anterior (15 testes e duas reproduções corrigidas). O inventário confirma que **nenhum arquivo de clipsync-clipboard mudou de 7923e20 para 30dcd43**; o roteiro CLI de clipboard/I.1/I.2 também passou na revisão 30dcd43. Este adendo acrescenta as observações manuais; não afirma nova execução dos gates S2.1/S2.5 nesse commit. Input gráfico/item 5 do roteiro permanece pendente do usuário e pertence a S3.
 
-Evidências diretas de S2.4 e diagnose em `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/s4-extra-results.json`; evidência manual integral no arquivo do Maestro e em `/home/kappxs/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/manual-evidence-copy.md`.
+Evidências diretas de S2.4 e diagnose em `~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/s4-extra-results.json`; evidência manual integral no arquivo do Maestro e em `~/.cache/clipsync-verdict/argus-30dcd43-mo2pmw7p/manual-evidence-copy.md`.
 
 ### S4 · reemissão 796e46c · 2026-10-27T12:56:09-03:00 · Passa — S4-1 e S1.6 encerrados
 
-Base informada pelo Maestro: **796e46c**, export `/home/kappxs/.cache/clipsync-verdict/src`, `CARGO_TARGET_DIR=/home/kappxs/.cache/clipsync-verdict/target`. **Substitui a reprovação de S4 em 30dcd43 e encerra S4-1 e o critério de integração S1.6.** Nenhum arquivo do export mudou durante a revisão.
+Base informada pelo Maestro: **796e46c**, export `~/.cache/clipsync-verdict/src`, `CARGO_TARGET_DIR=~/.cache/clipsync-verdict/target`. **Substitui a reprovação de S4 em 30dcd43 e encerra S4-1 e o critério de integração S1.6.** Nenhum arquivo do export mudou durante a revisão.
 
 | Verificação fresca | Resultado |
 |---|---|
@@ -2459,13 +2459,13 @@ test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 stderr:
 
 ```text
-   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
-   Compiling clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
-   Compiling clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
-   Compiling clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
-   Compiling clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+   Compiling clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-input v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-input)
+   Compiling clipsync-clipboard v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+   Compiling clipsync-core v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-core)
+   Compiling clipsync-cli v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-cli)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 3.24s
-     Running tests/roteiro.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/roteiro-8bb0db80bf9a908a)
+     Running tests/roteiro.rs (~/.cache/clipsync-verdict/target/debug/deps/roteiro-8bb0db80bf9a908a)
 ```
 
 Comando: `cargo test --workspace`; duração 71.39 s; exit **0**.
@@ -2727,35 +2727,35 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 stderr:
 
 ```text
-   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
-   Compiling clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
-   Compiling clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
-   Compiling clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
-   Compiling clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+   Compiling clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-core v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-core)
+   Compiling clipsync-input v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-input)
+   Compiling clipsync-clipboard v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+   Compiling clipsync-cli v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-cli)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 11.54s
-     Running unittests src/main.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync-0967276870f4a82a)
-     Running tests/roteiro.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/roteiro-cd5a0289063c2691)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-c72612d8116dfe30)
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_clipboard-baed76060361b842)
-     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-c494c8daf81d2787)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-85906dbb9d313bfa)
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-832e8e82e2bb6e1a)
-     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-312579bf9b7d9ca5)
-     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-cc539867a6e3d6bf)
-     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-a9645200717e2296)
-     Running tests/profile.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/profile-d468434fb273c2cd)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-5d9c5b98048de6d8)
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_input-b172c508683df1d7)
-     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-d213bec33e27bc54)
-     Running tests/portal_loopback.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/portal_loopback-b8a062dca1ade761)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-8ffafc657e108765)
-     Running tests/units.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/units-8bfc9ad83c6aad0a)
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_proto-0c66604f71ca982e)
-     Running tests/authorize.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/authorize-e391bd3d15518a60)
-     Running tests/ids.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/ids-dc4409c0c4cc9425)
-     Running tests/memhub.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/memhub-08e08ec1e88b0447)
-     Running tests/redact.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/redact-b33032db01aafc8d)
-     Running tests/wire.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/wire-bc8f4451e647d888)
+     Running unittests src/main.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync-0967276870f4a82a)
+     Running tests/roteiro.rs (~/.cache/clipsync-verdict/target/debug/deps/roteiro-cd5a0289063c2691)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-c72612d8116dfe30)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_clipboard-baed76060361b842)
+     Running tests/module_mem.rs (~/.cache/clipsync-verdict/target/debug/deps/module_mem-c494c8daf81d2787)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-85906dbb9d313bfa)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_core-832e8e82e2bb6e1a)
+     Running tests/control.rs (~/.cache/clipsync-verdict/target/debug/deps/control-312579bf9b7d9ca5)
+     Running tests/diag.rs (~/.cache/clipsync-verdict/target/debug/deps/diag-cc539867a6e3d6bf)
+     Running tests/mesh.rs (~/.cache/clipsync-verdict/target/debug/deps/mesh-a9645200717e2296)
+     Running tests/profile.rs (~/.cache/clipsync-verdict/target/debug/deps/profile-d468434fb273c2cd)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-5d9c5b98048de6d8)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_input-b172c508683df1d7)
+     Running tests/module_mem.rs (~/.cache/clipsync-verdict/target/debug/deps/module_mem-d213bec33e27bc54)
+     Running tests/portal_loopback.rs (~/.cache/clipsync-verdict/target/debug/deps/portal_loopback-b8a062dca1ade761)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-8ffafc657e108765)
+     Running tests/units.rs (~/.cache/clipsync-verdict/target/debug/deps/units-8bfc9ad83c6aad0a)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_proto-0c66604f71ca982e)
+     Running tests/authorize.rs (~/.cache/clipsync-verdict/target/debug/deps/authorize-e391bd3d15518a60)
+     Running tests/ids.rs (~/.cache/clipsync-verdict/target/debug/deps/ids-dc4409c0c4cc9425)
+     Running tests/memhub.rs (~/.cache/clipsync-verdict/target/debug/deps/memhub-08e08ec1e88b0447)
+     Running tests/redact.rs (~/.cache/clipsync-verdict/target/debug/deps/redact-b33032db01aafc8d)
+     Running tests/wire.rs (~/.cache/clipsync-verdict/target/debug/deps/wire-bc8f4451e647d888)
    Doc-tests clipsync_clipboard
    Doc-tests clipsync_core
    Doc-tests clipsync_input
@@ -2767,11 +2767,11 @@ Comando: `cargo clippy --workspace --all-targets -- -D warnings`; duração 1.36
 stderr:
 
 ```text
-    Checking clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
-    Checking clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
-    Checking clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
-    Checking clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
-    Checking clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Checking clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
+    Checking clipsync-core v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-core)
+    Checking clipsync-input v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-input)
+    Checking clipsync-clipboard v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+    Checking clipsync-cli v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-cli)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.27s
 ```
 
@@ -2795,10 +2795,10 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; fini
 stderr:
 
 ```text
-   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
-   Compiling clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
+   Compiling clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-core v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-core)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 1.52s
-     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
+     Running tests/mesh.rs (~/.cache/clipsync-verdict/target/debug/deps/mesh-669d3bb2d26a7f6c)
 RTT fluxo 1 frame: p50 556.598µs p95 703.969µs · datagrama 4 eventos: p50 258.39µs p95 452.347µs (1ª tentativa 300 de 300, reenvios 0)
 ```
 
@@ -2812,11 +2812,11 @@ Hashes relevantes:
 907ad512ba7c0a719d52064ddddfedcce2dbe6d11f5cdd824a37879dc778afd9  Cargo.lock
 ```
 
-Evidência completa: `/home/kappxs/.cache/clipsync-verdict/argus-796e46c-bf8p000u` (meta/results/before/after.json). Nenhum fonte foi editado pelo Argus e nenhum comando git foi executado.
+Evidência completa: `~/.cache/clipsync-verdict/argus-796e46c-bf8p000u` (meta/results/before/after.json). Nenhum fonte foi editado pelo Argus e nenhum comando git foi executado.
 
 ### Gates finais do MVP · c1ed65d · Passa
 
-Executado por **Argus** de **2026-10-27T13:08:12.829380-03:00** a **2026-10-27T13:11:25.501762-03:00**, no export informado pelo Maestro como **c1ed65d**: `/home/kappxs/.cache/clipsync-verdict/src`. Ambiente: `source ~/.cargo/env`; `CARGO_TARGET_DIR=/home/kappxs/.cache/clipsync-verdict/target`; toolchain **1.99.1-x86_64-unknown-linux-gnu**, rustc 1.99.1 (58cf8f9c3), cargo 1.99.1 (5f94df478).
+Executado por **Argus** de **2026-10-27T13:08:12.829380-03:00** a **2026-10-27T13:11:25.501762-03:00**, no export informado pelo Maestro como **c1ed65d**: `~/.cache/clipsync-verdict/src`. Ambiente: `source ~/.cargo/env`; `CARGO_TARGET_DIR=~/.cache/clipsync-verdict/target`; toolchain **1.99.1-x86_64-unknown-linux-gnu**, rustc 1.99.1 (58cf8f9c3), cargo 1.99.1 (5f94df478).
 
 **Todos os cinco gates solicitados saíram 0.** Os hashes de todos os arquivos do export são idênticos antes/depois, incluindo Cargo.lock. Não houve falha de espaço/cota.
 
@@ -2830,7 +2830,7 @@ Executado por **Argus** de **2026-10-27T13:08:12.829380-03:00** a **2026-10-27T1
 
 Os novos testes de nomes hostis/controles/bidi, socket privado e pausa quando a persistência falha também aparecem aprovados na saída do workspace. Este bloco registra os gates finais; não substitui o relatório da auditoria de segurança.
 
-**Artefato release:** `/home/kappxs/.cache/clipsync-verdict/target/release/clipsync` · **16.396.096 bytes**.
+**Artefato release:** `~/.cache/clipsync-verdict/target/release/clipsync` · **16.396.096 bytes**.
 
 ```text
 SHA-256 0670fd6360edeca8ac95ee7999cdbacc71f787a55c22631885a7fbad91841bf1
@@ -3109,35 +3109,35 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 stderr:
 
 ```text
-   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
-   Compiling clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
-   Compiling clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
-   Compiling clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
-   Compiling clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+   Compiling clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-core v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-core)
+   Compiling clipsync-input v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-input)
+   Compiling clipsync-clipboard v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+   Compiling clipsync-cli v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-cli)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 12.64s
-     Running unittests src/main.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync-0967276870f4a82a)
-     Running tests/roteiro.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/roteiro-cd5a0289063c2691)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-c72612d8116dfe30)
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_clipboard-baed76060361b842)
-     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-c494c8daf81d2787)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-85906dbb9d313bfa)
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_core-e47edfcf9db606a7)
-     Running tests/control.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/control-be77a47c4b2e6213)
-     Running tests/diag.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/diag-5be713f23f06ba4b)
-     Running tests/mesh.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/mesh-74da5007e3e212f2)
-     Running tests/profile.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/profile-49bad18a8c67f2a8)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-fddeda6a0139483a)
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_input-b172c508683df1d7)
-     Running tests/module_mem.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/module_mem-d213bec33e27bc54)
-     Running tests/portal_loopback.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/portal_loopback-b8a062dca1ade761)
-     Running tests/smoke.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/smoke-8ffafc657e108765)
-     Running tests/units.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/units-8bfc9ad83c6aad0a)
-     Running unittests src/lib.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/clipsync_proto-0c66604f71ca982e)
-     Running tests/authorize.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/authorize-e391bd3d15518a60)
-     Running tests/ids.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/ids-dc4409c0c4cc9425)
-     Running tests/memhub.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/memhub-08e08ec1e88b0447)
-     Running tests/redact.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/redact-b33032db01aafc8d)
-     Running tests/wire.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/wire-bc8f4451e647d888)
+     Running unittests src/main.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync-0967276870f4a82a)
+     Running tests/roteiro.rs (~/.cache/clipsync-verdict/target/debug/deps/roteiro-cd5a0289063c2691)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-c72612d8116dfe30)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_clipboard-baed76060361b842)
+     Running tests/module_mem.rs (~/.cache/clipsync-verdict/target/debug/deps/module_mem-c494c8daf81d2787)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-85906dbb9d313bfa)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_core-e47edfcf9db606a7)
+     Running tests/control.rs (~/.cache/clipsync-verdict/target/debug/deps/control-be77a47c4b2e6213)
+     Running tests/diag.rs (~/.cache/clipsync-verdict/target/debug/deps/diag-5be713f23f06ba4b)
+     Running tests/mesh.rs (~/.cache/clipsync-verdict/target/debug/deps/mesh-74da5007e3e212f2)
+     Running tests/profile.rs (~/.cache/clipsync-verdict/target/debug/deps/profile-49bad18a8c67f2a8)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-fddeda6a0139483a)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_input-b172c508683df1d7)
+     Running tests/module_mem.rs (~/.cache/clipsync-verdict/target/debug/deps/module_mem-d213bec33e27bc54)
+     Running tests/portal_loopback.rs (~/.cache/clipsync-verdict/target/debug/deps/portal_loopback-b8a062dca1ade761)
+     Running tests/smoke.rs (~/.cache/clipsync-verdict/target/debug/deps/smoke-8ffafc657e108765)
+     Running tests/units.rs (~/.cache/clipsync-verdict/target/debug/deps/units-8bfc9ad83c6aad0a)
+     Running unittests src/lib.rs (~/.cache/clipsync-verdict/target/debug/deps/clipsync_proto-0c66604f71ca982e)
+     Running tests/authorize.rs (~/.cache/clipsync-verdict/target/debug/deps/authorize-e391bd3d15518a60)
+     Running tests/ids.rs (~/.cache/clipsync-verdict/target/debug/deps/ids-dc4409c0c4cc9425)
+     Running tests/memhub.rs (~/.cache/clipsync-verdict/target/debug/deps/memhub-08e08ec1e88b0447)
+     Running tests/redact.rs (~/.cache/clipsync-verdict/target/debug/deps/redact-b33032db01aafc8d)
+     Running tests/wire.rs (~/.cache/clipsync-verdict/target/debug/deps/wire-bc8f4451e647d888)
    Doc-tests clipsync_clipboard
    Doc-tests clipsync_core
    Doc-tests clipsync_input
@@ -3149,11 +3149,11 @@ Comando: `cargo clippy --workspace --all-targets -- -D warnings`; início `2026-
 stderr:
 
 ```text
-    Checking clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
-    Checking clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
-    Checking clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
-    Checking clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
-    Checking clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Checking clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
+    Checking clipsync-core v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-core)
+    Checking clipsync-input v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-input)
+    Checking clipsync-clipboard v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+    Checking clipsync-cli v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-cli)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.13s
 ```
 
@@ -3296,7 +3296,7 @@ stderr:
    Compiling zvariant_derive v5.15.1
    Compiling regex-automata v0.4.18
    Compiling zvariant v5.15.1
-   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
    Compiling lazy_static v1.5.1
    Compiling percent-encoding v2.3.2
    Compiling zbus_names v4.3.5
@@ -3314,12 +3314,12 @@ stderr:
    Compiling thread_local v1.1.10
    Compiling nu-ansi-term v0.50.3
    Compiling tracing-subscriber v0.3.23
-   Compiling clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+   Compiling clipsync-clipboard v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
    Compiling quinn-proto v0.11.19
    Compiling ashpd v0.13.13
-   Compiling clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
-   Compiling clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
-   Compiling clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+   Compiling clipsync-core v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-core)
+   Compiling clipsync-input v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-input)
+   Compiling clipsync-cli v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-cli)
     Finished `release` profile [optimized] target(s) in 1m 08s
 ```
 
@@ -3346,13 +3346,13 @@ test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 stderr:
 
 ```text
-   Compiling clipsync-proto v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-proto)
-   Compiling clipsync-core v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-core)
-   Compiling clipsync-input v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-input)
-   Compiling clipsync-clipboard v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
-   Compiling clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+   Compiling clipsync-proto v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-proto)
+   Compiling clipsync-core v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-core)
+   Compiling clipsync-input v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-input)
+   Compiling clipsync-clipboard v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-clipboard)
+   Compiling clipsync-cli v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-cli)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 5.26s
-     Running tests/roteiro.rs (/home/kappxs/.cache/clipsync-verdict/target/debug/deps/roteiro-8bb0db80bf9a908a)
+     Running tests/roteiro.rs (~/.cache/clipsync-verdict/target/debug/deps/roteiro-8bb0db80bf9a908a)
 ```
 
 Hashes da base revisada:
@@ -3369,11 +3369,11 @@ efb77392e4f269ddbf8c160439e8362cea1ac073a93b97b5454b1a1e79d85143  crates/clipsyn
 9e19030ee97cbadb75d624a60c23597f8eb554cd65cf22fd3d832ec8627bb717  crates/clipsync-proto/src/wire.rs
 ```
 
-Evidência completa: `/home/kappxs/.cache/clipsync-verdict/argus-c1ed65d-final-68hp_drk` — meta.json, results.json (stdout/stderr/código/duração de cada comando), before.json, after.json, release-binary.json e toolchain.txt.
+Evidência completa: `~/.cache/clipsync-verdict/argus-c1ed65d-final-68hp_drk` — meta.json, results.json (stdout/stderr/código/duração de cada comando), before.json, after.json, release-binary.json e toolchain.txt.
 
 ### S5 · Windows e release · b66df03 · Falha
 
-Revisão de Argus em 2026-10-27, iniciada às 16:39:50 -03:00. Contrato v1.12, §9 S5 e §11. Base: `b66df034996e20e4d1ce2a369a8dcb629d098c41`, HEAD no início da revisão, exportado com `git archive` para `/home/kappxs/.cache/clipsync-verdict/src`. O checkout estava limpo na exportação; avançou durante a revisão. Os **103 arquivos do export permaneceram idênticos** entre início e fim. Nenhuma fonte foi editada.
+Revisão de Argus em 2026-10-27, iniciada às 16:39:50 -03:00. Contrato v1.12, §9 S5 e §11. Base: `b66df034996e20e4d1ce2a369a8dcb629d098c41`, HEAD no início da revisão, exportado com `git archive` para `~/.cache/clipsync-verdict/src`. O checkout estava limpo na exportação; avançou durante a revisão. Os **103 arquivos do export permaneceram idênticos** entre início e fim. Nenhuma fonte foi editada.
 
 **Resultado histórico:** gates automáticos verdes, mas três divergências de contrato encontradas nesta base, descritas abaixo. O Maestro informou correções e uma decisão de contrato durante a consolidação; o adendo de 707c780 registra a reavaliação. Não estender este resultado aos commits posteriores.
 
@@ -3389,7 +3389,7 @@ $ cargo fmt --all -- --check
 
 ```text
 $ cargo clippy --workspace --all-targets --locked -- -D warnings
-    Checking clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Checking clipsync-cli v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-cli)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.51s
 [exit 0; 2.568 s]
 ```
@@ -3429,29 +3429,29 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ```
 
 ```text
-$ CC_x86_64_pc_windows_gnu=/tmp/claude-1000/-home-kappxs-Documentos-ANTIGOS-clipsync--maestri-roles-83bcaab5-84f6-0d02-2adf-b22d1f6ccdd4/a5cf313a-cd0b-4663-9fe4-e4e809ac819a/scratchpad/wincc/cc AR_x86_64_pc_windows_gnu=/usr/bin/ar cargo check --workspace --locked --target x86_64-pc-windows-gnu
-    Checking clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+$ CC_x86_64_pc_windows_gnu=/tmp/scratchpad/wincc/cc AR_x86_64_pc_windows_gnu=/usr/bin/ar cargo check --workspace --locked --target x86_64-pc-windows-gnu
+    Checking clipsync-cli v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-cli)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.56s
 [exit 0; 10.608 s]
 ```
 
 ```text
-$ CC_x86_64_pc_windows_gnu=/tmp/claude-1000/-home-kappxs-Documentos-ANTIGOS-clipsync--maestri-roles-83bcaab5-84f6-0d02-2adf-b22d1f6ccdd4/a5cf313a-cd0b-4663-9fe4-e4e809ac819a/scratchpad/wincc/cc AR_x86_64_pc_windows_gnu=/usr/bin/ar cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
-    Checking clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+$ CC_x86_64_pc_windows_gnu=/tmp/scratchpad/wincc/cc AR_x86_64_pc_windows_gnu=/usr/bin/ar cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
+    Checking clipsync-cli v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-cli)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.46s
 [exit 0; 2.516 s]
 ```
 
 ```text
 $ cargo build --release -p clipsync-cli --locked
-   Compiling clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+   Compiling clipsync-cli v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-cli)
     Finished `release` profile [optimized] target(s) in 1m 43s
 [exit 0; 103.499 s]
 ```
 
 O stub de CC fornecido apenas cria arquivos de objeto vazios. Check/clippy Windows verificam Rust e cfg, sem linkar, executar testes Windows ou validar a criptografia C do ring. Não produzem um `.exe` utilizável.
 
-Binário Linux em `/home/kappxs/.cache/clipsync-verdict/target/release/clipsync`: **8.754.744 bytes (8,35 MiB)**. `file` identificou ELF x86-64 PIE, dinamicamente ligado, **stripped**; `--version` imprimiu `clipsync 0.1.0`. SHA-256: `24711e20543df5b37e1d0bcce2911ad33a6ac60186705f1d24b41499b9c562b2`. Perfil lido do Cargo.toml: `lto = true`, `codegen-units = 1`, `strip = true`, `opt-level = 3`. Este build local em Ubuntu 26.04 não prova a glibc mínima do artefato que será gerado em ubuntu-24.04.
+Binário Linux em `~/.cache/clipsync-verdict/target/release/clipsync`: **8.754.744 bytes (8,35 MiB)**. `file` identificou ELF x86-64 PIE, dinamicamente ligado, **stripped**; `--version` imprimiu `clipsync 0.1.0`. SHA-256: `24711e20543df5b37e1d0bcce2911ad33a6ac60186705f1d24b41499b9c562b2`. Perfil lido do Cargo.toml: `lto = true`, `codegen-units = 1`, `strip = true`, `opt-level = 3`. Este build local em Ubuntu 26.04 não prova a glibc mínima do artefato que será gerado em ubuntu-24.04.
 
 #### 5 · grafos por plataforma
 
@@ -3682,7 +3682,7 @@ Após o roteiro, mover os perfis por `rename` entre tmpfs e home retornou EXDEV 
 
 Limites: execução e linkedição Windows reais, testes de named pipe/mesh no runner Windows, artefatos publicados e verificação dos SHA256SUMS baixados permanecem sem prova nesta revisão local. O `.exe` real depende do CI e depois da prova M em máquina Windows. Os passos gráficos locais seguem pendentes.
 
-Evidência integral local: `/home/kappxs/.cache/clipsync-verdict/argus-s5-3hmvsylg` (`gates.json`, `trees.json`, `static.json`, `binary.json`, `roteiro-release.json`, reproduções e hashes before/after). SHA-256 do archive: `093886f0e0d2e4a1f75d9686eb072b8ccb91e8b22f23290e56c482c4c703bde2`.
+Evidência integral local: `~/.cache/clipsync-verdict/argus-s5-3hmvsylg` (`gates.json`, `trees.json`, `static.json`, `binary.json`, `roteiro-release.json`, reproduções e hashes before/after). SHA-256 do archive: `093886f0e0d2e4a1f75d9686eb072b8ccb91e8b22f23290e56c482c4c703bde2`.
 
 ### S5 · adendo · 707c780 · Passa
 
@@ -3698,14 +3698,14 @@ $ cargo fmt --all -- --check
 
 ```text
 $ cargo clippy --workspace --all-targets --locked -- -D warnings
-    Checking clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+    Checking clipsync-cli v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-cli)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.87s
 [exit 0; 2.936 s]
 ```
 
 ```text
-$ CC_x86_64_pc_windows_gnu=/tmp/claude-1000/-home-kappxs-Documentos-ANTIGOS-clipsync--maestri-roles-83bcaab5-84f6-0d02-2adf-b22d1f6ccdd4/a5cf313a-cd0b-4663-9fe4-e4e809ac819a/scratchpad/wincc/cc AR_x86_64_pc_windows_gnu=/usr/bin/ar cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
-    Checking clipsync-cli v0.1.0 (/home/kappxs/.cache/clipsync-verdict/src/crates/clipsync-cli)
+$ CC_x86_64_pc_windows_gnu=/tmp/scratchpad/wincc/cc AR_x86_64_pc_windows_gnu=/usr/bin/ar cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
+    Checking clipsync-cli v0.1.0 (~/.cache/clipsync-verdict/src/crates/clipsync-cli)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.30s
 [exit 0; 2.370 s]
 ```
@@ -3754,19 +3754,19 @@ crates/clipsync-cli/src/init.rs:116:                (3, msg::INIT_NO_USABLE_MODU
 
 O release de **8.754.744 bytes** pertence a **b66df03**, não a um rebuild de 707c780. `.exe`, linkedição/CRT real, named pipe e testes Windows dependem do CI; prova M em máquina Windows e verificação dos artefatos publicados seguem pendentes. Nenhum push/tag/release foi feito por Argus.
 
-Evidência integral: `/home/kappxs/.cache/clipsync-verdict/argus-s5-adendo-p2qa07qp` (`meta.json`, `gates.json`, `reads.json`, hashes before/after). SHA-256 do archive: `8cd4518ad46272f92250ac4b070cbe0880e378ac75c8b073e058c19fee644119`.
+Evidência integral: `~/.cache/clipsync-verdict/argus-s5-adendo-p2qa07qp` (`meta.json`, `gates.json`, `reads.json`, hashes before/after). SHA-256 do archive: `8cd4518ad46272f92250ac4b070cbe0880e378ac75c8b073e058c19fee644119`.
 
 ### S6 · parcial · 5a55688
 
 **Passa no escopo solicitado:** §12.9 item 1 (a–g), item 4 (clipboard, autostart e clippy do app no CI informado) e somente os greps do item 5. Verificado por Argus em **2026-10-28**, com contrato v1.15. **Não encerra S6:** telas, temas, fontes, rede no portal, cenários visuais e app real (item 5 completo e item 6) não foram avaliados nesta rodada; itens 2, 3 e 7 também estão fora deste veredito.
 
-Base local: `5a55688d19c9c55f93a87daf1c00caee819327f4`. O checkout compartilhado tinha alterações de outros agentes; os testes e greps abaixo rodaram no conteúdo de `git archive 5a55688`, exportado para `/home/kappxs/.cache/argus-s6-5a55688-tufou2ei/src`. Os **205 arquivos** do export, inclusive `Cargo.lock`, mantiveram os mesmos SHA-256 antes e depois. Archive SHA-256: `af2e1fcad93afa409c5534fba54bcd56f782807ca5df3057bc03880283dd6206`. Ambiente: Linux x86_64, rustc/cargo **1.99.1**; cache Cargo reaproveitado, sem alegação de build frio.
+Base local: `5a55688d19c9c55f93a87daf1c00caee819327f4`. O checkout compartilhado tinha alterações de outros agentes; os testes e greps abaixo rodaram no conteúdo de `git archive 5a55688`, exportado para `~/.cache/argus-s6-5a55688-tufou2ei/src`. Os **205 arquivos** do export, inclusive `Cargo.lock`, mantiveram os mesmos SHA-256 antes e depois. Archive SHA-256: `af2e1fcad93afa409c5534fba54bcd56f782807ca5df3057bc03880283dd6206`. Ambiente: Linux x86_64, rustc/cargo **1.99.1**; cache Cargo reaproveitado, sem alegação de build frio.
 
 Preparação aplicada antes dos quatro comandos, na raiz do export:
 
 ```sh
 export PATH=$HOME/.cargo/bin:$PATH
-export CARGO_TARGET_DIR=/home/kappxs/.cache/clipsync-verdict/target
+export CARGO_TARGET_DIR=~/.cache/clipsync-verdict/target
 ```
 
 Nenhum servidor foi iniciado, nenhum código-fonte foi editado e nenhum comando Cargo com `--workspace` foi executado localmente.
@@ -3831,17 +3831,17 @@ Comandos executados na raiz do export de 5a55688; exit **1** de grep/rg abaixo s
 
 As quatro tags são `componentes.html:10` (`js/tema-inicial.js`), `componentes.html:19` (`js/galeria.js`), `index.html:11` (`js/tema-inicial.js`) e `index.html:72` (`js/app.js`). Não há aprovação visual implícita nesses greps.
 
-Evidência integral local: `/home/kappxs/.cache/argus-s6-5a55688-tufou2ei/`, com `logs/{proto,core,clipboard,autostart,ci}.log`, `logs/ci.json`, `results.json`, `greps.json`, `meta.json` e inventários SHA-256 `before.json`/`after.json`. **121 testes aprovados, zero falhos, zero ignorados; nenhum achado bloqueante no recorte solicitado.**
+Evidência integral local: `~/.cache/argus-s6-5a55688-tufou2ei/`, com `logs/{proto,core,clipboard,autostart,ci}.log`, `logs/ci.json`, `results.json`, `greps.json`, `meta.json` e inventários SHA-256 `before.json`/`after.json`. **121 testes aprovados, zero falhos, zero ignorados; nenhum achado bloqueante no recorte solicitado.**
 
 ### S6 · critérios 2 a 4 · 415caf2
 
 **Critério 2: Passa. Critério 3: Passa nos testes automáticos, mas não passa integralmente enquanto faltar a prova M com `layout.toml`. Critério 4: Passa nos testes locais e no último CI verde disponível, identificado abaixo; o CI de 415caf2 ainda estava em execução na consulta.** Critérios 5 (telas) e 6 (app real) ficam fora desta revisão. O critério 1 permanece na revisão anterior, commit c74f1c0.
 
-Argus, **2026-10-28**, contrato **v1.17**, §12.9. Base exata: `415caf2d8fa235fffc669ce7b9552f24a7ab413a`, via `git archive 415caf2`, em `/home/kappxs/.cache/argus-s6-415caf2-wzp4if22/src`. Os **269 arquivos** do export, inclusive `Cargo.lock`, mantiveram os SHA-256 antes/depois; alterações concorrentes da main não entraram na revisão. SHA-256 do archive: `16b1b15b5896e99be5090cdcf65a69e666fa9080303c37ff742fdd922da4eca1`. Ambiente: Linux x86_64, rustc/cargo **1.99.1**, cache Cargo reaproveitado. Preparação aplicada na raiz do export:
+Argus, **2026-10-28**, contrato **v1.17**, §12.9. Base exata: `415caf2d8fa235fffc669ce7b9552f24a7ab413a`, via `git archive 415caf2`, em `~/.cache/argus-s6-415caf2-wzp4if22/src`. Os **269 arquivos** do export, inclusive `Cargo.lock`, mantiveram os SHA-256 antes/depois; alterações concorrentes da main não entraram na revisão. SHA-256 do archive: `16b1b15b5896e99be5090cdcf65a69e666fa9080303c37ff742fdd922da4eca1`. Ambiente: Linux x86_64, rustc/cargo **1.99.1**, cache Cargo reaproveitado. Preparação aplicada na raiz do export:
 
 ```sh
 export PATH=$HOME/.cargo/bin:$PATH
-export CARGO_TARGET_DIR=/home/kappxs/.cache/clipsync-verdict/target
+export CARGO_TARGET_DIR=~/.cache/clipsync-verdict/target
 ```
 
 Não houve comando Cargo local com `--workspace`, servidor iniciado ou edição de código-fonte. As suítes usam perfis temporários, agentes reais em `127.0.0.1` e adaptadores fake; testes específicos de recusa de controle usam `FakeAgent`. Leitura de `crates/clipsync-ui/tests/common/mod.rs` confirmou essas condições.
@@ -3930,7 +3930,7 @@ O ignorado `platform_adapter_round_trip` não foi usado como evidência de clipb
 
 O app foi incluído por `--workspace`, com os flags exigidos pelo critério. Esse resultado é histórico de **5a55688**; não foi extrapolado para as mudanças posteriores do app/UI em 415caf2.
 
-Evidência integral: `/home/kappxs/.cache/argus-s6-415caf2-wzp4if22/`, com `logs/ui-{1,2,3}.log`, `logs/layout-{1,2,3}.log`, `logs/autostart-{1,2,3}.log`, logs de input/clipboard/core-revoke/CI, `results.json`, `summary.json`, `core-revoke.json`, `meta.json` e inventários `before.json`/`after.json`.
+Evidência integral: `~/.cache/argus-s6-415caf2-wzp4if22/`, com `logs/ui-{1,2,3}.log`, `logs/layout-{1,2,3}.log`, `logs/autostart-{1,2,3}.log`, logs de input/clipboard/core-revoke/CI, `results.json`, `summary.json`, `core-revoke.json`, `meta.json` e inventários `before.json`/`after.json`.
 
 ## Findings
 
@@ -3972,10 +3972,10 @@ Achados são observações do estado/hash revisado; não constituem pedido para 
 #### Base e método
 
 - Lidos `docs/contrato.md`, `docs/telas.md`, os vereditos anteriores e as atribuições do `docs/workboard.md`. Conferidos `git status`, `git diff`, histórico da rodada visual e os arquivos de UI correspondentes. Não havia alteração rastreada sobre a HEAD solicitada; `CONTEXTO.md` já estava não rastreado e não foi tocado.
-- Inspeção visual individual dos **18 pares** em `docs/telas/comparacao/<tela>-<tema>.webp`, usando os PNG equivalentes em `/home/kappxs/.cache/clipsync-telas-ref/pares-final/`: app à esquerda, Figma à direita. São montagens reduzidas de duas vistas de 1280×800; o arquivo composto mede 1693×572, não 2560×800.
+- Inspeção visual individual dos **18 pares** em `docs/telas/comparacao/<tela>-<tema>.webp`, usando os PNG equivalentes em `~/.cache/clipsync-telas-ref/pares-final/`: app à esquerda, Figma à direita. São montagens reduzidas de duas vistas de 1280×800; o arquivo composto mede 1693×572, não 2560×800.
 - Portal próprio **Telas 1280 · Argus**, criado com `maestri portal create "http://127.0.0.1:5174/?cenario=padrao" "Telas 1280 · Argus" --size 1280x800`. O portal inicialmente informou 1280×792; aplicado `maestri portal resize "Telas 1280 · Argus" 1280 800` após as navegações. **Todas as 41 coletas finais de DOM registram `innerWidth=1280` e `innerHeight=800`.** As coletas preliminares a 792 px foram substituídas.
 - Servidor já existente em `127.0.0.1:5174`, sem iniciar outro processo de servidor. Os **43 recursos/URLs HTTP verificados** (42 recursos carregados pelo navegador mais o documento HTML) coincidem byte a byte com os respectivos arquivos de `e40849c`, incluindo o mock servido sobre `ui-dev/`.
-- Evidência bruta local: `/home/kappxs/.cache/argus-s6-e40849c/`. Cada coleta tem `.json` com texto, controles, retângulos, grades, rolagem, fontes e recursos, `.snapshot.txt` e `.logs.txt`. `static.json` registra os greps e os scripts; `served-head.json`, a correspondência HTTP/HEAD. `sweep.py`, `interactions.py` e `supplement.py` registram os comandos de portal usados. Nenhum arquivo de código-fonte foi alterado.
+- Evidência bruta local: `~/.cache/argus-s6-e40849c/`. Cada coleta tem `.json` com texto, controles, retângulos, grades, rolagem, fontes e recursos, `.snapshot.txt` e `.logs.txt`. `static.json` registra os greps e os scripts; `served-head.json`, a correspondência HTTP/HEAD. `sweep.py`, `interactions.py` e `supplement.py` registram os comandos de portal usados. Nenhum arquivo de código-fonte foi alterado.
 
 #### Comparação por tela em 1280×800
 

@@ -45,7 +45,7 @@ Igual à v2 §2, passos 4 a 7. Acréscimo: como o módulo Input sabe qual máqui
 
 ## 3. Premissas: medidas, a preencher e assumidas
 
-### Medidas em 2026-10-27 no Notebook (`kappxs-Aspire-A515-57`)
+### Medidas em 2026-10-27 no Notebook (`notebook-linux`)
 
 ```text
 SO:                  Ubuntu 26.04.1 LTS, GNOME Shell 50.1, Wayland, XWayland ativo (DISPLAY=:0), 1 monitor (eDP-1, escala 1)

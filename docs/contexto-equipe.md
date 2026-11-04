@@ -1,6 +1,10 @@
 # ClipSync: contexto comum dos andares
 
-## Estado vigente da fonte · S10 / candidata 0.5.0
+## Estado vigente · v0.5.0 publicada · 31/10/2026
+
+A v0.5.0 foi publicada a partir de `590c137` (CI e empacotamento aprovados no mesmo commit). Nenhum aceite físico foi fechado pela publicação; a lista única está em `docs/pendencias-v0.5.0.md`. Em 03/11/2026: o andar DOC (Maestro #4, Quill) é o único editor de `README.md`, `docs/instalar.md`, `docs/uso.md`, `docs/limitacoes.md`, `docs/desenvolvimento.md` e `docs/monitores-independentes.md`; o Maestro · scaffold fica com notas de release, changelog, pendências, contexto, `.gitignore`, interface e a preparação para repositório público. Não suba servidor: o simulador em 5174 é do Maestro.
+
+## S10 / candidata 0.5.0 (histórico, anterior à publicação)
 
 João autorizou concluir clareza e monitores independentes, e publicar somente após todos os gates. As duas funcionalidades estão implementadas e revisadas, incluindo prazo interativo de preparação e aviso de durabilidade no aceite/restauração. Integração local Rust sem app passou, com três testes gráficos ignorados; Node passou em 264/264. A revisão integrada de segurança não identificou novo impedimento; T4-SEG-01 permanece Minor aberto e diferido. DOC e evidência da API estão revisados. Os complementos de UX/Acess fecharam os recortes DOM e a recuperação explícita; isso não comprova Tauri ou uso físico. Nenhuma tag/release S10 foi publicada.
 
@@ -51,7 +55,7 @@ ClipSync compartilha teclado, mouse e área de transferência entre computadores
 
 ## Fonte de verdade
 
-Repositório central: `/home/kappxs/Documentos/ANTIGOS/clipsync`. Siga a ordem de leitura de `AGENTS.md`: `CONTEXTO.md` (topo) e `docs/workboard.md` para o estado atual, este arquivo como entrada comum e `docs/contrato.md` (§14 para S8) antes de alterar comportamento. A história está em `docs/handoff-codex.md`, que antecede a S8; a evidência mais recente prevalece. Consulte também `docs/verdicts.md` e `docs/seguranca.md`.
+Repositório central: `~/clipsync`. Siga a ordem de leitura de `AGENTS.md`: `CONTEXTO.md` (topo) e `docs/workboard.md` para o estado atual, este arquivo como entrada comum e `docs/contrato.md` (§14 para S8) antes de alterar comportamento. A história está em `docs/handoff-codex.md`, que antecede a S8; a evidência mais recente prevalece. Consulte também `docs/verdicts.md` e `docs/seguranca.md`.
 
 Este arquivo é o índice comum. Notas de cada andar devem apontar para esta fonte, em vez de manter cópias independentes de todo o contrato. Em checkout antigo, leia a fonte central antes de assumir que uma pendência ainda existe. Preserve alterações locais; atualização de branch, merge, land ou reset exigem o fluxo apropriado.
 

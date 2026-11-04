@@ -134,11 +134,11 @@ Captura de pacotes (`tshark`/`tcpdump`: não usado), Windows/macOS, spoof de end
 
 ## Apêndice A · como reproduzir
 
-Scratch fora do repositório: `/tmp/claude-1000/-home-kappxs-Documentos-ANTIGOS-clipsync--maestri-roles-8c9321a6-7070-9729-e695-64e2d83b7b0c/ea2f9fda-41f4-4311-87de-1e3f92651ef2/scratchpad/poc/` (crate `sentinel-poc`, só usa a API pública do core e do proto; `tests/s1_adversarial.rs`). Efêmero: se o diretório sumir, peça e eu converto em testes de regressão em `crates/clipsync-core/tests/` depois que as correções entrarem.
+Scratch fora do repositório: `/tmp/scratchpad/poc/` (crate `sentinel-poc`, só usa a API pública do core e do proto; `tests/s1_adversarial.rs`). Efêmero: se o diretório sumir, peça e eu converto em testes de regressão em `crates/clipsync-core/tests/` depois que as correções entrarem.
 
 ```
 source ~/.cargo/env
-cd /home/kappxs/Documentos/ANTIGOS/clipsync
+cd ~/clipsync
 CARGO_TARGET_DIR=$SP/target cargo build --locked --offline -p clipsync-cli      # binário da árvore atual
 cd $SP/poc
 SENTINEL_CLI=$SP/target/debug/clipsync CARGO_TARGET_DIR=$SP/target \
