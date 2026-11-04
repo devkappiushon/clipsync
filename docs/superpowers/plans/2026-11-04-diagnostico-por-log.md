@@ -400,3 +400,5 @@ Usar `#[tokio::test]` (current_thread) para o `DefaultGuard` valer nas tarefas d
 - T9-ter (commit `d4cd0bb`, Rivet): identidade também no inventário remoto; inferência de sessão não herda fechamento de outra tentativa. Em revisão pelo Argus. Falta só o `--help` em português.
 - `--help` do verificador em português (commit `c442380`, Rivet). Todas as tarefas do plano entregues em 04/11/2026; restam as re-revisões de Argus e Sentinel e o teste físico nas máquinas do usuário.
 - Re-revisão do Argus (commit `7ae747a`): BIS2-ARG-01 (erro terminal antes da trava também no loopback) e BIS2-ARG-02 (guarda de cancelamento criada antes da admissão; fila cheia conferida com `has_capacity` antes de construir a tarefa).
+- T10-ter (commit `5e27d84`, Rivet): cauda sem tokenização; texto livre sempre omitido; allowlist literal, `ts` estrito, uids hex, ids curtos redigidos (contrato §17.2 item 4, `152d2dd`). Em re-revisão por Sentinel e Argus.
+- Sentinel PASSA a F4 em `5e27d84` (recorte de segurança; SEG-01 encerrado, aceites anteriores mantidos). Falta o parecer do Argus sobre a fatia 4 e as re-revisões finais.
