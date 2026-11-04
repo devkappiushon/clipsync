@@ -52,6 +52,14 @@ pub struct Startup {
     control: control::ControlListener,
 }
 
+// Campos são descartados nesta ordem também em erro e cancelamento. O escritor
+// nunca pode sobreviver ao listener/reserva que lhe dá exclusividade no perfil.
+struct RunResources {
+    _log: Option<crate::logging::FileGuard>,
+    control: control::ControlListener,
+    operation: Option<ProfileOperationGuard>,
+}
+
 impl Startup {
     pub async fn reserve(profile: &Profile) -> Result<Self, CoreError> {
         let operation = profile.reserve_operation(false)?;
@@ -105,17 +113,27 @@ pub async fn run_reserved(
         profile: p,
         config: cfg,
         operation,
-        mut control,
+        control,
     } = startup;
     let identity = p.load_identity()?;
     let peers = p.load_peers()?;
     let state = p.load_state()?;
-    if let Err(error) = crate::logging::open_file(&p.dir, &cfg.device_name) {
-        static REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-        if !REPORTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            tracing::warn!(%error, "{}", msg::LOG_NOT_OPENED);
+    let log = match crate::logging::open_file(&p.dir, &cfg.device_name) {
+        Ok(guard) => Some(guard),
+        Err(error) => {
+            static REPORTED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if !REPORTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                tracing::warn!(%error, "{}", msg::LOG_NOT_OPENED);
+            }
+            None
         }
-    }
+    };
+    let mut resources = RunResources {
+        _log: log,
+        control,
+        operation: Some(operation),
+    };
 
     let mut channels = HashMap::new();
     let mut adapters = HashMap::new();
@@ -213,13 +231,12 @@ pub async fn run_reserved(
                 }
             }
         }
-        if !control.is_current() {
+        if !resources.control.is_current() {
             return Err(CoreError::AgentAlreadyRunning);
         }
         Ok(())
     }
     .await;
-    let mut operation = Some(operation);
     let served = match bootstrap {
         Ok(()) => {
             if ready.is_some_and(|ready| ready.send(Ok(())).is_err()) {
@@ -228,8 +245,11 @@ pub async fn run_reserved(
                     "inicialização cancelada antes da confirmação".into(),
                 ))
             } else {
-                drop(operation.take());
-                control.serve_reserved(handler.clone(), shutdown).await
+                drop(resources.operation.take());
+                resources
+                    .control
+                    .serve_reserved(handler.clone(), shutdown)
+                    .await
             }
         }
         Err(error) => {
@@ -268,8 +288,7 @@ pub async fn run_reserved(
     if let Some(addr) = bound {
         wait_port_released(addr).await;
     }
-    drop(control);
-    drop(operation);
+    drop(resources);
     served
 }
 

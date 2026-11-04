@@ -6,7 +6,7 @@ use std::fs::{DirBuilder, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::{EnvFilter, Layer, layer::Context, prelude::*};
@@ -39,19 +39,38 @@ pub fn init() {
         .try_init();
 }
 
-/// Abre o arquivo uma única vez, depois da reserva exclusiva do agente no perfil.
-pub fn open_file(profile_dir: &Path, device_name: &str) -> Result<(), CoreError> {
-    let mut guard = state()
-        .sink
-        .lock()
-        .map_err(|_| io::Error::other("mutex do log indisponível"))?;
-    if guard.is_none() {
-        *guard = Some(Sink::open(profile_dir, device_name, LIMIT)?);
-    }
-    Ok(())
+/// Mantém o escritor aberto enquanto a execução do agente possui o perfil.
+#[must_use = "a guarda deve permanecer viva até o encerramento do agente"]
+pub struct FileGuard {
+    _lease: Arc<FileLease>,
 }
 
-/// Quantidade limitada de descartes antes da abertura ou por linha excessiva.
+struct FileLease {
+    state: Weak<FileState>,
+}
+
+impl Drop for FileLease {
+    fn drop(&mut self) {
+        if let Some(state) = self.state.upgrade() {
+            let mut sink = state.sink.lock().unwrap_or_else(PoisonError::into_inner);
+            if sink
+                .as_ref()
+                .is_some_and(|s| std::ptr::eq(s.owner.as_ptr(), self))
+            {
+                // O mesmo mutex serializa a última escrita e o fechamento.
+                *sink = None;
+            }
+        }
+    }
+}
+
+/// Abre depois da reserva exclusiva. Chamadas repetidas no mesmo perfil compartilham
+/// a guarda; a última fecha o arquivo. Outro perfil ativo é recusado.
+pub fn open_file(profile_dir: &Path, device_name: &str) -> Result<FileGuard, CoreError> {
+    state().open(profile_dir, device_name)
+}
+
+/// Contador único limitado: antes de abrir, depois de fechar e por linha excessiva.
 pub fn preopen_dropped() -> u64 {
     state().dropped.load(Ordering::Relaxed)
 }
@@ -64,6 +83,28 @@ struct FileState {
 }
 
 impl FileState {
+    fn open(self: &Arc<Self>, dir: &Path, host: &str) -> Result<FileGuard, CoreError> {
+        let mut guard = self
+            .sink
+            .lock()
+            .map_err(|_| io::Error::other("mutex do log indisponível"))?;
+        if let Some(sink) = guard.as_ref() {
+            if sink.path == log_path(dir)
+                && let Some(lease) = sink.owner.upgrade()
+            {
+                return Ok(FileGuard { _lease: lease });
+            }
+            return Err(io::Error::other("outro escritor de log ainda está ativo").into());
+        }
+        let mut sink = Sink::open(dir, host, LIMIT)?;
+        let lease = Arc::new(FileLease {
+            state: Arc::downgrade(self),
+        });
+        sink.owner = Arc::downgrade(&lease);
+        *guard = Some(sink);
+        Ok(FileGuard { _lease: lease })
+    }
+
     fn note_drop(&self) {
         let _ = self
             .dropped
@@ -136,6 +177,7 @@ impl FileAccess for Disk {
 }
 
 struct Sink {
+    owner: Weak<FileLease>,
     access: Box<dyn FileAccess>,
     file: File,
     path: PathBuf,
@@ -174,6 +216,7 @@ impl Sink {
             limit,
             rotation_warned: false,
             reopen_pending: false,
+            owner: Weak::new(),
             access: Box::new(Disk),
         })
     }
