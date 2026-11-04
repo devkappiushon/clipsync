@@ -11,17 +11,17 @@ const NO_ATTEMPT: &str = "nenhuma tentativa registrada: a origem nunca viu o cur
 
 #[derive(clap::Args)]
 pub(crate) struct Entrada {
-    #[arg(long)]
+    #[arg(long, help = "Arquivo JSONL de log da origem")]
     pub origem: PathBuf,
-    #[arg(long)]
+    #[arg(long, help = "Arquivo JSONL de log do destino (opcional)")]
     pub destino: Option<PathBuf>,
-    #[arg(long, conflicts_with = "ultima", value_parser = clap::value_parser!(u32).range(1..))]
+    #[arg(long, help = "Verifica a sessão indicada (id maior que zero)", conflicts_with = "ultima", value_parser = clap::value_parser!(u32).range(1..))]
     pub sessao: Option<u32>,
-    #[arg(long)]
+    #[arg(long, help = "Verifica a última tentativa registrada (padrão)")]
     pub ultima: bool,
-    #[arg(long, value_parser = validar_desde)]
+    #[arg(long, help = "Filtra desde RFC 3339 ou duração relativa ao fim do log, como 30m", value_parser = validar_desde)]
     pub desde: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Mostra passos e evidências em JSON")]
     pub json: bool,
 }
 
