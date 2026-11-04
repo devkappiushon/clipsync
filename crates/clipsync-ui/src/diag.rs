@@ -6,7 +6,7 @@
 //! `portal-tokens.toml` or clipboard content (the box is not read at all).
 
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader};
+use std::io::{Read, Seek, SeekFrom};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
@@ -545,8 +545,8 @@ fn redact(raw: &str, g: &Gathered) -> BundlePreview {
         needles.push((ip.to_string(), msg::REDACTED_IP.into(), RedactionKind::Ip));
     }
     needles.retain(|(s, _, _)| !s.is_empty());
-    // A cauda mantém o JSON original: aspas e barras dos mesmos identificadores
-    // conhecidos aparecem escapadas. Conserve também a forma usada no texto comum.
+    // O redator também aceita texto codificado em JSON, cujas aspas e barras
+    // aparecem escapadas. Conserve também a forma usada no texto comum.
     let escaped: Vec<_> = needles
         .iter()
         .filter_map(|(needle, with, kind)| {
@@ -601,38 +601,343 @@ fn take_preview(dir: &Path) -> Option<String> {
     Some(all.swap_remove(at).2)
 }
 
-/// Lê em fluxo e conserva somente a cauda, sem abrir perfil ou arquivo para escrita.
+const LOG_BYTES: usize = 256 * 1024;
+const LOG_LINE_BYTES: usize = 16 * 1024;
+const LOG_LINES: usize = 400;
+const LOG_HEADER: &str = "\n[log]\n";
+const LOG_TRUNCATED: &str = "[linha truncada: limite da cauda]";
+const LOG_UNREADABLE: &str = "[linha ilegível]";
+const LOG_SYMLINK: &str = "log não lido: link simbólico";
+static LOG_READ: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+type RedactionCounts = std::collections::BTreeMap<RedactionKind, usize>;
+
+/// Lê no máximo a janela final, sem percorrer o prefixo nem alocar uma linha sem teto.
 fn log_tail(profile_dir: &Path, max: usize) -> Vec<String> {
+    let max = max.min(LOG_LINES);
     if max == 0 {
         return Vec::new();
     }
     let path = clipsync_core::logging::log_path(profile_dir);
-    let Ok(file) = std::fs::File::open(path) else {
+    let Some(parent) = path.parent() else {
         return Vec::new();
     };
+    // Limite aceito (§17): as verificações recusam links presentes, mas não são
+    // atômicas com open. Uma troca local entre check/open ainda pode vencer a corrida.
+    for (component, directory) in [(parent, true), (path.as_path(), false)] {
+        let Ok(meta) = std::fs::symlink_metadata(component) else {
+            return Vec::new();
+        };
+        if meta.file_type().is_symlink() {
+            return vec![LOG_SYMLINK.into()];
+        }
+        if (directory && !meta.is_dir()) || (!directory && !meta.is_file()) {
+            return Vec::new();
+        }
+    }
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let Ok(meta) = file.metadata() else {
+        return Vec::new();
+    };
+    if !meta.is_file() {
+        return Vec::new();
+    }
+    let start = meta.len().saturating_sub(LOG_BYTES as u64);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return Vec::new();
+    }
+    let mut bytes = Vec::new();
+    // Também limita caso o escritor acrescente linhas durante a leitura.
+    if file
+        .take(meta.len() - start)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return Vec::new();
+    }
     let mut tail = VecDeque::new();
-    for line in BufReader::new(file).lines() {
-        let Ok(line) = line else { return Vec::new() };
+    let mut lines = bytes.split(|byte| *byte == b'\n').peekable();
+    let mut partial = start > 0;
+    while let Some(line) = lines.next() {
+        if line.is_empty() && lines.peek().is_none() {
+            break;
+        }
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let text = if partial || line.len() > LOG_LINE_BYTES {
+            LOG_TRUNCATED.into()
+        } else {
+            std::str::from_utf8(line)
+                .unwrap_or(LOG_UNREADABLE)
+                .to_owned()
+        };
+        partial = false;
         if tail.len() == max {
             tail.pop_front();
         }
-        tail.push_back(line);
+        tail.push_back(text);
     }
     tail.into_iter().collect()
 }
 
-pub(crate) async fn bundle_preview(ctx: &Ctx) -> Result<BundlePreview, UiError> {
-    let g = gather(ctx).await;
-    let mut raw = raw_text(&g);
-    let tail = log_tail(&ctx.profile.dir, 400);
-    if !tail.is_empty() {
-        raw.push_str("\n[log]\n");
-        for line in tail {
-            raw.push_str(&line);
-            raw.push('\n');
+fn private_token(token: &str) -> Option<(&'static str, Option<RedactionKind>)> {
+    // Caminhos absolutos de erro, inclusive depois de um rótulo (path=/home/...).
+    if token.contains('/') || token.contains('\\') {
+        return Some(("<caminho>", None));
+    }
+    let address = token.split_once(':').map_or(token, |(ip, port)| {
+        if !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()) {
+            ip
+        } else {
+            token
+        }
+    });
+    let ipv4 = address.bytes().filter(|byte| *byte == b'.').count() == 3
+        && address
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'.');
+    let ipv6 = token.bytes().filter(|byte| *byte == b':').count() >= 2
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() || b":.[]".contains(&byte));
+    (ipv4 || ipv6).then_some((msg::REDACTED_IP, Some(RedactionKind::Ip)))
+}
+
+fn redact_log_text(text: &str, counts: &mut RedactionCounts) -> String {
+    let delimiter = |ch: char| ch.is_whitespace() || ",\"'[]();=".contains(ch);
+    let mut output = String::with_capacity(text.len());
+    for part in text.split_inclusive(delimiter) {
+        let end = part.trim_end_matches(delimiter).len();
+        let token = &part[..end];
+        if let Some((marker, kind)) = private_token(token) {
+            output.push_str(marker);
+            if let Some(kind) = kind {
+                *counts.entry(kind).or_default() += 1;
+            }
+        } else {
+            output.push_str(token);
+        }
+        output.push_str(&part[end..]);
+    }
+    output
+}
+
+// §17.2 e desenho §4.6: campos extras não entram no pacote, mesmo se o produtor
+// antigo ou um arquivo substituído trouxer clipboard, tecla ou objeto arbitrário.
+const LOG_FIELDS: &[&str] = &[
+    "v",
+    "ts",
+    "nivel",
+    "host",
+    "alvo",
+    "evento",
+    "message",
+    "mensagem",
+    "id",
+    "peer",
+    "nome",
+    "pares",
+    "monitores",
+    "uids",
+    "revisao",
+    "rotas",
+    "barreiras",
+    "motivo",
+    "adaptador",
+    "attempt",
+    "origem",
+    "barreira",
+    "pos",
+    "session",
+    "rota",
+    "erro",
+    "totais",
+    "contagem",
+    "enviada",
+    "reutilizado",
+    "descartados",
+    "bytes",
+];
+
+fn redact_log_fields(
+    fields: serde_json::Map<String, serde_json::Value>,
+    allowed: &[&str],
+    counts: &mut RedactionCounts,
+) -> serde_json::Map<String, serde_json::Value> {
+    fields
+        .into_iter()
+        .filter_map(|(key, value)| {
+            if !allowed.contains(&key.as_str()) {
+                return None;
+            }
+            redact_log_value(&key, value, counts).map(|value| (key, value))
+        })
+        .collect()
+}
+
+fn redact_log_value(
+    key: &str,
+    value: serde_json::Value,
+    counts: &mut RedactionCounts,
+) -> Option<serde_json::Value> {
+    use serde_json::Value;
+    let identity = match key {
+        "host" => Some(("<dispositivo>", RedactionKind::DeviceName)),
+        "peer" | "id" => Some(("<id>", RedactionKind::PeerId)),
+        "nome" => Some(("<nome>", RedactionKind::PeerName)),
+        "pares" => Some(("<pares>", RedactionKind::PeerId)),
+        _ => None,
+    };
+    if let Some((marker, kind)) = identity {
+        *counts.entry(kind).or_default() += 1;
+        return Some(Value::String(marker.into()));
+    }
+    match value {
+        Value::Object(fields) => {
+            let allowed: &[&str] = match key {
+                "totais" => &[
+                    "enviados",
+                    "descartados",
+                    "recebidos",
+                    "perdidos",
+                    "fora_de_ordem",
+                ],
+                "pos" => &["x", "y"],
+                _ => return None,
+            };
+            Some(Value::Object(redact_log_fields(fields, allowed, counts)))
+        }
+        Value::Array(values) => {
+            let values = match key {
+                "barreiras" => values
+                    .into_iter()
+                    .filter_map(|value| {
+                        let Value::Object(fields) = value else {
+                            return None;
+                        };
+                        Some(Value::Object(redact_log_fields(
+                            fields,
+                            &["peer", "monitor", "borda", "trecho"],
+                            counts,
+                        )))
+                    })
+                    .collect(),
+                "uids" => values
+                    .into_iter()
+                    .filter_map(|value| match value {
+                        Value::String(text) => Some(Value::String(redact_log_text(&text, counts))),
+                        Value::Number(_) => Some(value),
+                        _ => None,
+                    })
+                    .collect(),
+                "trecho" => values.into_iter().filter(Value::is_number).collect(),
+                _ => return None,
+            };
+            Some(Value::Array(values))
+        }
+        Value::String(text) if !matches!(key, "totais" | "barreiras" | "uids" | "trecho") => {
+            Some(Value::String(redact_log_text(&text, counts)))
+        }
+        Value::String(_) => None,
+        other => Some(other),
+    }
+}
+
+fn redact_known_log_values(
+    value: &mut serde_json::Value,
+    g: &Gathered,
+    counts: &mut RedactionCounts,
+) {
+    use serde_json::Value;
+    match value {
+        Value::String(text) => {
+            let redacted = redact(text, g);
+            *text = redacted.text;
+            for redaction in redacted.redactions {
+                *counts.entry(redaction.kind).or_default() += redaction.count;
+            }
+        }
+        Value::Object(fields) => {
+            for value in fields.values_mut() {
+                redact_known_log_values(value, g, counts);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                redact_known_log_values(value, g, counts);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn redact_log_line(line: &str, g: &Gathered, counts: &mut RedactionCounts) -> String {
+    if [LOG_TRUNCATED, LOG_UNREADABLE, LOG_SYMLINK].contains(&line) {
+        return line.into();
+    }
+    let Ok(serde_json::Value::Object(fields)) = serde_json::from_str(line) else {
+        return LOG_UNREADABLE.into();
+    };
+    let mut value = serde_json::Value::Object(redact_log_fields(fields, LOG_FIELDS, counts));
+    // As agulhas atuais alcançam apenas valores: nome igual a "peer" não muda
+    // a chave do esquema nem transforma um campo conhecido em um campo extra.
+    redact_known_log_values(&mut value, g, counts);
+    serde_json::to_string(&value).unwrap_or_else(|_| LOG_UNREADABLE.into())
+}
+
+fn preview_with_log(g: &Gathered, profile_dir: &Path) -> BundlePreview {
+    let mut preview = redact(&raw_text(g), g);
+    let mut counts = RedactionCounts::new();
+    let mut lines = VecDeque::new();
+    let mut bytes = LOG_HEADER.len();
+    for raw in log_tail(profile_dir, LOG_LINES) {
+        let line = redact_log_line(&raw, g, &mut counts);
+        let line = if line.len() > LOG_LINE_BYTES {
+            LOG_TRUNCATED.into()
+        } else {
+            line
+        };
+        bytes += line.len() + 1;
+        lines.push_back(line);
+        while bytes > LOG_BYTES {
+            if let Some(line) = lines.pop_front() {
+                bytes -= line.len() + 1;
+            }
         }
     }
-    let preview = redact(&raw, &g);
+    if !lines.is_empty() {
+        preview.text.push_str(LOG_HEADER);
+        for line in lines {
+            preview.text.push_str(&line);
+            preview.text.push('\n');
+        }
+    }
+    for redaction in preview.redactions {
+        *counts.entry(redaction.kind).or_default() += redaction.count;
+    }
+    preview.redactions = counts
+        .into_iter()
+        .map(|(kind, count)| Redaction { kind, count })
+        .collect();
+    preview
+}
+
+pub(crate) async fn bundle_preview(ctx: &Ctx) -> Result<BundlePreview, UiError> {
+    let g = gather(ctx).await;
+    let dir = ctx.profile.dir.clone();
+    let permit = LOG_READ
+        .acquire()
+        .await
+        .map_err(|_| UiError::new(code::IO, "leitura do log indisponível"))?;
+    let preview = tokio::task::spawn_blocking(move || {
+        // A guarda fica na tarefa: cancelar o chamador não libera outra leitura
+        // enquanto esta ainda usa o arquivo e a janela limitada de memória.
+        let _permit = permit;
+        preview_with_log(&g, &dir)
+    })
+    .await
+    .map_err(|_| UiError::new(code::IO, "não foi possível preparar o pacote de suporte"))?;
     remember_preview(&ctx.profile.dir, &preview.text);
     Ok(preview)
 }
@@ -1111,5 +1416,186 @@ mod tests {
                     .any(|r| r.kind == RedactionKind::DeviceName && r.count == 1)
             );
         }
+    }
+    async fn ui_for_log_test(dir: &Path) -> crate::Ui {
+        crate::Ui::start(crate::UiOptions {
+            profile: Some(dir.join("p")),
+            poll: Duration::from_secs(600),
+            fake_adapters: true,
+            downloads_dir: Some(dir.join("downloads")),
+            autostart_dir: Some(dir.join("autostart")),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn cauda_redige_identidades_historicas_ips_caminhos_e_descarta_campos() {
+        let dir = tempfile::tempdir().unwrap();
+        let ui = ui_for_log_test(dir.path()).await;
+        let path = clipsync_core::logging::log_path(&ui.ctx.profile.dir);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let raw = serde_json::json!({
+            "v":1, "ts":"2026-11-04T14:00:00Z", "nivel":"info", "alvo":"clipsync_core", "evento":"agent.up",
+            "host":"host-historico", "id":"0123456789abcdef", "peer":"par-removido", "nome":"nome-\"historico\"",
+            "pares":["outro-par-removido"], "session":42,
+            "erro":"falhou /home/usuario-antigo/.local/token e C:\\Users\\usuario-win\\segredo em 203.0.113.9:47800 (2001:db8::abcd)",
+            "message":"conexão [2001:db8:abcd::1234]:47800, ::ffff:192.0.2.8",
+            "mensagem":"versão 0.5.0; falha de transporte",
+            "clipboard_text":"conteudo-proibido", "tecla":"tecla-proibida", "keycode":999,
+            "barreiras":[{"peer":"par-da-barreira", "monitor":7, "borda":"left", "trecho":[0.1,0.9], "clipboard_text":"aninhado-proibido"}],
+            "totais":{"enviados":2,"descartados":1,"keycode":998}
+        });
+        std::fs::write(
+            &path,
+            format!("{raw}\ntexto cru proibido\n{{JSON inválido\n"),
+        )
+        .unwrap();
+        let preview = bundle_preview(&ui.ctx).await.unwrap();
+        let log = preview.text.split("\n[log]\n").nth(1).unwrap();
+        let rows: Vec<_> = log.lines().collect();
+        let value: serde_json::Value = serde_json::from_str(rows[0]).unwrap();
+        assert!(
+            value.get("clipboard_text").is_none(),
+            "campo proibido passou"
+        );
+        assert!(value.get("tecla").is_none());
+        assert!(value.get("keycode").is_none());
+        assert!(value["barreiras"][0].get("clipboard_text").is_none());
+        assert!(value["totais"].get("keycode").is_none());
+        assert_eq!(value["session"], 42);
+        assert_eq!(value["totais"]["enviados"], 2);
+        assert_eq!(
+            value["barreiras"][0]["trecho"],
+            serde_json::json!([0.1, 0.9])
+        );
+        assert!(value["mensagem"].as_str().unwrap().contains("0.5.0"));
+        assert!(value["erro"].as_str().unwrap().contains("<caminho>"));
+        assert!(value["message"].as_str().unwrap().contains("<ip>"));
+        for private in [
+            "host-historico",
+            "0123456789abcdef",
+            "par-removido",
+            "historico",
+            "par-da-barreira",
+            "usuario-antigo",
+            "usuario-win",
+            "203.0.113.9",
+            "2001:db8::abcd",
+            "2001:db8:abcd::1234",
+            "192.0.2.8",
+            "conteudo-proibido",
+            "aninhado-proibido",
+            "texto cru proibido",
+        ] {
+            assert!(!log.contains(private), "vazou {private}");
+        }
+        assert_eq!(&rows[1..], &["[linha ilegível]", "[linha ilegível]"]);
+        let exported = bundle_export(&ui.ctx).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(exported.path).unwrap(),
+            preview.text
+        );
+        ui.shutdown().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cauda_recusa_links_no_arquivo_e_no_diretorio() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let ui = ui_for_log_test(dir.path()).await;
+        let path = clipsync_core::logging::log_path(&ui.ctx.profile.dir);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let external = dir.path().join("externo");
+        std::fs::create_dir(&external).unwrap();
+        let target = external.join("clipsync.jsonl");
+        std::fs::write(&target, "{\"evento\":\"externo-nao-ler\"}\n").unwrap();
+        symlink(&target, &path).unwrap();
+        let preview = bundle_preview(&ui.ctx).await.unwrap();
+        assert!(preview.text.contains("log não lido: link simbólico"));
+        assert!(!preview.text.contains("externo-nao-ler"));
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(path.parent().unwrap()).unwrap();
+        symlink(&external, path.parent().unwrap()).unwrap();
+        let preview = bundle_preview(&ui.ctx).await.unwrap();
+        assert!(preview.text.contains("log não lido: link simbólico"));
+        assert!(!preview.text.contains("externo-nao-ler"));
+        ui.shutdown().await;
+    }
+
+    #[test]
+    fn cauda_le_so_a_janela_final_e_limita_linhas_grandes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = clipsync_core::logging::log_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            format!(
+                "prefixo-fora-da-janela\n{}\nultimo\n",
+                "x".repeat(300 * 1024)
+            ),
+        )
+        .unwrap();
+        let tail = log_tail(dir.path(), 400);
+        assert!(
+            !tail
+                .iter()
+                .any(|line| line.contains("prefixo-fora-da-janela"))
+        );
+        assert!(tail.iter().any(|line| line.contains("linha truncada")));
+        assert_eq!(tail.last().unwrap(), "ultimo");
+        assert!(tail.iter().all(|line| line.len() <= 16 * 1024));
+        std::fs::write(&path, format!("{}\nultimo\n", "x".repeat(128 * 1024))).unwrap();
+        let tail = log_tail(dir.path(), 400);
+        assert!(tail[0].contains("linha truncada"));
+        assert!(tail.iter().all(|line| line.len() <= 16 * 1024));
+    }
+
+    #[tokio::test]
+    async fn cauda_limita_tamanho_da_secao_apos_redigir() {
+        let dir = tempfile::tempdir().unwrap();
+        let ui = ui_for_log_test(dir.path()).await;
+        let path = clipsync_core::logging::log_path(&ui.ctx.profile.dir);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // "::" é IPv6 pelo varredor conservador; o marcador cresce o texto.
+        let line = serde_json::json!({"evento":"legado", "mensagem":":: ".repeat(180)}).to_string();
+        std::fs::write(&path, (line + "\n").repeat(500)).unwrap();
+        let preview = bundle_preview(&ui.ctx).await.unwrap();
+        let log = preview.text.split("\n[log]\n").nth(1).unwrap();
+        assert!(log.len() + "\n[log]\n".len() <= 256 * 1024);
+        assert!(log.lines().count() <= 400);
+        assert!(log.contains("<ip>"));
+        ui.shutdown().await;
+    }
+    #[test]
+    fn cauda_redige_valores_sem_trocar_chaves_iguais_a_nomes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = clipsync_core::logging::log_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"evento":"agent.up","peer":"historico","mensagem":"peer"}"#,
+        )
+        .unwrap();
+        let g = Gathered {
+            diag: serde_json::from_value(serde_json::json!({"items":[],"network":{"listen":null,"addresses":[],"peers":[]},"blocks":[]})).unwrap(),
+            status: None, devices: vec![], device_name: Some("peer".into()),
+        };
+        let preview = preview_with_log(&g, dir.path());
+        let log = preview.text.split(LOG_HEADER).nth(1).unwrap();
+        let row: serde_json::Value = serde_json::from_str(log.trim()).unwrap();
+        assert!(
+            row.get("peer").is_some(),
+            "a redação do nome alterou a chave do esquema"
+        );
+        assert_eq!(row["mensagem"], msg::REDACTED_DEVICE);
+        assert!(
+            row.as_object()
+                .unwrap()
+                .keys()
+                .all(|key| LOG_FIELDS.contains(&key.as_str()))
+        );
     }
 }
