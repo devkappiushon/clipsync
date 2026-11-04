@@ -43,6 +43,10 @@ Uma linha por passo, na ordem em que a travessia acontece: `inventario_origem`, 
 - `[falhou]`: há um evento explícito de erro ou recusa, com o motivo. O primeiro `[falhou]` é a **quebra**.
 - `[sem dado]`: nenhum registro. Pode ser passo não alcançado ou log truncado; o verificador não adivinha. O primeiro `[sem dado]` antes de a cadeia completar é a **parada**.
 
+Dois casos de `[ok]` vêm com nota. `datagramas` e `retorno` dizem `confirmado nos dois lados`, `confirmado só na origem` ou `confirmado só no destino`: a prova de um lado basta, e a linha mostrada é desse lado. `inventario_destino` diz `não se aplica: entrada por layout legado (enter_span)` quando a sessão abriu pelo layout antigo, em que o destino não prepara inventário.
+
+Os relógios das duas máquinas raramente batem. Os eventos da sessão são casados por par, sessão e execução, com tolerância de 30 segundos entre as máquinas; uma diferença maior que essa deixa os passos do destino como `[sem dado]`. Acerte a hora das duas antes de coletar.
+
 Sem tentativa na janela, o comando mostra só os pré-requisitos e conclui "nenhuma tentativa registrada: a origem nunca viu o cursor na barreira". É exatamente o sintoma de um mouse que nunca sai da tela.
 
 Códigos de saída: `0` tudo `[ok]`, ou só pré-requisitos sem quebra; `1` quebra provada, ou tentativa que não completou; `2` erro de uso; `3` arquivo inexistente, ilegível ou de esquema mais novo.
@@ -60,6 +64,21 @@ parada: inventario_destino; sem registro: passo não alcançado ou log truncado
 ```
 
 Leitura: o PC preparou os próprios monitores e mandou o inventário, mas nunca recebeu o do notebook, então não montou rota nem barreira. O próximo passo é no notebook: **Preparar telas** no Layout, aceitar o diálogo do sistema e conferir se aparece `inventory.prepared` no log dele.
+
+### Exemplo: notebook desconectado
+
+Caso real de 04/11/2026, PC Windows como origem, antes de parear de novo:
+
+```
+[ok] inventario_origem | {"ts":"2026-11-04T17:30:01.148Z",...,"evento":"inventory.prepared","monitores":2,...}
+[sem dado] inventario_destino: arquivo do destino não informado; sem registro: passo não alcançado ou log truncado
+[ok] rotas | {...,"evento":"routes.built","rotas":1,"barreiras":1,...}
+[ok] captura | {...,"evento":"capture.ready","adaptador":"win-hooks",...}
+[falhou] tentativa: peer_offline | {"ts":"2026-11-04T17:30:07.887Z",...,"evento":"attempt.filtered","attempt":1,"motivo":"peer_offline"}
+primeiro ponto de quebra: tentativa
+```
+
+Leitura: o PC tinha rota e barreira e viu o cursor chegar à borda, mas o notebook não estava conectado naquele momento. A investigação é na conexão: `clipsync status` nas duas máquinas, e parear de novo se o endereço mudou. Depois do repareamento, o mesmo PC registrou seis sessões com `return`.
 
 ## Os eventos
 
