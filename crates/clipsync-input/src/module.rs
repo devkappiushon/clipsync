@@ -2320,6 +2320,11 @@ async fn drive(
         let (_, invalidated) = authority.refresh();
         if invalidated || authority.snapshot.paused || authority.snapshot.stopped {
             release_all = true;
+            close = if authority.snapshot.stopped {
+                "stop"
+            } else {
+                "pause"
+            };
             failure = Some(RejectReason::Paused.pt().to_owned());
             break;
         }
@@ -2331,7 +2336,16 @@ async fn drive(
                 .is_some_and(|s| !s.allows_capture())
         {
             release_all = true;
-            failure = Some(msg::SOURCE_SCREEN_LOCKED.to_owned());
+            match lifecycle.snapshot.as_ref().and_then(|s| s.terminal_error) {
+                Some(error) => {
+                    close = "error";
+                    failure = Some(msg::adapter_failed(error));
+                }
+                None => {
+                    close = "lock";
+                    failure = Some(msg::SOURCE_SCREEN_LOCKED.to_owned());
+                }
+            }
             break;
         }
         match ev {
