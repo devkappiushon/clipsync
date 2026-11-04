@@ -368,7 +368,11 @@ mod tests {
         assert_eq!(state["agent"], "stopped");
         assert_eq!(
             state["log_path"],
-            tmp.path().join("logs/clipsync.jsonl").display().to_string()
+            tmp.path()
+                .join("logs")
+                .join("clipsync.jsonl")
+                .display()
+                .to_string()
         );
         assert!(!tmp.path().join("logs").exists());
         Ok(())

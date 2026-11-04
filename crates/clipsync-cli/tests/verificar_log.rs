@@ -13,7 +13,11 @@ fn caminho_do_log_e_puro() -> Result<(), Box<dyn Error>> {
     assert!(output.status.success(), "{:?}", output);
     assert_eq!(
         String::from_utf8(output.stdout)?.trim(),
-        tmp.path().join("logs/clipsync.jsonl").display().to_string()
+        tmp.path()
+            .join("logs")
+            .join("clipsync.jsonl")
+            .display()
+            .to_string()
     );
     assert!(!tmp.path().join("logs").exists());
     Ok(())
@@ -43,7 +47,7 @@ fn status_parado_mostra_log_sem_abrir() -> Result<(), Box<dyn Error>> {
     assert_eq!(output.status.code(), Some(4));
     assert!(String::from_utf8(output.stdout)?.contains(&format!(
         "log: {}",
-        tmp.path().join("logs/clipsync.jsonl").display()
+        tmp.path().join("logs").join("clipsync.jsonl").display()
     )));
     assert!(!tmp.path().join("logs").exists());
     Ok(())
