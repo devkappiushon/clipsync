@@ -7,6 +7,10 @@ use std::{
 };
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
+// Relógios das duas máquinas podem divergir; os limites de cada execução no
+// próprio arquivo continuam estritos, assim como as identidades, peer e session.
+const TOLERANCIA_RELOGIOS: time::Duration = time::Duration::seconds(30);
+
 const NO_ATTEMPT: &str = "nenhuma tentativa registrada: a origem nunca viu o cursor na barreira";
 
 #[derive(clap::Args)]
@@ -442,12 +446,12 @@ fn remotos_da_sessao<'a>(
             s.sessao.is_some()
                 && r.numero("session") == s.sessao
                 && r.texto("peer") == Some(origem)
-                && r.ts >= start.ts
+                && r.ts - start.ts >= -TOLERANCIA_RELOGIOS
                 && s.fim.is_none_or(|end| {
                     if end.evento == "agent.up" {
-                        r.ts < end.ts
+                        r.ts - end.ts < TOLERANCIA_RELOGIOS
                     } else {
-                        r.ts <= end.ts
+                        r.ts - end.ts <= TOLERANCIA_RELOGIOS
                     }
                 })
         })
@@ -515,13 +519,15 @@ fn cadeia(
             missing_remote,
         ),
     };
-    let both = |nome, here, there| match (ultimo(local, &[here]), ultimo(remote, &[there])) {
+    let observado = |nome, here, there| match (ultimo(local, &[here]), ultimo(remote, &[there])) {
         (Some(r), Some(_)) => passo(nome, Estado::Ok, Some(r), Some("confirmado nos dois lados")),
-        _ => passo(
+        (Some(r), None) => passo(nome, Estado::Ok, Some(r), Some("confirmado só na origem")),
+        (None, Some(r)) => passo(nome, Estado::Ok, Some(r), Some("confirmado só no destino")),
+        (None, None) => passo(
             nome,
             Estado::SemDado,
             None,
-            Some("evento não registrado nos dois lados"),
+            Some("evento ausente nos dois lados"),
         ),
     };
     let finish = match closed {
@@ -558,13 +564,13 @@ fn cadeia(
                 Some(r),
                 r.texto("erro").or(Some("falha ao enviar retorno")),
             ),
-            None => both("retorno", "return.received", "return.sent"),
+            None => observado("retorno", "return.received", "return.sent"),
         };
     let mut steps = vec![
         session,
         entry,
         emulation,
-        both("datagramas", "datagram.first", "datagram.first"),
+        observado("datagramas", "datagram.first", "datagram.first"),
         retorno,
         finish,
     ];
@@ -642,32 +648,49 @@ pub(crate) fn executar(e: &Entrada) -> Result<Saida, FalhaVerificar> {
     let remote_prepared = remote_identified
         .then(|| ultimo(&remote, &["inventory.prepared"]))
         .flatten();
-    let remote_inventory = match received {
-        Some(r) if r.evento == "inventory.missing" => passo(
-            "inventario_destino",
-            Estado::Falhou,
-            Some(r),
-            Some("a origem não recebeu o inventário do par"),
-        ),
-        _ if e.destino.is_none() => passo(
-            "inventario_destino",
-            Estado::SemDado,
-            None,
-            Some("arquivo do destino não informado"),
-        ),
-        _ if !remote_identified => passo(
-            "inventario_destino",
-            Estado::SemDado,
-            None,
-            Some("execução não comprovada: agent.up do destino não identifica o par selecionado"),
-        ),
-        None if remote_prepared.is_some() => passo(
-            "inventario_destino",
-            Estado::SemDado,
-            remote_prepared,
-            Some("preparado no destino, não recebido na origem"),
-        ),
-        _ => inventario("inventario_destino", remote_prepared),
+    let legacy_opening = opening.filter(|r| {
+        r.numero("session") == selection.sessao
+            && matches!(
+                r.texto("mensagem"),
+                Some("enter_span" | "enter_at" | "enter")
+            )
+    });
+    let remote_inventory = if let Some(r) = legacy_opening {
+        let motivo = format!(
+            "não se aplica: entrada por layout legado ({})",
+            r.texto("mensagem").unwrap_or_default()
+        );
+        passo("inventario_destino", Estado::Ok, Some(r), Some(&motivo))
+    } else {
+        match received {
+            Some(r) if r.evento == "inventory.missing" => passo(
+                "inventario_destino",
+                Estado::Falhou,
+                Some(r),
+                Some("a origem não recebeu o inventário do par"),
+            ),
+            _ if e.destino.is_none() => passo(
+                "inventario_destino",
+                Estado::SemDado,
+                None,
+                Some("arquivo do destino não informado"),
+            ),
+            _ if !remote_identified => passo(
+                "inventario_destino",
+                Estado::SemDado,
+                None,
+                Some(
+                    "execução não comprovada: agent.up do destino não identifica o par selecionado",
+                ),
+            ),
+            None if remote_prepared.is_some() => passo(
+                "inventario_destino",
+                Estado::SemDado,
+                remote_prepared,
+                Some("preparado no destino, não recebido na origem"),
+            ),
+            _ => inventario("inventario_destino", remote_prepared),
+        }
     };
     let routes = match ultimo(&prerequisites, &["routes.built", "routes.empty"]) {
         Some(r) if r.evento == "routes.empty" => passo(

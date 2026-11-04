@@ -295,10 +295,6 @@ fn remocoes_sao_lacunas_sem_inventar_quebra() -> Result<(), Box<dyn Error>> {
         (false, "session.sent", "sessao"),
         (true, "enter.received", "entrada_destino"),
         (true, "emulate.positioned", "emulacao"),
-        (false, "datagram.first", "datagramas"),
-        (true, "datagram.first", "datagramas"),
-        (false, "return.received", "retorno"),
-        (true, "return.sent", "retorno"),
         (false, "session.closed", "fechamento"),
     ] {
         let (mut source, mut dest) = chain(0, 101, 1);
@@ -779,7 +775,9 @@ fn troca_preserva_fechamento_anterior_sem_misturar_tentativas() -> Result<(), Bo
     let mut e = entrada(dir.path(), true);
     e.ultima = false;
     e.sessao = Some(101);
-    let (mut source, dest) = chain(0, 101, 1);
+    let (mut source, mut dest) = chain(0, 101, 1);
+    // A interrupção deste cenário não tem retorno comprovado em nenhum lado.
+    dest.retain(|r| r["evento"] != "return.sent");
     source.retain(|r| {
         !matches!(
             r["evento"].as_str(),
@@ -990,5 +988,164 @@ fn tentativa_sem_abertura_nao_herda_fechamento_da_anterior() -> Result<(), Box<d
         assert!(out.incompleta());
         assert_eq!(out.quebra.as_deref(), filtered.then_some("tentativa"));
     }
+    Ok(())
+}
+
+#[test]
+fn t11_relogios_toleram_trinta_segundos_sem_misturar_execucoes() -> Result<(), Box<dyn Error>> {
+    for (timestamp, expected) in [
+        ("2026-11-04T14:01:11.600Z", "confirmado nos dois lados"),
+        ("2026-11-04T14:01:40.000Z", "confirmado nos dois lados"),
+        ("2026-11-04T14:01:40.001Z", "confirmado só na origem"),
+    ] {
+        let (source, mut dest) = chain(1, 101, 1);
+        let returned = dest
+            .iter_mut()
+            .find(|r| r["evento"] == "return.sent")
+            .ok_or("retorno")?;
+        returned["ts"] = json!(timestamp);
+        let out = run_logs(&source, &dest)?;
+        assert!(out.passos[9].estado == Estado::Ok);
+        assert_eq!(
+            out.passos[9].motivo.as_deref(),
+            Some(expected),
+            "{timestamp}"
+        );
+        assert!(!out.incompleta());
+    }
+    // Destino atrasado: a janela admite até 30 s antes da tentativa, dentro da
+    // execução que o agent.up do próprio destino delimitou.
+    for (timestamp, accepted) in [
+        ("2026-11-04T14:00:31.000Z", true),
+        ("2026-11-04T14:00:30.999Z", false),
+    ] {
+        let (source, mut dest) = chain(1, 101, 1);
+        dest[0]["ts"] = json!("2026-11-04T14:00:00.000Z");
+        let entry = dest
+            .iter_mut()
+            .find(|r| r["evento"] == "enter.received")
+            .ok_or("entrada")?;
+        entry["ts"] = json!(timestamp);
+        let out = run_logs(&source, &dest)?;
+        assert_eq!(out.passos[6].estado == Estado::Ok, accepted, "{timestamp}");
+    }
+    // A tolerância de relógio não permite cruzar um agent.up no arquivo remoto.
+    let (source, mut dest) = chain(1, 101, 1);
+    dest.push(timed(event("agent.up", json!({"id":"aa"})), 1, 7));
+    let out = run_logs(&source, &dest)?;
+    assert_eq!(
+        out.passos[9].motivo.as_deref(),
+        Some("confirmado só na origem")
+    );
+    Ok(())
+}
+
+#[test]
+fn t11_retorno_e_datagramas_identificam_cada_lado_da_prova() -> Result<(), Box<dyn Error>> {
+    for (index, here, there) in [
+        (8, "datagram.first", "datagram.first"),
+        (9, "return.received", "return.sent"),
+    ] {
+        for (local, remote, reason) in [
+            (true, true, "confirmado nos dois lados"),
+            (true, false, "confirmado só na origem"),
+            (false, true, "confirmado só no destino"),
+            (false, false, "evento ausente nos dois lados"),
+        ] {
+            let (mut source, mut dest) = chain(0, 101, 1);
+            if !local {
+                source.retain(|r| r["evento"] != here);
+            }
+            if !remote {
+                dest.retain(|r| r["evento"] != there);
+            }
+            let out = run_logs(&source, &dest)?;
+            let step = &out.passos[index];
+            assert_eq!(
+                step.estado == Estado::Ok,
+                local || remote,
+                "{here}: {reason}"
+            );
+            assert!(
+                step.motivo
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with(reason))
+            );
+            if local || remote {
+                let proof: Value = serde_json::from_str(step.linha.as_deref().ok_or("prova")?)?;
+                assert_eq!(proof["evento"], if local { here } else { there });
+                assert!(out.json()["parada"].is_null());
+                assert!(!out.incompleta());
+            } else {
+                assert!(step.linha.is_none());
+                assert_eq!(out.json()["parada"], step.nome);
+                assert!(out.incompleta());
+            }
+            assert!(out.quebra.is_none());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn t11_inventario_remoto_nao_se_aplica_a_sessao_legada_selecionada() -> Result<(), Box<dyn Error>> {
+    for message in ["enter_span", "enter_at", "enter"] {
+        let (mut source, mut dest) = chain(0, 101, 1);
+        source.retain(|r| r["evento"] != "inventory.received");
+        source.push(event("inventory.missing", json!({"peer":"aa"})));
+        source
+            .iter_mut()
+            .find(|r| r["evento"] == "session.open")
+            .ok_or("open")?["mensagem"] = json!(message);
+        dest.retain(|r| r["evento"] != "inventory.prepared");
+        let out = run_logs(&source, &dest)?;
+        assert_eq!(out.passos.len(), 11);
+        assert!(
+            out.passos.iter().all(|p| p.estado == Estado::Ok),
+            "{message}"
+        );
+        assert_eq!(
+            out.passos[1].motivo.as_deref(),
+            Some(format!("não se aplica: entrada por layout legado ({message})").as_str())
+        );
+        let proof: Value =
+            serde_json::from_str(out.passos[1].linha.as_deref().ok_or("prova legado")?)?;
+        assert_eq!(proof["evento"], "session.open");
+        assert_eq!(proof["session"], 101);
+        assert!(!out.incompleta());
+        assert!(out.quebra.is_none());
+        assert!(out.parada.is_none());
+        // Sem abertura da sessão, continua sendo um pré-requisito não comprovado.
+        source.retain(|r| {
+            r["session"].is_null()
+                && r["evento"] != "attempt.begin"
+                && r["evento"] != "inventory.missing"
+        });
+        let prerequisites = run_logs(&source, &dest)?;
+        assert!(prerequisites.passos[1].estado == Estado::SemDado);
+        assert_eq!(prerequisites.tentativa, None);
+    }
+    Ok(())
+}
+
+#[test]
+fn t11_sessao_moderna_nao_herda_excecao_legada() -> Result<(), Box<dyn Error>> {
+    let dir = tempfile::tempdir()?;
+    let e = entrada(dir.path(), true);
+    let (mut old, mut old_dest) = chain(0, 101, 1);
+    old.iter_mut()
+        .find(|r| r["evento"] == "session.open")
+        .ok_or("open")?["mensagem"] = json!("enter_span");
+    let (new, new_dest) = chain(1, 202, 2);
+    old.extend(new);
+    old_dest.extend(new_dest);
+    old_dest.retain(|r| r["evento"] != "inventory.prepared");
+    write_log(&e.origem, &old)?;
+    write_log(e.destino.as_deref().ok_or("destino")?, &old_dest)?;
+    let out = verificar::executar(&e)?;
+    assert_eq!(out.sessao, Some(202));
+    assert!(out.passos[1].estado == Estado::SemDado);
+    assert_eq!(out.parada.as_deref(), Some("inventario_destino"));
+    assert!(out.incompleta());
     Ok(())
 }
