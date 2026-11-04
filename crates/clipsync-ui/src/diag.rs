@@ -681,46 +681,195 @@ fn log_tail(profile_dir: &Path, max: usize) -> Vec<String> {
     tail.into_iter().collect()
 }
 
-fn private_token(token: &str) -> Option<(&'static str, Option<RedactionKind>)> {
-    // Caminhos absolutos de erro, inclusive depois de um rótulo (path=/home/...).
-    if token.contains('/') || token.contains('\\') {
-        return Some(("<caminho>", None));
+const LOG_TEXT_OMITTED: &str = "<texto omitido>";
+
+fn log_timestamp(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.len() != 24 {
+        return false;
     }
-    let address = token.split_once(':').map_or(token, |(ip, port)| {
-        if !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()) {
-            ip
-        } else {
-            token
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        let punctuation = match index {
+            4 | 7 => Some(b'-'),
+            10 => Some(b'T'),
+            13 | 16 => Some(b':'),
+            19 => Some(b'.'),
+            23 => Some(b'Z'),
+            _ => None,
+        };
+        if punctuation.map_or_else(|| !byte.is_ascii_digit(), |expected| byte != expected) {
+            return false;
         }
-    });
-    let ipv4 = address.bytes().filter(|byte| *byte == b'.').count() == 3
-        && address
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || byte == b'.');
-    let ipv6 = token.bytes().filter(|byte| *byte == b':').count() >= 2
-        && token
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() || b":.[]".contains(&byte));
-    (ipv4 || ipv6).then_some((msg::REDACTED_IP, Some(RedactionKind::Ip)))
+    }
+    let number = |start: usize, end: usize| {
+        bytes[start..end]
+            .iter()
+            .fold(0_u32, |n, byte| n * 10 + u32::from(byte - b'0'))
+    };
+    let year = number(0, 4);
+    let days = match number(5, 7) {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year.is_multiple_of(400) || (year.is_multiple_of(4) && !year.is_multiple_of(100)) => {
+            29
+        }
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days).contains(&number(8, 10))
+        && number(11, 13) < 24
+        && number(14, 16) < 60
+        && number(17, 19) < 60
 }
 
-fn redact_log_text(text: &str, counts: &mut RedactionCounts) -> String {
-    let delimiter = |ch: char| ch.is_whitespace() || ",\"'[]();=".contains(ch);
-    let mut output = String::with_capacity(text.len());
-    for part in text.split_inclusive(delimiter) {
-        let end = part.trim_end_matches(delimiter).len();
-        let token = &part[..end];
-        if let Some((marker, kind)) = private_token(token) {
-            output.push_str(marker);
-            if let Some(kind) = kind {
-                *counts.entry(kind).or_default() += 1;
-            }
-        } else {
-            output.push_str(token);
-        }
-        output.push_str(&part[end..]);
+/// Lista literal, não um padrão de caracteres: texto que parece enum também
+/// pode conter dados privados. Um valor novo fica omitido até entrar no contrato.
+fn known_log_text(key: &str, text: &str) -> bool {
+    match key {
+        "evento" => matches!(
+            text,
+            "inventory.prepared"
+                | "inventory.sent"
+                | "inventory.received"
+                | "inventory.missing"
+                | "routes.built"
+                | "routes.empty"
+                | "capture.start"
+                | "capture.failed"
+                | "capture.ready"
+                | "attempt.begin"
+                | "barrier.activated"
+                | "attempt.filtered"
+                | "session.open"
+                | "session.sent"
+                | "session.active"
+                | "session.refused"
+                | "datagram.first"
+                | "return.received"
+                | "return.sent"
+                | "return.failed"
+                | "session.closed"
+                | "enter.received"
+                | "enter.refused"
+                | "emulate.start"
+                | "emulate.positioned"
+                | "emulate.error"
+                | "agent.up"
+                | "peer.connected"
+                | "peer.disconnected"
+                | "module.input.start"
+                | "module.input.stop"
+                | "portal.session.created"
+                | "portal.connect_eis"
+                | "hooks.installed"
+                | "hooks.dropped"
+                | "legado"
+                | "log.truncated"
+        ),
+        "nivel" => matches!(text, "info" | "warn" | "error"),
+        "alvo" => matches!(
+            text,
+            "clipsync_core"
+                | "clipsync_input"
+                | "clipsync_clipboard"
+                | "clipsync_proto"
+                | "clipsync_ui"
+                | "clipsync_cli"
+                | "clipsync_app"
+                | "clipsync_win"
+                | "clipsync_core::agent"
+                | "clipsync_core::logging"
+                | "clipsync_core::transport"
+                | "clipsync_input::capture"
+                | "clipsync_input::module"
+                | "clipsync_input::module::organization"
+                | "clipsync_input::adapter::portal"
+                | "clipsync_input::adapter::win::capture"
+                | "clipsync_input::adapter::win::emulate"
+        ),
+        "motivo" => matches!(
+            text,
+            "paused"
+                | "locked"
+                | "screen_locked"
+                | "unknown_barrier"
+                | "cleanup_pending"
+                | "inventory_changed"
+                | "peer_offline"
+                | "no_activation"
+                | "not_connected"
+                | "not_authorized"
+                | "remote_module_disabled"
+                | "local_module_disabled"
+                | "too_large"
+                | "transport"
+                | "remote_too_old"
+                | "return"
+                | "refused"
+                | "error"
+                | "pause"
+                | "lock"
+                | "stop"
+                | "peer_down"
+                | "switch"
+                | "inventory"
+                | "portal_denied"
+                | "adapter_failed"
+                | "suspended"
+                | "no_local_inventory"
+                | "local_without_return"
+                | "no_organization"
+                | "unresolved_legacy"
+                | "no_remote_inventory"
+                | "remote_not_ready"
+                | "local_monitor_missing"
+                | "remote_monitor_missing"
+                | "zone_not_found"
+                | "no_links"
+                | "unsupported_topology"
+                | "monitor_not_found"
+                | "module_disabled"
+                | "invalid"
+                | "duplicate"
+                | "stale"
+                | "expired"
+                | "apply_failed"
+                | "version_mismatch"
+                | "send_failed"
+        ),
+        "mensagem" => matches!(text, "enter_routes" | "enter_span" | "enter_at" | "enter"),
+        "origem" => matches!(text, "barrier" | "switch" | "test"),
+        "adaptador" => matches!(
+            text,
+            "fake" | "portal-inputcapture" | "portal-remotedesktop" | "win-hooks" | "win-sendinput"
+        ),
+        "portal" => matches!(text, "input_capture" | "remote_desktop"),
+        "ts" => log_timestamp(text),
+        "monitor" | "uids" => text.len() == 32 && text.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        _ => false,
     }
-    output
+}
+
+fn redact_log_text(key: &str, text: &str, counts: &mut RedactionCounts) -> String {
+    if matches!(key, "erro" | "message") {
+        return LOG_TEXT_OMITTED.into();
+    }
+    let short_id = text.len() == 19
+        && text.bytes().enumerate().all(|(i, byte)| {
+            if matches!(i, 4 | 9 | 14) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        });
+    if short_id {
+        *counts.entry(RedactionKind::PeerId).or_default() += 1;
+        "<id>".into()
+    } else if known_log_text(key, text) {
+        text.into()
+    } else {
+        LOG_TEXT_OMITTED.into()
+    }
 }
 
 // §17.2 e desenho §4.6: campos extras não entram no pacote, mesmo se o produtor
@@ -745,6 +894,7 @@ const LOG_FIELDS: &[&str] = &[
     "barreiras",
     "motivo",
     "adaptador",
+    "portal",
     "attempt",
     "origem",
     "barreira",
@@ -826,7 +976,9 @@ fn redact_log_value(
                 "uids" => values
                     .into_iter()
                     .filter_map(|value| match value {
-                        Value::String(text) => Some(Value::String(redact_log_text(&text, counts))),
+                        Value::String(text) => {
+                            Some(Value::String(redact_log_text(key, &text, counts)))
+                        }
                         Value::Number(_) => Some(value),
                         _ => None,
                     })
@@ -837,52 +989,21 @@ fn redact_log_value(
             Some(Value::Array(values))
         }
         Value::String(text) if !matches!(key, "totais" | "barreiras" | "uids" | "trecho") => {
-            Some(Value::String(redact_log_text(&text, counts)))
+            Some(Value::String(redact_log_text(key, &text, counts)))
         }
         Value::String(_) => None,
         other => Some(other),
     }
 }
 
-fn redact_known_log_values(
-    value: &mut serde_json::Value,
-    g: &Gathered,
-    counts: &mut RedactionCounts,
-) {
-    use serde_json::Value;
-    match value {
-        Value::String(text) => {
-            let redacted = redact(text, g);
-            *text = redacted.text;
-            for redaction in redacted.redactions {
-                *counts.entry(redaction.kind).or_default() += redaction.count;
-            }
-        }
-        Value::Object(fields) => {
-            for value in fields.values_mut() {
-                redact_known_log_values(value, g, counts);
-            }
-        }
-        Value::Array(values) => {
-            for value in values {
-                redact_known_log_values(value, g, counts);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn redact_log_line(line: &str, g: &Gathered, counts: &mut RedactionCounts) -> String {
+fn redact_log_line(line: &str, counts: &mut RedactionCounts) -> String {
     if [LOG_TRUNCATED, LOG_UNREADABLE, LOG_SYMLINK].contains(&line) {
         return line.into();
     }
     let Ok(serde_json::Value::Object(fields)) = serde_json::from_str(line) else {
         return LOG_UNREADABLE.into();
     };
-    let mut value = serde_json::Value::Object(redact_log_fields(fields, LOG_FIELDS, counts));
-    // As agulhas atuais alcançam apenas valores: nome igual a "peer" não muda
-    // a chave do esquema nem transforma um campo conhecido em um campo extra.
-    redact_known_log_values(&mut value, g, counts);
+    let value = serde_json::Value::Object(redact_log_fields(fields, LOG_FIELDS, counts));
     serde_json::to_string(&value).unwrap_or_else(|_| LOG_UNREADABLE.into())
 }
 
@@ -892,7 +1013,7 @@ fn preview_with_log(g: &Gathered, profile_dir: &Path) -> BundlePreview {
     let mut lines = VecDeque::new();
     let mut bytes = LOG_HEADER.len();
     for raw in log_tail(profile_dir, LOG_LINES) {
-        let line = redact_log_line(&raw, g, &mut counts);
+        let line = redact_log_line(&raw, &mut counts);
         let line = if line.len() > LOG_LINE_BYTES {
             LOG_TRUNCATED.into()
         } else {
@@ -1363,13 +1484,16 @@ mod tests {
         assert!(!profile.dir.join("logs").exists());
         let path = clipsync_core::logging::log_path(&profile.dir);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let lines: Vec<_> = (0..410).map(|n| serde_json::json!({"v":1,"evento":"peer.connected","host":"desktop-privado","peer":id.short(),"mensagem":format!("linha-{n:03} notebook-privado {} 10.55.44.33 fd00::1234",id.to_hex())}).to_string()).collect();
+        let lines: Vec<_> = (0..410).map(|n| serde_json::json!({"v":1,"evento":"peer.connected","host":"desktop-privado","peer":id.short(),"contagem":n,"mensagem":format!("linha-{n:03} notebook-privado {} 10.55.44.33 fd00::1234",id.to_hex())}).to_string()).collect();
         std::fs::write(&path, lines.join("\n") + "\n").unwrap();
         let preview = bundle_preview(&ui.ctx).await.unwrap();
         let log = preview.text.split("\n[log]\n").nth(1).unwrap();
         assert_eq!(log.lines().count(), 400);
-        assert!(log.lines().next().unwrap().contains("linha-010"));
-        assert!(log.lines().last().unwrap().contains("linha-409"));
+        let first: serde_json::Value = serde_json::from_str(log.lines().next().unwrap()).unwrap();
+        let last: serde_json::Value = serde_json::from_str(log.lines().last().unwrap()).unwrap();
+        assert_eq!(first["contagem"], 10);
+        assert_eq!(last["contagem"], 409);
+        assert_eq!(first["mensagem"], "<texto omitido>");
         for needle in [
             id.to_hex(),
             id.short(),
@@ -1470,9 +1594,9 @@ mod tests {
             value["barreiras"][0]["trecho"],
             serde_json::json!([0.1, 0.9])
         );
-        assert!(value["mensagem"].as_str().unwrap().contains("0.5.0"));
-        assert!(value["erro"].as_str().unwrap().contains("<caminho>"));
-        assert!(value["message"].as_str().unwrap().contains("<ip>"));
+        assert_eq!(value["mensagem"], "<texto omitido>");
+        assert_eq!(value["erro"], "<texto omitido>");
+        assert_eq!(value["message"], "<texto omitido>");
         for private in [
             "host-historico",
             "0123456789abcdef",
@@ -1559,14 +1683,22 @@ mod tests {
         let ui = ui_for_log_test(dir.path()).await;
         let path = clipsync_core::logging::log_path(&ui.ctx.profile.dir);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        // "::" é IPv6 pelo varredor conservador; o marcador cresce o texto.
-        let line = serde_json::json!({"evento":"legado", "mensagem":":: ".repeat(180)}).to_string();
+        // Cada string curta não permitida cresce para o marcador de omissão.
+        let fields: serde_json::Map<String, serde_json::Value> = LOG_FIELDS
+            .iter()
+            .map(|key| ((*key).into(), serde_json::json!("?")))
+            .collect();
+        let line = serde_json::Value::Object(fields).to_string();
         std::fs::write(&path, (line + "\n").repeat(500)).unwrap();
         let preview = bundle_preview(&ui.ctx).await.unwrap();
         let log = preview.text.split("\n[log]\n").nth(1).unwrap();
         assert!(log.len() + "\n[log]\n".len() <= 256 * 1024);
         assert!(log.lines().count() <= 400);
-        assert!(log.contains("<ip>"));
+        assert!(log.contains("<texto omitido>"));
+        assert!(
+            log.lines().count() < 400,
+            "o teto de bytes deve cortar linhas expandidas"
+        );
         ui.shutdown().await;
     }
     #[test]
@@ -1590,12 +1722,164 @@ mod tests {
             row.get("peer").is_some(),
             "a redação do nome alterou a chave do esquema"
         );
-        assert_eq!(row["mensagem"], msg::REDACTED_DEVICE);
+        assert_eq!(row["mensagem"], "<texto omitido>");
         assert!(
             row.as_object()
                 .unwrap()
                 .keys()
                 .all(|key| LOG_FIELDS.contains(&key.as_str()))
         );
+    }
+    async fn check_log_free_text_omitted(field: &str, sensitive: &str) {
+        let dir = tempfile::tempdir().unwrap();
+        let ui = ui_for_log_test(dir.path()).await;
+        let path = clipsync_core::logging::log_path(&ui.ctx.profile.dir);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut row = serde_json::json!({"v":1,"evento":"emulate.error","session":42});
+        row[field] = serde_json::json!(sensitive);
+        std::fs::write(&path, format!("{row}\n")).unwrap();
+        let preview = bundle_preview(&ui.ctx).await.unwrap();
+        let log = preview.text.split(LOG_HEADER).nth(1).unwrap();
+        let value: serde_json::Value = serde_json::from_str(log.trim()).unwrap();
+        assert_eq!(
+            value[field], "<texto omitido>",
+            "texto livre sobrevivente em {field}"
+        );
+        assert_eq!(value["evento"], "emulate.error");
+        assert_eq!(value["session"], 42);
+        assert!(!log.contains(sensitive));
+        let exported = bundle_export(&ui.ctx).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(exported.path).unwrap(),
+            preview.text
+        );
+        ui.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn cauda_omite_ipv6_com_escopo_inteiro() {
+        check_log_free_text_omitted("erro", "[fe80::1234%7]:47800").await;
+    }
+
+    #[tokio::test]
+    async fn cauda_omite_ipv6_com_prefixo_inteiro() {
+        check_log_free_text_omitted("mensagem", "servidor:2001:db8:7654::1 indisponível").await;
+    }
+
+    #[tokio::test]
+    async fn cauda_omite_caminho_linux_com_espacos_inteiro() {
+        check_log_free_text_omitted(
+            "message",
+            r#"falha ao abrir "/home/pessoa-sintetica/Documento sigiloso.txt""#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn cauda_omite_caminho_windows_com_espacos_inteiro() {
+        check_log_free_text_omitted("erro", r#"falha ao abrir "C:\Users\Nome Sobrenome""#).await;
+    }
+
+    #[test]
+    fn cauda_preserva_so_valores_confirmados_do_esquema() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = clipsync_core::logging::log_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let g = Gathered {
+            diag: serde_json::from_value(serde_json::json!({"items":[],"network":{"listen":null,"addresses":[],"peers":[]},"blocks":[]})).unwrap(),
+            status: None, devices: vec![], device_name: None,
+        };
+        let uid = "0123456789abcdef0123456789abcdef";
+        let raw = serde_json::json!({
+            "v":1, "ts":"2026-11-04T14:00:00.123Z", "evento":"session.open", "nivel":"info",
+            "alvo":"clipsync_input::capture", "motivo":"inventory_changed", "mensagem":"enter_routes",
+            "origem":"switch", "adaptador":"portal-inputcapture", "portal":"input_capture",
+            "erro":"aaaa-bbbb-cccc-dddd", "message":"enter", "session":42, "enviada":false,
+            "host":uid, "peer":"aaaa-bbbb-cccc-dddd", "id":uid, "nome":"historico", "pares":[uid],
+            "uids":[uid,"aaaa-bbbb-cccc-dddd","monitor-particular"],
+            "barreiras":[{"monitor":uid,"peer":"aaaa-bbbb-cccc-dddd","trecho":[0,1]}]
+        });
+        std::fs::write(&path, raw.to_string()).unwrap();
+        let preview = preview_with_log(&g, dir.path());
+        let row: serde_json::Value =
+            serde_json::from_str(preview.text.split(LOG_HEADER).nth(1).unwrap().trim()).unwrap();
+        for field in [
+            "ts",
+            "evento",
+            "nivel",
+            "alvo",
+            "motivo",
+            "mensagem",
+            "origem",
+            "adaptador",
+            "portal",
+            "session",
+            "enviada",
+        ] {
+            assert_eq!(row[field], raw[field], "campo seguro {field}");
+        }
+        assert_eq!(row["erro"], "<texto omitido>");
+        assert_eq!(row["message"], "<texto omitido>");
+        assert_eq!(row["uids"][0], uid);
+        assert_eq!(row["uids"][1], "<id>");
+        assert_eq!(row["uids"][2], "<texto omitido>");
+        assert_eq!(row["barreiras"][0]["monitor"], uid);
+        for field in ["host", "peer", "id", "nome", "pares"] {
+            assert_ne!(row[field], raw[field]);
+        }
+        for field in [
+            "evento",
+            "nivel",
+            "alvo",
+            "motivo",
+            "mensagem",
+            "origem",
+            "adaptador",
+            "portal",
+            "session",
+        ] {
+            let mut invalid = raw.clone();
+            invalid[field] = serde_json::json!("servidor:2001:db8::1");
+            std::fs::write(&path, invalid.to_string()).unwrap();
+            let preview = preview_with_log(&g, dir.path());
+            let row: serde_json::Value =
+                serde_json::from_str(preview.text.split(LOG_HEADER).nth(1).unwrap().trim())
+                    .unwrap();
+            assert_eq!(
+                row[field], "<texto omitido>",
+                "chave {field} não autoriza texto livre"
+            );
+        }
+    }
+
+    #[test]
+    fn cauda_recusa_timestamp_e_uid_fora_do_formato_estrito() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = clipsync_core::logging::log_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let g = Gathered {
+            diag: serde_json::from_value(serde_json::json!({"items":[],"network":{"listen":null,"addresses":[],"peers":[]},"blocks":[]})).unwrap(),
+            status: None, devices: vec![], device_name: None,
+        };
+        for ts in [
+            "2026-11-04T14:00:00Z",
+            "2026-11-04T14:00:00.123+00:00",
+            "2026-02-29T14:00:00.123Z",
+            "2026-11-04T24:00:00.123Z",
+            "2026-11-04T14:00:00.123Z segredo",
+        ] {
+            let raw = serde_json::json!({"v":1,"evento":"agent.up","ts":ts,"uids":["0123456789abcdef0123456789abcdef EXTRA","0123456789abcdef0123456789abcdeG"],"barreiras":[{"monitor":"monitor pessoal"}]});
+            std::fs::write(&path, raw.to_string()).unwrap();
+            let preview = preview_with_log(&g, dir.path());
+            let row: serde_json::Value =
+                serde_json::from_str(preview.text.split(LOG_HEADER).nth(1).unwrap().trim())
+                    .unwrap();
+            assert_eq!(row["ts"], "<texto omitido>", "timestamp {ts}");
+            assert_eq!(
+                row["uids"],
+                serde_json::json!(["<texto omitido>", "<texto omitido>"])
+            );
+            assert_eq!(row["barreiras"][0]["monitor"], "<texto omitido>");
+        }
     }
 }
