@@ -1149,3 +1149,73 @@ fn t11_sessao_moderna_nao_herda_excecao_legada() -> Result<(), Box<dyn Error>> {
     assert!(out.incompleta());
     Ok(())
 }
+
+#[test]
+fn reinicio_do_destino_na_faixa_de_incerteza_nao_prova_a_sessao() -> Result<(), Box<dyn Error>> {
+    // Origem no minuto 1 (tentativa 14:01:01). Destino: execução antiga com provas da mesma
+    // sessão entre 14:00:38 e 14:00:46 e um reinício em 14:01:02, dentro dos 30 s de tolerância.
+    let (source, _) = chain(1, 101, 1);
+    let mut dest: Vec<Value> = chain(0, 101, 1)
+        .1
+        .into_iter()
+        .map(|e| {
+            let s: u32 = e["ts"].as_str().unwrap()[17..19].parse().unwrap();
+            timed(e, 0, 38 + s)
+        })
+        .collect();
+    dest.push(timed(event("agent.up", json!({"id":"aa"})), 1, 2));
+    let out = run_logs(&source, &dest)?;
+    for i in [1, 6, 7] {
+        assert!(out.passos[i].estado == Estado::SemDado, "passo {i}");
+        assert!(
+            out.passos[i]
+                .motivo
+                .as_deref()
+                .is_some_and(|m| m.contains("faixa de incerteza")),
+            "passo {i}"
+        );
+    }
+    assert!(out.quebra.is_none());
+    assert!(out.incompleta());
+    // Falha explícita na execução nova continua valendo.
+    dest.push(timed(
+        event(
+            "return.failed",
+            json!({"session":101,"peer":"bb","erro":"transport"}),
+        ),
+        1,
+        8,
+    ));
+    let out = run_logs(&source, &dest)?;
+    assert_eq!(out.quebra.as_deref(), Some("retorno"));
+    assert_eq!(out.passos[9].motivo.as_deref(), Some("transport"));
+    // Reinício fora da faixa, depois da sessão: a execução anterior é a única candidata.
+    let (source, mut dest) = chain(1, 101, 1);
+    dest.push(timed(event("agent.up", json!({"id":"aa"})), 1, 40));
+    let out = run_logs(&source, &dest)?;
+    assert!(out.quebra.is_none());
+    assert!(!out.incompleta());
+    Ok(())
+}
+
+#[test]
+fn n_a_legado_exige_sessao_valida_na_abertura() -> Result<(), Box<dyn Error>> {
+    let (mut source, dest) = chain(0, 101, 1);
+    for r in &mut source {
+        if r["evento"] == "inventory.received" {
+            *r = timed(event("inventory.missing", json!({"peer":"aa"})), 0, 0);
+        }
+    }
+    source.retain(|r| r["session"].is_null() || r["evento"] == "session.open");
+    for r in &mut source {
+        if r["evento"] == "session.open" {
+            r["mensagem"] = json!("enter_span");
+            r.as_object_mut().unwrap().remove("session");
+        }
+    }
+    let out = run_logs(&source, &dest)?;
+    assert_eq!(out.sessao, None);
+    assert!(out.passos[1].estado == Estado::Falhou);
+    assert_eq!(out.quebra.as_deref(), Some("inventario_destino"));
+    Ok(())
+}

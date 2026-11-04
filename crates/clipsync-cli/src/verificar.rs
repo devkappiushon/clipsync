@@ -11,6 +11,47 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 // próprio arquivo continuam estritos, assim como as identidades, peer e session.
 const TOLERANCIA_RELOGIOS: time::Duration = time::Duration::seconds(30);
 
+/// Como a execução do destino foi atribuída à tentativa selecionada.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Execucao {
+    Comprovada,
+    NaoIdentificada,
+    /// Reinício do destino dentro da faixa de incerteza do relógio: mais de uma execução
+    /// candidata. Só falhas explícitas valem; nenhum evento positivo prova sucesso.
+    Ambigua,
+}
+
+const EXECUCAO_AMBIGUA: &str =
+    "execução não comprovada: reinício do destino na faixa de incerteza do relógio";
+
+/// Execuções do destino que podem conter o marco da origem: a última iniciada antes da faixa
+/// de incerteza e todas as iniciadas dentro dela. Mais de uma é ambiguidade.
+fn execucoes_candidatas<'a>(
+    records: &[&'a Registro],
+    marco: &Registro,
+) -> Vec<(usize, &'a Registro)> {
+    let boots: Vec<(usize, &'a Registro)> = records
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.evento == "agent.up")
+        .map(|(i, r)| (i, *r))
+        .collect();
+    let mut out: Vec<(usize, &'a Registro)> = boots
+        .iter()
+        .rev()
+        .find(|(_, r)| r.ts - marco.ts < -TOLERANCIA_RELOGIOS)
+        .into_iter()
+        .copied()
+        .collect();
+    out.extend(
+        boots
+            .iter()
+            .filter(|(_, r)| (r.ts - marco.ts).abs() <= TOLERANCIA_RELOGIOS)
+            .copied(),
+    );
+    out
+}
+
 const NO_ATTEMPT: &str = "nenhuma tentativa registrada: a origem nunca viu o cursor na barreira";
 
 #[derive(clap::Args)]
@@ -418,28 +459,37 @@ fn remotos_da_sessao<'a>(
     records: &[&'a Registro],
     origem: Option<&str>,
     destino: Option<&str>,
-) -> (Vec<&'a Registro>, bool) {
+) -> (Vec<&'a Registro>, Execucao) {
     let (Some(start), Some(origem), Some(destino)) = (s.marco, origem, destino) else {
-        return (Vec::new(), false);
+        return (Vec::new(), Execucao::NaoIdentificada);
     };
-    let Some((boot_at, boot)) = records
-        .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, r)| r.evento == "agent.up" && r.ts <= start.ts)
-    else {
-        return (Vec::new(), false);
-    };
-    if origem.is_empty() || destino.is_empty() || boot.texto("id") != Some(destino) {
-        return (Vec::new(), false);
+    if origem.is_empty() || destino.is_empty() {
+        return (Vec::new(), Execucao::NaoIdentificada);
     }
+    let candidates = execucoes_candidatas(records, start);
+    let (first, last, execucao) = match candidates.as_slice() {
+        [] => return (Vec::new(), Execucao::NaoIdentificada),
+        [(at, boot)] => {
+            if boot.texto("id") != Some(destino) {
+                return (Vec::new(), Execucao::NaoIdentificada);
+            }
+            (*at, *at, Execucao::Comprovada)
+        }
+        many => {
+            if !many.iter().any(|(_, b)| b.texto("id") == Some(destino)) {
+                return (Vec::new(), Execucao::NaoIdentificada);
+            }
+            let last = many.last().map_or(many[0].0, |c| c.0);
+            (many[0].0, last, Execucao::Ambigua)
+        }
+    };
     let end = records
         .iter()
         .enumerate()
-        .skip(boot_at + 1)
+        .skip(last + 1)
         .find(|(_, r)| r.evento == "agent.up")
         .map_or(records.len(), |(i, _)| i);
-    let events = records[boot_at..end]
+    let events = records[first..end]
         .iter()
         .copied()
         .filter(|r| {
@@ -456,22 +506,34 @@ fn remotos_da_sessao<'a>(
                 })
         })
         .collect();
-    (events, true)
+    (events, execucao)
 }
 
 fn cadeia(
     s: &Selecao<'_>,
     remote: &[&Registro],
     destino_informado: bool,
-    execucao_comprovada: bool,
+    execucao: Execucao,
 ) -> Vec<Passo> {
     let local = &s.eventos_sessao;
     let missing_remote = if !destino_informado {
         "arquivo do destino não informado"
-    } else if !execucao_comprovada {
-        "execução não comprovada: faltam identidades de agent.up compatíveis com o par selecionado"
     } else {
-        "evento do par e da sessão ausente na janela do destino: pode não ter sido alcançado, o horário pode divergir ou o arquivo ter sido rotacionado"
+        match execucao {
+            Execucao::NaoIdentificada => {
+                "execução não comprovada: faltam identidades de agent.up compatíveis com o par selecionado"
+            }
+            Execucao::Ambigua => EXECUCAO_AMBIGUA,
+            Execucao::Comprovada => {
+                "evento do par e da sessão ausente na janela do destino: pode não ter sido alcançado, o horário pode divergir ou o arquivo ter sido rotacionado"
+            }
+        }
+    };
+    // Execução ambígua: os eventos remotos só servem para provar falha explícita.
+    let remote_ok: &[&Registro] = if execucao == Execucao::Comprovada {
+        remote
+    } else {
+        &[]
     };
     let closed = ultimo(local, &["session.closed"]);
     let session = match closed.filter(|r| r.texto("motivo") == Some("error")) {
@@ -500,7 +562,7 @@ fn cadeia(
         ),
         None => exigir(
             "entrada_destino",
-            remote,
+            remote_ok,
             &["enter.received"],
             missing_remote,
         ),
@@ -514,12 +576,13 @@ fn cadeia(
         ),
         None => exigir(
             "emulacao",
-            remote,
+            remote_ok,
             &["emulate.start", "emulate.positioned"],
             missing_remote,
         ),
     };
-    let observado = |nome, here, there| match (ultimo(local, &[here]), ultimo(remote, &[there])) {
+    let observado = |nome, here, there| match (ultimo(local, &[here]), ultimo(remote_ok, &[there]))
+    {
         (Some(r), Some(_)) => passo(nome, Estado::Ok, Some(r), Some("confirmado nos dois lados")),
         (Some(r), None) => passo(nome, Estado::Ok, Some(r), Some("confirmado só na origem")),
         (None, Some(r)) => passo(nome, Estado::Ok, Some(r), Some("confirmado só no destino")),
@@ -616,11 +679,17 @@ pub(crate) fn executar(e: &Entrada) -> Result<Saida, FalhaVerificar> {
                 && boot.is_none_or(|b| (r.ts, r.indice) >= (b.ts, b.indice))
         })
         .collect();
-    let remote_boot = destino
-        .iter()
-        .rev()
-        .copied()
-        .find(|r| r.evento == "agent.up" && chosen.is_none_or(|c| r.ts <= c.ts));
+    let remote_candidates = chosen.map(|c| execucoes_candidatas(&destino, c));
+    let remote_ambiguo = remote_candidates.as_ref().is_some_and(|c| c.len() > 1);
+    let remote_boot = match remote_candidates.as_deref() {
+        Some([one]) => Some(one.1),
+        Some(_) => None,
+        None => destino
+            .iter()
+            .rev()
+            .copied()
+            .find(|r| r.evento == "agent.up"),
+    };
     let remote: Vec<_> = destino
         .iter()
         .copied()
@@ -649,7 +718,8 @@ pub(crate) fn executar(e: &Entrada) -> Result<Saida, FalhaVerificar> {
         .then(|| ultimo(&remote, &["inventory.prepared"]))
         .flatten();
     let legacy_opening = opening.filter(|r| {
-        r.numero("session") == selection.sessao
+        selection.sessao.is_some()
+            && r.numero("session") == selection.sessao
             && matches!(
                 r.texto("mensagem"),
                 Some("enter_span" | "enter_at" | "enter")
@@ -674,6 +744,12 @@ pub(crate) fn executar(e: &Entrada) -> Result<Saida, FalhaVerificar> {
                 Estado::SemDado,
                 None,
                 Some("arquivo do destino não informado"),
+            ),
+            _ if remote_ambiguo => passo(
+                "inventario_destino",
+                Estado::SemDado,
+                None,
+                Some(EXECUCAO_AMBIGUA),
             ),
             _ if !remote_identified => passo(
                 "inventario_destino",

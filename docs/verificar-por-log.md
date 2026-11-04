@@ -45,7 +45,7 @@ Uma linha por passo, na ordem em que a travessia acontece: `inventario_origem`, 
 
 Dois casos de `[ok]` vêm com nota. `datagramas` e `retorno` dizem `confirmado nos dois lados`, `confirmado só na origem` ou `confirmado só no destino`: a prova de um lado basta, e a linha mostrada é desse lado. `inventario_destino` diz `não se aplica: entrada por layout legado (enter_span)` quando a sessão abriu pelo layout antigo, em que o destino não prepara inventário.
 
-Os relógios das duas máquinas raramente batem. Os eventos da sessão são casados por par, sessão e execução, com tolerância de 30 segundos entre as máquinas; uma diferença maior que essa deixa os passos do destino como `[sem dado]`. Acerte a hora das duas antes de coletar.
+Os relógios das duas máquinas raramente batem. Os eventos da sessão são casados por par, sessão e execução, com tolerância de 30 segundos entre as máquinas; uma diferença maior que essa deixa os passos do destino como `[sem dado]`. Se o destino reiniciou a menos de 30 segundos da tentativa, o verificador não escolhe entre as duas execuções: os passos do destino saem `[sem dado]` com `reinício do destino na faixa de incerteza do relógio`, e só uma falha explícita conta. Acerte a hora das duas antes de coletar e evite atravessar nos primeiros 30 segundos depois de abrir o app.
 
 Sem tentativa na janela, o comando mostra só os pré-requisitos e conclui "nenhuma tentativa registrada: a origem nunca viu o cursor na barreira". É exatamente o sintoma de um mouse que nunca sai da tela.
 
