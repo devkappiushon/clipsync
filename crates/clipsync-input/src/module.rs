@@ -1023,6 +1023,12 @@ impl State {
             Ok(z) => z,
             Err(e) => {
                 tracing::warn!("zones unavailable: {e}");
+                let motivo = if matches!(e, InputError::PermissionDenied) {
+                    "portal_denied"
+                } else {
+                    "adapter_failed"
+                };
+                tracing::info!(evento = "capture.failed", adaptador = cap.name(), motivo, erro = %e, "zones unavailable before the capture engine");
                 self.last_block = Some(match e {
                     InputError::PermissionDenied => msg::PORTAL_DENIED.to_owned(),
                     other => msg::adapter_failed(&other.to_string()),
@@ -1619,7 +1625,7 @@ impl State {
         let totais = format!(
             "{{\"recebidos\":{recebidos},\"perdidos\":{perdidos},\"fora_de_ordem\":{fora_de_ordem}}}"
         );
-        tracing::info!(evento = "return.sent", session, peer = %from, pos = f64::from(pos), totais = %totais, "cursor returned to the source");
+        tracing::info!(evento = "return.sent", session, peer = %from, pos = capture::frac3(pos), totais = %totais, "cursor returned to the source");
     }
 
     /// `Enter`, `EnterAt` and `EnterSpan` (`back` is the way-back span of the last one).
@@ -1726,7 +1732,7 @@ impl State {
                 tracing::info!(evento = "emulate.error", session, peer = %from, adaptador = self.emu.name(), erro = %e, "entry positioning failed");
             }
             Ok(()) => {
-                tracing::info!(evento = "emulate.positioned", session, peer = %from, adaptador = self.emu.name(), pos = f64::from(pos), "entry positioned");
+                tracing::info!(evento = "emulate.positioned", session, peer = %from, adaptador = self.emu.name(), pos = capture::frac3(pos), "entry positioned");
             }
         }
         if !self.authorized(from, context) {
@@ -2105,7 +2111,7 @@ async fn drive(
     }
     let mut lifecycle = LifecycleCursor::new(cap);
     let specs: Vec<BarrierSpec> = barriers.iter().map(|b| b.spec.clone()).collect();
-    let attempt = new_session();
+    let attempt = capture::next_attempt();
     tracing::info!(evento = "attempt.begin", attempt, origem = "test", peer = %to, "attempt begins");
     let mut ev_rx = cap.start(&specs).await.map_err(|e| {
         let (motivo, text) = match e {
@@ -2136,10 +2142,20 @@ async fn drive(
     let mut opening: Option<crate::network::Sending> = None;
     let mut queue = VecDeque::new();
     let mut failure = None;
+    // Why the loopback session ended, for `session.closed` (contract §17.2); `return` is the
+    // normal end at the deadline with the session open.
+    let mut close = "return";
+    let mut sent: u64 = 0;
+    let mut dropped: u64 = 0;
     loop {
         let (_, invalidated) = authority.refresh();
         if invalidated || authority.snapshot.paused || authority.snapshot.stopped {
             release_all = true;
+            close = if authority.snapshot.stopped {
+                "stop"
+            } else {
+                "pause"
+            };
             failure = Some(RejectReason::Paused.pt().to_owned());
             break;
         }
@@ -2148,6 +2164,7 @@ async fn drive(
             .is_none_or(|c| !c.connected || c.connection != context.connection)
         {
             release_all = true;
+            close = "peer_down";
             failure = Some(msg::PEER_OFFLINE.to_owned());
             break;
         }
@@ -2159,6 +2176,7 @@ async fn drive(
                 .is_some_and(|s| !s.allows_capture())
         {
             release_all = true;
+            close = "lock";
             failure = Some(msg::SOURCE_SCREEN_LOCKED.to_owned());
             break;
         }
@@ -2168,26 +2186,34 @@ async fn drive(
             s = signals.recv() => {
                 failure = match s {
                     Some(LoopSignal::Stats(_)) => continue,
-                    Some(LoopSignal::Rejected(r)) => Some(r.pt().to_owned()),
-                    Some(LoopSignal::PeerDown) => Some(msg::PEER_OFFLINE.to_owned()),
-                    Some(LoopSignal::Paused) => Some(RejectReason::Paused.pt().to_owned()),
-                    Some(LoopSignal::Stop) | None => Some(msg::SESSION_CANCELLED.to_owned()),
+                    Some(LoopSignal::Rejected(r)) => {
+                        if session != 0 {
+                            tracing::info!(evento = "session.refused", session, peer = %to, motivo = capture::reject_code(r), "entry refused by the peer");
+                        }
+                        close = "refused";
+                        Some(r.pt().to_owned())
+                    }
+                    Some(LoopSignal::PeerDown) => { close = "peer_down"; Some(msg::PEER_OFFLINE.to_owned()) }
+                    Some(LoopSignal::Paused) => { close = "pause"; Some(RejectReason::Paused.pt().to_owned()) }
+                    Some(LoopSignal::Stop) | None => { close = "stop"; Some(msg::SESSION_CANCELLED.to_owned()) }
                 };
                 break;
             }
             () = authority.changed() => continue,
             () = lifecycle.changed() => continue,
-            ev = ev_rx.recv() => match ev { Some(ev) => ev, None => { failure = Some(msg::SESSION_CANCELLED.to_owned()); break; } },
+            ev = ev_rx.recv() => match ev { Some(ev) => ev, None => { close = "error"; failure = Some(msg::SESSION_CANCELLED.to_owned()); break; } },
             result = async { match opening.as_mut() { Some(f) => f.await, None => Ok(()) } }, if opening.is_some() => {
                 let (_, invalidated) = authority.refresh();
                 if invalidated || authority.snapshot.paused || authority.snapshot.stopped {
                     release_all = true;
+                    close = if authority.snapshot.stopped { "stop" } else { "pause" };
                     failure = Some(RejectReason::Paused.pt().to_owned());
                     break;
                 }
                 lifecycle.refresh();
                 if lifecycle.pending_invalidation || lifecycle.snapshot.as_ref().is_some_and(|s| !s.allows_capture()) {
                     release_all = true;
+                    close = "lock";
                     failure = Some(msg::SOURCE_SCREEN_LOCKED.to_owned());
                     break;
                 }
@@ -2199,7 +2225,7 @@ async fn drive(
                         active = true
                     }
                     Err(e) => {
-                        tracing::info!(evento = "session.closed", attempt, session, peer = %to, motivo = "error", erro = capture::send_error_code(&e), "session not sent");
+                        close = "error";
                         failure = Some(e.to_string());
                         break;
                     }
@@ -2229,8 +2255,9 @@ async fn drive(
         match ev {
             CaptureEvent::Activated { .. } if !snapshot_ready => continue,
             CaptureEvent::Activated { barrier, pos, .. } => {
-                tracing::info!(evento = "barrier.activated", attempt, barreira = barrier, peer = %to, pos = f64::from(pos), "barrier activated");
+                tracing::info!(evento = "barrier.activated", attempt, barreira = barrier, peer = %to, pos = capture::frac3(pos), "barrier activated");
                 if session != 0 {
+                    close = "error";
                     failure = Some(msg::SESSION_CANCELLED.to_owned());
                     break;
                 }
@@ -2260,6 +2287,7 @@ async fn drive(
             }
             CaptureEvent::Input { t_mono_us, ev } if opening.is_some() => {
                 if queue.len() == 256 {
+                    close = "error";
                     failure = Some(msg::OPEN_BUFFER_FULL.to_owned());
                     break;
                 }
@@ -2276,7 +2304,7 @@ async fn drive(
                 } else {
                     (t_mono_us, ev)
                 };
-                let _ = host.send_datagram(
+                match host.send_datagram(
                     to,
                     InputDatagram {
                         session,
@@ -2284,17 +2312,30 @@ async fn drive(
                         t_mono_us,
                         events: vec![ev],
                     },
-                );
+                ) {
+                    Ok(()) => {
+                        if sent == 0 {
+                            tracing::info!(evento = "datagram.first", session, peer = %to, "first datagram sent");
+                        }
+                        sent += 1;
+                    }
+                    Err(_) => dropped += 1,
+                }
                 seq = seq.wrapping_add(1);
             }
             CaptureEvent::Input { .. } => {}
-            CaptureEvent::Deactivated => break,
+            CaptureEvent::Deactivated => {
+                close = "stop";
+                break;
+            }
             CaptureEvent::Error(e) => {
+                close = "error";
                 failure = Some(msg::adapter_failed(&e));
                 break;
             }
             CaptureEvent::SessionLocked(true) => {
                 release_all = true;
+                close = "lock";
                 failure = Some(msg::SOURCE_SCREEN_LOCKED.to_owned());
                 break;
             }
@@ -2331,14 +2372,9 @@ async fn drive(
         .await;
     }
     if session != 0 {
-        let motivo = match &failure {
-            None => "return",
-            Some(f) if f == msg::SOURCE_SCREEN_LOCKED => "lock",
-            Some(f) if f == RejectReason::Paused.pt() => "pause",
-            Some(f) if f == msg::PEER_OFFLINE => "peer_down",
-            Some(_) => "error",
-        };
-        tracing::info!(evento = "session.closed", attempt, session, peer = %to, motivo, erro = failure.as_deref().unwrap_or(""), totais = %format!("{{\"enviados\":{seq},\"descartados\":0}}"), "session closed");
+        let motivo = if failure.is_none() { "return" } else { close };
+        let totais = format!("{{\"enviados\":{sent},\"descartados\":{dropped}}}");
+        tracing::info!(evento = "session.closed", attempt, session, peer = %to, motivo, erro = failure.as_deref().unwrap_or(""), totais = %totais, "session closed");
     }
     if let Some(f) = failure {
         if session == 0 {

@@ -348,6 +348,26 @@ pub(crate) fn reject_code(reason: RejectReason) -> &'static str {
     }
 }
 
+static ATTEMPTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Next attempt id for this process (contract §17.2): shared by the continuous capture and the
+/// loopback, so ids never repeat inside one run; never 0.
+pub(crate) fn next_attempt() -> u32 {
+    loop {
+        let n = ATTEMPTS
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            .wrapping_add(1);
+        if n != 0 {
+            return n;
+        }
+    }
+}
+
+/// A fraction with three decimals, the precision the log vocabulary fixes for `pos`.
+pub(crate) fn frac3(pos: f32) -> f64 {
+    (f64::from(pos) * 1000.0).round() / 1000.0
+}
+
 /// `attempt.filtered`: the attempt ended before a session existed.
 fn log_filtered(attempt: u32, motivo: &str) {
     tracing::info!(
@@ -406,7 +426,7 @@ fn log_capture_ready(adaptador: &str, targets: &[Target]) {
                 "peer": t.peer.short(),
                 "monitor": t.peer_monitor,
                 "borda": edge_code(t.spec.edge),
-                "trecho": [t.local.0, t.local.1],
+                "trecho": [t.spec.from, t.spec.to],
             })
         })
         .collect();
@@ -495,7 +515,6 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
         opening: None,
         closing: None,
         reset_rx: false,
-        attempt: 0,
         close_reason: None,
         close_detail: None,
         available: rx.is_some(),
@@ -566,6 +585,8 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
                     let _ = reply.send(Err(crate::inventory::unavailable()));
                 }
                 st.notes(Note::Block(msg::adapter_failed(&e.to_string())));
+                st.close_reason = Some("error");
+                st.close_detail = Some("capture_stop_failed".into());
                 st.end_session(true).await;
                 st.reset_rx = false;
             } else if st.prepare_reply.is_none()
@@ -683,6 +704,8 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
                     },
                     None => {
                         st.notes(Note::Block(msg::adapter_failed("captura encerrada")));
+                        st.close_reason = Some("error");
+                        st.close_detail = Some("capture_ended".into());
                         st.end_session(true).await;
                         st.reset_rx = true;
                     }
@@ -750,20 +773,12 @@ struct Loop {
     available: bool,
     pending: Option<PendingSwitch>,
     queue: VecDeque<CaptureEvent>,
-    /// Local attempt counter (contract §17.2); 0 is never used.
-    attempt: u32,
     /// Why the session being closed ended; `close_session` logs and clears it.
     close_reason: Option<&'static str>,
     close_detail: Option<String>,
 }
 
 impl Loop {
-    /// Next attempt id (contract §17.2); never 0.
-    fn next_attempt(&mut self) -> u32 {
-        self.attempt = self.attempt.wrapping_add(1).max(1);
-        self.attempt
-    }
-
     fn route_valid(&self, s: &RouteSession) -> bool {
         self.catalog.matches(&[
             InventoryStamp {
@@ -854,6 +869,7 @@ impl Loop {
         let blocked = !snapshot.allows_capture();
         if lifecycle.pending_invalidation {
             self.session_locked = true;
+            self.close_reason = Some("lock");
             self.end_session(true).await;
             self.queue.clear();
             self.reset_rx = true;
@@ -864,6 +880,7 @@ impl Loop {
         self.session_locked = blocked;
         self.snapshot_ready = true;
         if blocked {
+            self.close_reason = Some("lock");
             self.end_session(true).await;
         }
         if !same_zones(&self.last_zones, &snapshot.zones) && !snapshot.zones.is_empty() {
@@ -900,6 +917,10 @@ impl Loop {
 
     /// Like `end_session`, but the cursor comes back at `(barrier, pos)` when given.
     async fn close_session(&mut self, send_leave: bool, back_at: Option<(usize, f32)>) {
+        // The reason belongs to this close only: taken here so a close without a session never
+        // hands it to the next one.
+        let motivo = self.close_reason.take().unwrap_or("stop");
+        let erro = self.close_detail.take().unwrap_or_default();
         let opening = self.opening.take();
         let had_opening = opening.is_some();
         let s = self.session.take();
@@ -915,8 +936,6 @@ impl Loop {
         }
         let cancelled = opening.map(|o| (o.session, o.started)); // drops the send future now
         let attempt = s.map(|s| (s, send_leave)).or(cancelled);
-        let motivo = self.close_reason.take().unwrap_or("stop");
-        let erro = self.close_detail.take().unwrap_or_default();
         if let Some((s, _)) = attempt.as_ref() {
             let totais = format!("{{\"enviados\":{},\"descartados\":{}}}", s.sent, s.dropped);
             tracing::info!(evento = "session.closed", attempt = s.attempt, session = s.id, peer = %s.peer, motivo, erro = %erro, totais = %totais, "session closed");
@@ -1193,7 +1212,7 @@ impl Loop {
     async fn event(&mut self, ev: CaptureEvent) {
         match ev {
             CaptureEvent::Activated { barrier, pos, .. } => {
-                let attempt = self.next_attempt();
+                let attempt = next_attempt();
                 tracing::info!(
                     evento = "attempt.begin",
                     attempt,
@@ -1202,13 +1221,13 @@ impl Loop {
                 );
                 match self.targets.get(barrier) {
                     Some(t) => {
-                        tracing::info!(evento = "barrier.activated", attempt, barreira = barrier, peer = %t.peer, pos = f64::from(pos), "barrier activated")
+                        tracing::info!(evento = "barrier.activated", attempt, barreira = barrier, peer = %t.peer, pos = frac3(pos), "barrier activated")
                     }
                     None => tracing::info!(
                         evento = "barrier.activated",
                         attempt,
                         barreira = barrier,
-                        pos = f64::from(pos),
+                        pos = frac3(pos),
                         "barrier activated"
                     ),
                 }
@@ -1262,6 +1281,7 @@ impl Loop {
             }
             CaptureEvent::Deactivated => {
                 if self.current().is_some() {
+                    self.close_reason = Some("stop");
                     self.end_session(true).await;
                 }
             }
@@ -1311,7 +1331,7 @@ impl Loop {
             t_mono_us,
             events,
         };
-        let first = s.seq == 0;
+        let first = s.sent == 0;
         s.seq = s.seq.wrapping_add(1);
         let peer = s.peer;
         let session = s.id;
@@ -1412,7 +1432,7 @@ impl Loop {
                     .and_then(|s| s.resolve(from, context.connection, &returned, s.inventories));
                 if let Some((barrier, pos)) = resolved {
                     if let Some(s) = self.current() {
-                        tracing::info!(evento = "return.received", session = s.id, peer = %from, pos = f64::from(pos), "cursor returned");
+                        tracing::info!(evento = "return.received", session = s.id, peer = %from, pos = frac3(pos), "cursor returned");
                     }
                     self.close_reason = Some("return");
                     self.close_session(true, Some((barrier, pos))).await;
@@ -1442,7 +1462,7 @@ impl Loop {
                 let back = t.local.0 + k * (t.local.1 - t.local.0);
                 let barrier = self.targets.iter().position(|x| same_barrier(x, &t));
                 let name = self.peer_name(from);
-                tracing::info!(evento = "return.received", session, peer = %from, pos = f64::from(pos), "cursor returned");
+                tracing::info!(evento = "return.received", session, peer = %from, pos = frac3(pos), "cursor returned");
                 self.close_reason = Some("return");
                 self.close_session(true, barrier.map(|i| (i, back))).await;
                 self.notes(Note::Event(msg::returned_from(&name)));
@@ -1570,7 +1590,7 @@ impl Loop {
     }
 
     async fn switch(&mut self, to: PeerId) -> Result<(), String> {
-        let attempt = self.next_attempt();
+        let attempt = next_attempt();
         tracing::info!(evento = "attempt.begin", attempt, origem = "switch", peer = %to, "attempt begins");
         let filtered = |motivo: &'static str, text: String| {
             log_filtered(attempt, motivo);

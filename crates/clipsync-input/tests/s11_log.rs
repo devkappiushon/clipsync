@@ -1150,3 +1150,86 @@ async fn module_input_start_stop() {
     a.tx.send(ModuleInput::Shutdown).await.unwrap();
     until("module.input.stop", || captura.tem("module.input.stop")).await;
 }
+
+// --------------------------------------------------------------- ajustes de revisão (Argus T3/T5/T6)
+
+/// `pos` goes out with three decimals, as the vocabulary fixes.
+#[tokio::test]
+async fn pos_sai_com_tres_casas() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let (a, _b) = par_ligado(&hub, &captura).await;
+    a.cap.activate(0, 0.777_777_8);
+    until("barrier.activated", || captura.tem("barrier.activated")).await;
+    let ativada = captura
+        .primeiro("barrier.activated")
+        .expect("barrier.activated");
+    assert_eq!(ativada.campo("pos"), Some("0.778"), "{ativada:?}");
+}
+
+/// The continuous capture and the loopback share one attempt counter: no id repeats.
+#[tokio::test]
+async fn tentativas_nao_se_repetem_entre_captura_e_teste() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let (a, b) = par_ligado(&hub, &captura).await;
+    assert!(matches!(
+        command(&a.tx, ModuleCommand::InputLock { locked: true }).await,
+        ModuleReply::Done
+    ));
+    a.cap.activate(0, 0.75);
+    until("attempt.filtered", || captura.tem("attempt.filtered")).await;
+    assert!(matches!(
+        command(&a.tx, ModuleCommand::InputLock { locked: false }).await,
+        ModuleReply::Done
+    ));
+    let _ = command(
+        &a.tx,
+        ModuleCommand::InputLoopback {
+            to: b.id,
+            seconds: 1,
+        },
+    )
+    .await;
+    let ids: Vec<u64> = captura
+        .todos("attempt.begin")
+        .iter()
+        .map(|e| numero(e, "attempt"))
+        .collect();
+    assert!(ids.len() >= 2, "{ids:?}");
+    let mut unicos = ids.clone();
+    unicos.sort_unstable();
+    unicos.dedup();
+    assert_eq!(unicos.len(), ids.len(), "tentativas repetidas: {ids:?}");
+}
+
+/// `capture.ready` describes the installed barrier: the stretch after the dead corner trim.
+#[tokio::test]
+async fn capture_ready_descreve_o_trecho_instalado() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let mut layout = layout_ab(node_id("a"), node_id("b"));
+    layout.options = LayoutOptions { dead_corner_px: 32 };
+    let a = origem(&hub, "a", &layout);
+    let b = bruto(&hub, "b");
+    hub.link(a.id, b.id, PeerPerms::default(), CONTROL);
+    estabilizar(&a.tx).await;
+    until("capture.ready", || captura.tem("capture.ready")).await;
+    let pronto = captura.primeiro("capture.ready").expect("capture.ready");
+    let barreiras = lista(&pronto, "barreiras");
+    let trecho = &barreiras[0]["trecho"];
+    let instaladas = a.cap.barriers();
+    assert_eq!(instaladas.len(), 1, "{instaladas:?}");
+    assert!(
+        (trecho[0].as_f64().unwrap() - f64::from(instaladas[0].from)).abs() < 1e-6,
+        "{pronto:?}"
+    );
+    assert!(
+        (trecho[1].as_f64().unwrap() - f64::from(instaladas[0].to)).abs() < 1e-6,
+        "{pronto:?}"
+    );
+    assert!(
+        trecho[1].as_f64().unwrap() < 1.0,
+        "o canto morto recorta o fim do trecho: {pronto:?}"
+    );
+}

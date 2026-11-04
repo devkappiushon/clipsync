@@ -603,7 +603,7 @@ impl State {
             );
             return;
         }
-        tracing::info!(evento = "emulate.positioned", session = entry.session, peer = %from, adaptador = self.emu.name(), pos = f64::from(entry.pos), "entry positioned");
+        tracing::info!(evento = "emulate.positioned", session = entry.session, peer = %from, adaptador = self.emu.name(), pos = capture::frac3(entry.pos), "entry positioned");
         if !self.confirm_local_inventory(entry.inventories.target).await
             || self.organization.ingress_suspended
             || !self.authorized(from, context)

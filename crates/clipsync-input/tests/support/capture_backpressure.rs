@@ -1043,7 +1043,6 @@ async fn unavailable_without_lock_or_pause_keeps_the_adapter_failure() {
         available: false,
         pending: None,
         queue: VecDeque::new(),
-        attempt: 0,
         close_reason: None,
         close_detail: None,
     };
