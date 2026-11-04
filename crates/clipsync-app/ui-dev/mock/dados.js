@@ -3,6 +3,10 @@
 
 import { agenteDePe, cenario, estado, plataforma, CENARIOS_MONITORES } from "./nucleo.js";
 
+export const caminhoLog = () => plataforma === "windows"
+  ? "C:\\Users\\joao\\AppData\\Local\\clipsync\\logs\\clipsync.jsonl"
+  : "/home/joao/.config/clipsync/logs/clipsync.jsonl";
+
 const AGORA = Date.now();
 const MIN = 60_000;
 const DIA = 24 * 60 * MIN;

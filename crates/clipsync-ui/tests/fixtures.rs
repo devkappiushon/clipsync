@@ -20,7 +20,7 @@ fn same<T: DeserializeOwned + Serialize>(name: &str, original: &Value) {
         .unwrap_or_else(|e| panic!("{name}.json does not fit its type: {e}"));
     let mut expected = original.clone();
     // Os JSON antigos continuam como entrada; só a saída ganha defaults aditivos B01.
-    if name == "app_state" {
+    if matches!(name, "app_state" | "diagnostics_get") {
         expected
             .as_object_mut()
             .unwrap()

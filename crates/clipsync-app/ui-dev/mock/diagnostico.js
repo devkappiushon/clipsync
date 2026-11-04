@@ -1,7 +1,7 @@
 // Mock do domínio diagnóstico: itens por área (sistema, adaptadores, rede, conflitos), rede com pares,
 // últimos bloqueios (sem conteúdo) e pacote de suporte com prévia redigida e exportação para Downloads.
 
-import { EU } from "./dados.js";
+import { caminhoLog, EU } from "./dados.js";
 import { atraso, cenario, erro, estado, plataforma, registrar } from "./nucleo.js";
 
 const AGORA = Date.now();
@@ -131,6 +131,7 @@ function pacoteSuporte() {
 
 registrar({
   diagnostics_get: () => ({
+    log_path: caminhoLog(),
     items: plataforma === "linux" ? itensLinux() : itensWindows(),
     network: rede(),
     blocks: bloqueios(),

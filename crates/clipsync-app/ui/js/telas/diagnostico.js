@@ -6,7 +6,7 @@ import { api } from "../api.js";
 import { area, cabecalho, estadoVazio, indisponivel } from "../areas.js";
 import { abrirDialogo, botao, cartao, selo, tabela } from "../componentes.js";
 import { h, trocar } from "../dom.js";
-import { recurso } from "../estado.js";
+import { obterApp, recurso } from "../estado.js";
 import { formatarBytes, formatarMomento, mensagemDe, seloDiagnostico, seloDispositivo } from "../formatar.js";
 
 const AREAS = {
@@ -53,7 +53,7 @@ export default function montar({ assinar }) {
           { class: "diagnostico__coluna" },
           blocoItens(AREAS.sistema, dados.items),
           blocoRede(dados.network, dados.items.filter((i) => i.area === "rede")),
-          blocoSuporte(),
+          blocoSuporte(dados),
         ),
         h("div", { class: "diagnostico__coluna" }, blocoItens(AREAS.adaptadores, dados.items), blocoItens(AREAS.conflitos, dados.items), blocoBloqueios(dados.blocks)),
       ),
@@ -120,10 +120,15 @@ export default function montar({ assinar }) {
     });
   }
 
-  function blocoSuporte() {
+  function blocoSuporte(dados) {
+    const caminho = dados.log_path || obterApp()?.log_path || "Caminho não informado pelo agente.";
     return cartao({
       titulo: "Pacote de suporte",
       filhos: [
+        h("dl", { class: "kv diagnostico__kv" },
+          h("dt", null, "Arquivo de log"),
+          h("dd", { class: "mono" }, caminho),
+        ),
         h(
           "p",
           { class: "nota" },

@@ -5,6 +5,8 @@
 //! peer names, IP addresses and this device's name. Never in it: the key, the raw `peers.toml`,
 //! `portal-tokens.toml` or clipboard content (the box is not read at all).
 
+use std::collections::VecDeque;
+use std::io::{BufRead, BufReader};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
@@ -90,6 +92,8 @@ fn one() -> u64 {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Diagnostics {
+    #[serde(default)]
+    pub log_path: String,
     pub items: Vec<DiagItem>,
     pub network: Network,
     pub blocks: Vec<Block>,
@@ -256,6 +260,9 @@ async fn gather(ctx: &Ctx) -> Gathered {
         .or(cfg.map(|c| c.device_name));
     Gathered {
         diag: Diagnostics {
+            log_path: clipsync_core::logging::log_path(&ctx.profile.dir)
+                .display()
+                .to_string(),
             items,
             network: Network {
                 listen: listen.map(|l| l.to_string()),
@@ -538,6 +545,17 @@ fn redact(raw: &str, g: &Gathered) -> BundlePreview {
         needles.push((ip.to_string(), msg::REDACTED_IP.into(), RedactionKind::Ip));
     }
     needles.retain(|(s, _, _)| !s.is_empty());
+    // A cauda mantém o JSON original: aspas e barras dos mesmos identificadores
+    // conhecidos aparecem escapadas. Conserve também a forma usada no texto comum.
+    let escaped: Vec<_> = needles
+        .iter()
+        .filter_map(|(needle, with, kind)| {
+            let encoded = serde_json::to_string(needle).ok()?;
+            let escaped = encoded.strip_prefix('"')?.strip_suffix('"')?;
+            (escaped != needle).then(|| (escaped.to_owned(), with.clone(), *kind))
+        })
+        .collect();
+    needles.extend(escaped);
     needles.sort_by_key(|n| std::cmp::Reverse(n.0.len()));
 
     let mut counts = std::collections::BTreeMap::<RedactionKind, usize>::new();
@@ -583,9 +601,38 @@ fn take_preview(dir: &Path) -> Option<String> {
     Some(all.swap_remove(at).2)
 }
 
+/// Lê em fluxo e conserva somente a cauda, sem abrir perfil ou arquivo para escrita.
+fn log_tail(profile_dir: &Path, max: usize) -> Vec<String> {
+    if max == 0 {
+        return Vec::new();
+    }
+    let path = clipsync_core::logging::log_path(profile_dir);
+    let Ok(file) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let mut tail = VecDeque::new();
+    for line in BufReader::new(file).lines() {
+        let Ok(line) = line else { return Vec::new() };
+        if tail.len() == max {
+            tail.pop_front();
+        }
+        tail.push_back(line);
+    }
+    tail.into_iter().collect()
+}
+
 pub(crate) async fn bundle_preview(ctx: &Ctx) -> Result<BundlePreview, UiError> {
     let g = gather(ctx).await;
-    let preview = redact(&raw_text(&g), &g);
+    let mut raw = raw_text(&g);
+    let tail = log_tail(&ctx.profile.dir, 400);
+    if !tail.is_empty() {
+        raw.push_str("\n[log]\n");
+        for line in tail {
+            raw.push_str(&line);
+            raw.push('\n');
+        }
+    }
+    let preview = redact(&raw, &g);
     remember_preview(&ctx.profile.dir, &preview.text);
     Ok(preview)
 }
@@ -821,6 +868,7 @@ mod tests {
         let ana = "a1".repeat(32);
         let g = Gathered {
             diag: Diagnostics {
+                log_path: String::new(),
                 items: Vec::new(),
                 network: Network {
                     listen: Some("192.168.0.5:47800".into()),
@@ -922,6 +970,7 @@ mod tests {
         assert_eq!(old.last_unix_ms, 0);
         let mut gathered = Gathered {
             diag: Diagnostics {
+                log_path: String::new(),
                 items: vec![],
                 network: Network {
                     listen: None,
@@ -940,5 +989,127 @@ mod tests {
         assert!(
             raw_text(&gathered).contains("pelo menos 18446744073709551615 ocorrências observadas")
         );
+    }
+    #[test]
+    fn cauda_do_log_preserva_as_ultimas_400_linhas() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = clipsync_core::logging::log_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let lines: Vec<_> = (0..410).map(|n| format!("linha-{n:03}")).collect();
+        std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+        let tail = log_tail(dir.path(), 400);
+        assert_eq!(tail, lines[10..]);
+        assert!(log_tail(dir.path(), 0).is_empty());
+        std::fs::write(&path, "").unwrap();
+        assert!(log_tail(dir.path(), 400).is_empty());
+        std::fs::remove_file(&path).unwrap();
+        assert!(log_tail(dir.path(), 400).is_empty());
+        std::fs::create_dir(&path).unwrap();
+        assert!(log_tail(dir.path(), 400).is_empty());
+    }
+
+    #[tokio::test]
+    async fn pacote_inclui_cauda_redigida_e_nao_cria_secao_sem_log() {
+        use clipsync_core::{InitOptions, PeerEntry};
+        use clipsync_proto::{ModuleSet, PeerId, PeerPerms};
+        let dir = tempfile::Builder::new()
+            .prefix("csdiag-")
+            .tempdir()
+            .unwrap();
+        let ui = crate::Ui::start(crate::UiOptions {
+            profile: Some(dir.path().join("p")),
+            poll: Duration::from_secs(600),
+            fake_adapters: true,
+            downloads_dir: Some(dir.path().join("downloads")),
+            autostart_dir: Some(dir.path().join("autostart")),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        // Inicializa só os arquivos após criar a UI, para o teste não iniciar agente.
+        let profile = &ui.ctx.profile;
+        profile
+            .init(InitOptions {
+                device_name: "desktop-privado".into(),
+                modules: ModuleSet {
+                    clipboard: true,
+                    input: false,
+                },
+                listen: "127.0.0.1:0".parse().unwrap(),
+                fake_adapters: true,
+            })
+            .unwrap();
+        let id = PeerId([0x1b; 32]);
+        let mut peers = profile.load_peers().unwrap();
+        peers.upsert(PeerEntry {
+            id,
+            name: "notebook-privado".into(),
+            addr: Some("[fd00::1234]:47800".parse().unwrap()),
+            paired_at: "2026-11-04T14:00:00Z".into(),
+            perms: PeerPerms {
+                clipboard_in: false,
+                clipboard_out: false,
+                input_in: false,
+            },
+        });
+        profile.save_peers(&peers).unwrap();
+        let before = bundle_preview(&ui.ctx).await.unwrap();
+        assert!(!before.text.contains("[log]"));
+        assert!(!profile.dir.join("logs").exists());
+        let path = clipsync_core::logging::log_path(&profile.dir);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let lines: Vec<_> = (0..410).map(|n| serde_json::json!({"v":1,"evento":"peer.connected","host":"desktop-privado","peer":id.short(),"mensagem":format!("linha-{n:03} notebook-privado {} 10.55.44.33 fd00::1234",id.to_hex())}).to_string()).collect();
+        std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+        let preview = bundle_preview(&ui.ctx).await.unwrap();
+        let log = preview.text.split("\n[log]\n").nth(1).unwrap();
+        assert_eq!(log.lines().count(), 400);
+        assert!(log.lines().next().unwrap().contains("linha-010"));
+        assert!(log.lines().last().unwrap().contains("linha-409"));
+        for needle in [
+            id.to_hex(),
+            id.short(),
+            "desktop-privado".into(),
+            "notebook-privado".into(),
+            "10.55.44.33".into(),
+            "fd00::1234".into(),
+        ] {
+            assert!(!preview.text.contains(&needle), "vazou {needle}");
+        }
+        assert!(preview.redactions.iter().all(|r| r.count > 0));
+        let diagnostics = serde_json::to_value(get(&ui.ctx).await.unwrap()).unwrap();
+        assert_eq!(diagnostics["log_path"], path.display().to_string());
+        // A exportação conserva exatamente a prévia, mesmo se o log mudar depois.
+        std::fs::write(&path, "linha posterior\n").unwrap();
+        let exported = bundle_export(&ui.ctx).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(exported.path).unwrap(),
+            preview.text
+        );
+        ui.shutdown().await;
+    }
+
+    #[test]
+    fn diagnostics_antigo_aceita_caminho_omitido() {
+        let old: Diagnostics = serde_json::from_value(serde_json::json!({"items":[],"network":{"listen":null,"addresses":[],"peers":[]},"blocks":[]})).unwrap();
+        assert_eq!(serde_json::to_value(old).unwrap()["log_path"], "");
+    }
+    #[test]
+    fn redige_nome_escapado_na_cauda_json() {
+        for name in [r#"desktop-"privado""#, r"notebook\privado"] {
+            let g = Gathered {
+                diag: serde_json::from_value(serde_json::json!({"items":[],"network":{"listen":null,"addresses":[],"peers":[]},"blocks":[]})).unwrap(),
+                status: None, devices: vec![], device_name: Some(name.into()),
+            };
+            let raw = serde_json::json!({"evento":"agent.up","host":name}).to_string();
+            let result = redact(&raw, &g);
+            let log: serde_json::Value = serde_json::from_str(&result.text).unwrap();
+            assert_eq!(log["host"], msg::REDACTED_DEVICE);
+            assert!(
+                result
+                    .redactions
+                    .iter()
+                    .any(|r| r.kind == RedactionKind::DeviceName && r.count == 1)
+            );
+        }
     }
 }

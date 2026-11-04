@@ -1,6 +1,6 @@
 // Comandos comuns (barra lateral e bandeja): app_state, agent_start, agent_stop, pause_set.
 
-import { EU, features, malha } from "./dados.js";
+import { EU, caminhoLog, features, malha } from "./dados.js";
 import { emitir, erro, estado, plataforma, registrar } from "./nucleo.js";
 
 import { aplicarPausa } from "./pausa.js";
@@ -9,6 +9,7 @@ import { travessiaAtual } from "./travessia.js";
 registrar({
   app_state: () => ({
     initialized: estado.inicializado,
+    log_path: caminhoLog(),
     profile_dir: plataforma === "windows" ? "C:\\Users\\joao\\AppData\\Local\\clipsync" : "/home/joao/.config/clipsync",
     device: estado.inicializado ? EU : null,
     agent: estado.agente,
