@@ -1434,3 +1434,48 @@ async fn desativacao_no_loopback_fecha_com_stop() {
     let fechada = captura.primeiro("session.closed").expect("session.closed");
     assert_eq!(fechada.campo("motivo"), Some("stop"), "{fechada:?}");
 }
+
+/// A terminal adapter error during `Testar passagem` is `error` with its cause, not `lock`.
+#[tokio::test]
+async fn erro_terminal_no_loopback_fecha_como_error() {
+    use clipsync_input::adapter::CaptureLifecycle;
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let (a, b) = par_ligado(&hub, &captura).await;
+    let vivo = CaptureLifecycle {
+        revision: 1,
+        valid: true,
+        session_locked: Some(false),
+        desktop_available: Some(true),
+        ..Default::default()
+    };
+    a.cap.enable_lifecycle(vivo.clone());
+    let (reply_tx, reply_rx) = oneshot::channel();
+    a.tx.send(ModuleInput::Command {
+        cmd: ModuleCommand::InputLoopback {
+            to: b.id,
+            seconds: 5,
+        },
+        reply: reply_tx,
+    })
+    .await
+    .unwrap();
+    until("captura do teste iniciada", || a.cap.starts() >= 2).await;
+    a.cap.activate(0, 0.75);
+    until("session.active do teste", || captura.tem("session.active")).await;
+    a.cap.publish_lifecycle(CaptureLifecycle {
+        revision: 2,
+        terminal_error: Some("captura sintética encerrada"),
+        ..vivo
+    });
+    let _ = tokio::time::timeout(Duration::from_secs(5), reply_rx).await;
+    until("session.closed", || captura.tem("session.closed")).await;
+    let fechada = captura.primeiro("session.closed").expect("session.closed");
+    assert_eq!(fechada.campo("motivo"), Some("error"), "{fechada:?}");
+    assert!(
+        fechada
+            .campo("erro")
+            .is_some_and(|e| e.contains("captura sintética encerrada")),
+        "{fechada:?}"
+    );
+}

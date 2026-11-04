@@ -1659,12 +1659,19 @@ impl State {
             tracing::info!(evento = "return.failed", session, peer = %to, erro = "peer_too_old", "way back not sent");
             return;
         }
+        if !self.network.has_capacity() {
+            tracing::info!(evento = "return.failed", session, peer = %to, erro = "network_busy", "way back not queued");
+            self.last_block = Some(msg::NETWORK_BUSY.into());
+            return;
+        }
         let host = self.host.clone();
-        let queued = self.network.spawn(async move {
-            // The job runs under the network budget: if it is cancelled mid-send, the guard logs it.
-            let mut pendente = Pendente(Some(move || {
-                tracing::info!(evento = "return.failed", session, peer = %to, erro = "timeout", "way back cancelled by the send budget");
-            }));
+        // The guard exists from admission: a job aborted before its first poll, or cancelled by
+        // the send budget, still leaves its line in the log.
+        let pendente = Pendente(Some(move || {
+            tracing::info!(evento = "return.failed", session, peer = %to, erro = "timeout", "way back cancelled before completion");
+        }));
+        let _ = self.network.spawn(async move {
+            let mut pendente = pendente;
             let sent = host
                 .send_reliable_on(to, connection, ModuleMsg::Input(m))
                 .await;
@@ -1675,10 +1682,6 @@ impl State {
             }
             sent
         });
-        if !queued {
-            tracing::info!(evento = "return.failed", session, peer = %to, erro = "network_busy", "way back not queued");
-            self.last_block = Some(msg::NETWORK_BUSY.into());
-        }
     }
 
     /// `Enter`, `EnterAt` and `EnterSpan` (`back` is the way-back span of the last one).
@@ -1867,11 +1870,18 @@ impl State {
             .iter()
             .any(|p| p.id == to && p.remote_version >= SPAN_PROTOCOL);
         // One `enter.refused` per refusal, emitted with the real state of the notice: after the
-        // send, or at once when it could not even be queued.
-        let queued = self.network.spawn(async move {
-            let mut pendente = Pendente(Some(move || {
-                tracing::info!(evento = "enter.refused", session, peer = %to, motivo, enviada = false, erro = "timeout", "entry refused, notice cancelled by the send budget");
-            }));
+        // send, at once when it could not be queued, or by the guard when the job is cancelled
+        // (before its first poll or by the send budget).
+        if !self.network.has_capacity() {
+            tracing::info!(evento = "enter.refused", session, peer = %to, motivo, enviada = false, erro = "network_busy", "entry refused, notice not queued");
+            self.last_block = Some(msg::NETWORK_BUSY.into());
+            return;
+        }
+        let pendente = Pendente(Some(move || {
+            tracing::info!(evento = "enter.refused", session, peer = %to, motivo, enviada = false, erro = "timeout", "entry refused, notice cancelled before completion");
+        }));
+        let _ = self.network.spawn(async move {
+            let mut pendente = pendente;
             let sent = if v3 {
                 host.send_reliable_on(
                     to,
@@ -1889,10 +1899,6 @@ impl State {
             }
             sent
         });
-        if !queued {
-            tracing::info!(evento = "enter.refused", session, peer = %to, motivo, enviada = false, erro = "network_busy", "entry refused, notice not queued");
-            self.last_block = Some(msg::NETWORK_BUSY.into());
-        }
     }
 
     async fn on_datagram(&mut self, from: PeerId, dg: InputDatagram, context: ReceiveContext) {
@@ -2234,8 +2240,17 @@ async fn drive(
                 .is_some_and(|s| !s.allows_capture())
         {
             release_all = true;
-            close = "lock";
-            failure = Some(msg::SOURCE_SCREEN_LOCKED.to_owned());
+            // A terminal adapter error outranks the lock classification (contract §17.2).
+            match lifecycle.snapshot.as_ref().and_then(|s| s.terminal_error) {
+                Some(error) => {
+                    close = "error";
+                    failure = Some(msg::adapter_failed(error));
+                }
+                None => {
+                    close = "lock";
+                    failure = Some(msg::SOURCE_SCREEN_LOCKED.to_owned());
+                }
+            }
             break;
         }
         let mut replay = false;
@@ -2272,8 +2287,16 @@ async fn drive(
                 lifecycle.refresh();
                 if lifecycle.pending_invalidation || lifecycle.snapshot.as_ref().is_some_and(|s| !s.allows_capture()) {
                     release_all = true;
-                    close = "lock";
-                    failure = Some(msg::SOURCE_SCREEN_LOCKED.to_owned());
+                    match lifecycle.snapshot.as_ref().and_then(|s| s.terminal_error) {
+                        Some(error) => {
+                            close = "error";
+                            failure = Some(msg::adapter_failed(error));
+                        }
+                        None => {
+                            close = "lock";
+                            failure = Some(msg::SOURCE_SCREEN_LOCKED.to_owned());
+                        }
+                    }
                     break;
                 }
                 opening = None;
