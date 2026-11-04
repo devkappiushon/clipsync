@@ -690,7 +690,7 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
             c = ctl.recv() => {
                 match c { Some(Ctl::Stop) | None => break, Some(c) => st.control(c).await }
             }
-            () = async { if let Some(p) = st.pending.as_mut() { p.reply.closed().await; } }, if st.pending.is_some() => { st.end_session(true).await; }
+            () = async { if let Some(p) = st.pending.as_mut() { p.reply.closed().await; } }, if st.pending.is_some() => { st.close_reason = Some("switch"); st.end_session(true).await; }
             () = authority.changed() => continue,
             () = lifecycle.changed() => continue,
             _ = async { if let Some(f) = &mut st.closing { let _ = f.await; } }, if st.closing.is_some() => { st.closing = None; }
@@ -733,6 +733,7 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
             }
         }
     }
+    st.close_reason = Some("stop");
     st.end_session(true).await;
     if let Some(old) = rx.as_mut() {
         old.close();
@@ -867,9 +868,18 @@ impl Loop {
             return;
         };
         let blocked = !snapshot.allows_capture();
+        // A terminal adapter error outranks the lock classification (contract §17.2).
+        let blocked_reason = |st: &mut Self| {
+            if let Some(error) = snapshot.terminal_error {
+                st.close_reason = Some("error");
+                st.close_detail = Some(error.to_owned());
+            } else {
+                st.close_reason = Some("lock");
+            }
+        };
         if lifecycle.pending_invalidation {
             self.session_locked = true;
-            self.close_reason = Some("lock");
+            blocked_reason(self);
             self.end_session(true).await;
             self.queue.clear();
             self.reset_rx = true;
@@ -880,7 +890,7 @@ impl Loop {
         self.session_locked = blocked;
         self.snapshot_ready = true;
         if blocked {
-            self.close_reason = Some("lock");
+            blocked_reason(self);
             self.end_session(true).await;
         }
         if !same_zones(&self.last_zones, &snapshot.zones) && !snapshot.zones.is_empty() {
@@ -1385,6 +1395,7 @@ impl Loop {
                 if let Some(closing) = self.closing.take() {
                     self.cleanup.push(closing);
                 }
+                self.close_reason = Some("stop");
                 self.end_session(true).await;
                 if let Some(closing) = self.closing.take() {
                     self.cleanup.push(closing);
@@ -1400,6 +1411,7 @@ impl Loop {
                 if let Some(closing) = self.closing.take() {
                     self.cleanup.push(closing);
                 }
+                self.close_reason = Some("inventory");
                 self.end_session(true).await;
                 if let Some(closing) = self.closing.take() {
                     self.cleanup.push(closing);
@@ -1496,6 +1508,7 @@ impl Loop {
             }
             Ctl::Retarget(targets) => {
                 if self.current().is_some_and(|s| s.routes.is_some()) {
+                    self.close_reason = Some("inventory");
                     self.end_session(true).await;
                     self.reset_rx = true;
                 }

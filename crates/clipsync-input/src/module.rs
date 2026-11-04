@@ -235,6 +235,8 @@ impl Bucket {
 
 enum LoopSignal {
     Stop,
+    /// "Travar nesta tela" while the loopback runs: the session ends as `lock`, not `stop`.
+    Locked,
     Stats(LoopbackStats),
     Rejected(RejectReason),
     PeerDown,
@@ -663,7 +665,7 @@ impl State {
     fn set_locked(&mut self, on: bool) {
         self.locked = on;
         if on && let Some(c) = &self.ctl {
-            let _ = c.tx.send(LoopSignal::Stop);
+            let _ = c.tx.send(LoopSignal::Locked);
         }
         self.send_ctl(Ctl::Lock(on));
         self.last_event = Some(if on {
@@ -1637,8 +1639,8 @@ impl State {
         }
     }
 
-    /// Sends the way back and logs `return.sent` only after the send succeeds; a failure or a
-    /// full queue is `return.failed` with the reason (contract §17.2).
+    /// Sends the way back and logs `return.sent` only after the send succeeds; a failure, a
+    /// full queue or the send budget running out is `return.failed` with the reason (§17.2).
     fn send_return(&mut self, to: PeerId, connection: u64, m: InputMsg, session: u32, pos: f32) {
         let (recebidos, perdidos, fora_de_ordem) = self
             .incoming
@@ -1659,9 +1661,14 @@ impl State {
         }
         let host = self.host.clone();
         let queued = self.network.spawn(async move {
+            // The job runs under the network budget: if it is cancelled mid-send, the guard logs it.
+            let mut pendente = Pendente(Some(move || {
+                tracing::info!(evento = "return.failed", session, peer = %to, erro = "timeout", "way back cancelled by the send budget");
+            }));
             let sent = host
                 .send_reliable_on(to, connection, ModuleMsg::Input(m))
                 .await;
+            pendente.0.take();
             match &sent {
                 Ok(()) => tracing::info!(evento = "return.sent", session, peer = %to, pos, totais = %totais, "cursor returned to the source"),
                 Err(e) => tracing::info!(evento = "return.failed", session, peer = %to, erro = capture::send_error_code(e), "way back not sent"),
@@ -1862,6 +1869,9 @@ impl State {
         // One `enter.refused` per refusal, emitted with the real state of the notice: after the
         // send, or at once when it could not even be queued.
         let queued = self.network.spawn(async move {
+            let mut pendente = Pendente(Some(move || {
+                tracing::info!(evento = "enter.refused", session, peer = %to, motivo, enviada = false, erro = "timeout", "entry refused, notice cancelled by the send budget");
+            }));
             let sent = if v3 {
                 host.send_reliable_on(
                     to,
@@ -1872,6 +1882,7 @@ impl State {
             } else {
                 host.reject_input_on(to, connection, reason).await
             };
+            pendente.0.take();
             match &sent {
                 Ok(()) => tracing::info!(evento = "enter.refused", session, peer = %to, motivo, enviada = true, "entry refused"),
                 Err(e) => tracing::info!(evento = "enter.refused", session, peer = %to, motivo, enviada = false, erro = capture::send_error_code(e), "entry refused, notice not sent"),
@@ -2242,6 +2253,7 @@ async fn drive(
                     }
                     Some(LoopSignal::PeerDown) => { close = "peer_down"; Some(msg::PEER_OFFLINE.to_owned()) }
                     Some(LoopSignal::Paused) => { close = "pause"; Some(RejectReason::Paused.pt().to_owned()) }
+                    Some(LoopSignal::Locked) => { close = "lock"; Some(msg::LOCKED.to_owned()) }
                     Some(LoopSignal::Stop) | None => { close = "stop"; Some(msg::SESSION_CANCELLED.to_owned()) }
                 };
                 break;
@@ -2419,13 +2431,20 @@ async fn drive(
         .await;
     }
     if session != 0 {
-        let motivo = if failure.is_none() { "return" } else { close };
+        let motivo = close;
         let totais = format!("{{\"enviados\":{sent},\"descartados\":{dropped}}}");
         tracing::info!(evento = "session.closed", attempt, session, peer = %to, motivo, erro = failure.as_deref().unwrap_or(""), totais = %totais, "session closed");
     }
     if let Some(f) = failure {
         if session == 0 {
-            tracing::info!(evento = "attempt.filtered", attempt, motivo = "error", erro = %f, "attempt filtered");
+            let motivo = match close {
+                "lock" => "locked",
+                "pause" => "paused",
+                "peer_down" => "peer_offline",
+                "stop" => "stopped",
+                _ => "error",
+            };
+            tracing::info!(evento = "attempt.filtered", attempt, motivo, erro = %f, "attempt filtered");
         }
         return Err(f);
     }
@@ -2456,6 +2475,7 @@ async fn drive(
             Some(LoopSignal::Rejected(r)) => Err(r.pt().to_owned()),
             Some(LoopSignal::PeerDown) => Err(msg::PEER_OFFLINE.to_owned()),
             Some(LoopSignal::Paused) => Err(RejectReason::Paused.pt().to_owned()),
+            Some(LoopSignal::Locked) => Err(msg::LOCKED.to_owned()),
             Some(LoopSignal::Stop) | None => Err(msg::SESSION_CANCELLED.to_owned()),
         },
         () = tokio::time::sleep_until(wait) => Err(msg::NO_STATS.to_owned()),
@@ -2465,6 +2485,17 @@ async fn drive(
 /// A comparable summary of a set of targets: a retarget only happens when it changes.
 fn targets_key(targets: &[Target]) -> String {
     format!("{targets:?}")
+}
+
+/// Runs the closure if the holder is dropped before being disarmed: a send cancelled by the
+/// network budget still leaves its line in the log.
+struct Pendente<F: FnOnce()>(Option<F>);
+impl<F: FnOnce()> Drop for Pendente<F> {
+    fn drop(&mut self) {
+        if let Some(f) = self.0.take() {
+            f();
+        }
+    }
 }
 
 /// `routes.built` or `routes.empty`, once per distinct result (contract §17.2).

@@ -1359,3 +1359,78 @@ async fn falha_de_emissao_gera_emulate_error() {
     assert_eq!(recusa.campo("motivo"), Some("locked"), "{recusa:?}");
     assert_eq!(recusa.campo("enviada"), Some("true"), "{recusa:?}");
 }
+
+// --------------------------------------------------------------- ajustes de revisão (Argus bis)
+
+/// Locking during `Testar passagem` ends the attempt as `locked`, not as a generic error.
+#[tokio::test]
+async fn trava_no_loopback_filtra_como_locked() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let (a, b) = par_ligado(&hub, &captura).await;
+    let (reply_tx, reply_rx) = oneshot::channel();
+    a.tx.send(ModuleInput::Command {
+        cmd: ModuleCommand::InputLoopback {
+            to: b.id,
+            seconds: 5,
+        },
+        reply: reply_tx,
+    })
+    .await
+    .unwrap();
+    until("attempt.begin de teste", || {
+        captura
+            .todos("attempt.begin")
+            .iter()
+            .any(|e| e.campo("origem") == Some("test"))
+    })
+    .await;
+    assert!(matches!(
+        command(&a.tx, ModuleCommand::InputLock { locked: true }).await,
+        ModuleReply::Done
+    ));
+    let reply = tokio::time::timeout(Duration::from_secs(5), reply_rx)
+        .await
+        .expect("o loopback termina")
+        .unwrap();
+    assert!(matches!(reply, ModuleReply::Error(_)), "{reply:?}");
+    let filtrada = captura
+        .todos("attempt.filtered")
+        .into_iter()
+        .last()
+        .expect("attempt.filtered");
+    assert_eq!(filtrada.campo("motivo"), Some("locked"), "{filtrada:?}");
+}
+
+/// The compositor deactivating the barrier mid-session is `stop`, never a successful `return`.
+#[tokio::test]
+async fn desativacao_no_loopback_fecha_com_stop() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let (a, b) = par_ligado(&hub, &captura).await;
+    let (reply_tx, reply_rx) = oneshot::channel();
+    a.tx.send(ModuleInput::Command {
+        cmd: ModuleCommand::InputLoopback {
+            to: b.id,
+            seconds: 5,
+        },
+        reply: reply_tx,
+    })
+    .await
+    .unwrap();
+    until("attempt.begin de teste", || {
+        captura
+            .todos("attempt.begin")
+            .iter()
+            .any(|e| e.campo("origem") == Some("test"))
+    })
+    .await;
+    until("captura do teste iniciada", || a.cap.starts() >= 2).await;
+    a.cap.activate(0, 0.75);
+    until("session.active do teste", || captura.tem("session.active")).await;
+    a.cap.deactivate();
+    let _ = tokio::time::timeout(Duration::from_secs(5), reply_rx).await;
+    until("session.closed", || captura.tem("session.closed")).await;
+    let fechada = captura.primeiro("session.closed").expect("session.closed");
+    assert_eq!(fechada.campo("motivo"), Some("stop"), "{fechada:?}");
+}
