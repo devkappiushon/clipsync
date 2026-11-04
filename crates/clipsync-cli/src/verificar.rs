@@ -228,6 +228,7 @@ fn evento_sessao(r: &Registro) -> bool {
             | "session.closed"
             | "datagram.first"
             | "return.received"
+            | "return.failed"
     ) && r.numero("session").is_some_and(|s| s != 0)
 }
 
@@ -235,6 +236,8 @@ struct Selecao<'a> {
     marco: Option<&'a Registro>,
     inicio: Option<&'a Registro>,
     eventos: Vec<&'a Registro>,
+    eventos_sessao: Vec<&'a Registro>,
+    fim: Option<&'a Registro>,
     tentativa: Option<u32>,
     sessao: Option<u32>,
     houve_tentativa: bool,
@@ -281,6 +284,8 @@ fn selecionar<'a>(records: &[&'a Registro], e: &Entrada) -> Selecao<'a> {
             marco: None,
             inicio: None,
             eventos: vec![],
+            eventos_sessao: vec![],
+            fim: None,
             tentativa: None,
             sessao: e.sessao,
             houve_tentativa: e.sessao.is_some(),
@@ -293,7 +298,16 @@ fn selecionar<'a>(records: &[&'a Registro], e: &Entrada) -> Selecao<'a> {
     if chosen.evento != "attempt.begin" {
         for i in (0..anchor).rev() {
             let r = records[i];
-            if matches!(r.evento.as_str(), "agent.up" | "session.closed") {
+            if r.evento == "agent.up"
+                || (r.evento == "session.closed"
+                    && chosen.numero("session").map_or_else(
+                        || {
+                            r.numero("attempt")
+                                .is_none_or(|a| Some(a) == chosen.numero("attempt"))
+                        },
+                        |session| r.numero("session") == Some(session),
+                    ))
+            {
                 break;
             }
             if inicio(r) || r.evento == "attempt.filtered" {
@@ -334,12 +348,40 @@ fn selecionar<'a>(records: &[&'a Registro], e: &Entrada) -> Selecao<'a> {
                 .find(|r| evento_sessao(r))
                 .and_then(|r| r.numero("session"))
         });
+    // A próxima tentativa pode preceder o fechamento por switch. Ela limita
+    // abertura e filtros da tentativa, mas não a vida da sessão selecionada.
+    let peer = opening.and_then(|r| r.texto("peer")).or_else(|| {
+        eventos
+            .iter()
+            .find(|r| r.numero("session") == sessao && sessao.is_some())
+            .and_then(|r| r.texto("peer"))
+    });
+    let mut eventos_sessao = Vec::new();
+    let mut fim = None;
+    for r in records[start..].iter().copied() {
+        if r.evento == "agent.up" {
+            fim = Some(r);
+            break;
+        }
+        if sessao.is_some()
+            && r.numero("session") == sessao
+            && peer.is_none_or(|p| r.texto("peer").is_none_or(|v| v == p))
+        {
+            eventos_sessao.push(r);
+            if r.evento == "session.closed" {
+                fim = Some(r);
+                break;
+            }
+        }
+    }
     Selecao {
         marco: Some(records[start]),
         inicio: begin,
         tentativa: begin.or(opening).unwrap_or(chosen).numero("attempt"),
         sessao,
         eventos,
+        eventos_sessao,
+        fim,
         houve_tentativa: true,
     }
 }
@@ -355,24 +397,68 @@ fn exigir(nome: &'static str, records: &[&Registro], events: &[&str], missing: &
     }
 }
 
-fn cadeia(s: &Selecao<'_>, remote: &[&Registro], destino_informado: bool) -> Vec<Passo> {
-    let local: Vec<_> = s
-        .eventos
-        .iter()
-        .copied()
-        .filter(|r| s.sessao.is_some() && r.numero("session") == s.sessao)
-        .collect();
-    let remote: Vec<_> = remote
-        .iter()
-        .copied()
-        .filter(|r| s.sessao.is_some() && r.numero("session") == s.sessao)
-        .collect();
-    let missing_remote = if destino_informado {
-        "evento da sessão ausente no destino: pode não ter sido alcançado ou o arquivo ter sido rotacionado"
-    } else {
-        "arquivo do destino não informado"
+/// Uma coincidência do número não identifica a sessão de outro par/execução.
+fn remotos_da_sessao<'a>(
+    s: &Selecao<'_>,
+    records: &[&'a Registro],
+    origem: Option<&str>,
+    destino: Option<&str>,
+) -> (Vec<&'a Registro>, bool) {
+    let (Some(start), Some(origem), Some(destino)) = (s.marco, origem, destino) else {
+        return (Vec::new(), false);
     };
-    let closed = ultimo(&local, &["session.closed"]);
+    let Some((boot_at, boot)) = records
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, r)| r.evento == "agent.up" && r.ts <= start.ts)
+    else {
+        return (Vec::new(), false);
+    };
+    if origem.is_empty() || destino.is_empty() || boot.texto("id") != Some(destino) {
+        return (Vec::new(), false);
+    }
+    let end = records
+        .iter()
+        .enumerate()
+        .skip(boot_at + 1)
+        .find(|(_, r)| r.evento == "agent.up")
+        .map_or(records.len(), |(i, _)| i);
+    let events = records[boot_at..end]
+        .iter()
+        .copied()
+        .filter(|r| {
+            s.sessao.is_some()
+                && r.numero("session") == s.sessao
+                && r.texto("peer") == Some(origem)
+                && r.ts >= start.ts
+                && s.fim.is_none_or(|end| {
+                    if end.evento == "agent.up" {
+                        r.ts < end.ts
+                    } else {
+                        r.ts <= end.ts
+                    }
+                })
+        })
+        .collect();
+    (events, true)
+}
+
+fn cadeia(
+    s: &Selecao<'_>,
+    remote: &[&Registro],
+    destino_informado: bool,
+    execucao_comprovada: bool,
+) -> Vec<Passo> {
+    let local = &s.eventos_sessao;
+    let missing_remote = if !destino_informado {
+        "arquivo do destino não informado"
+    } else if !execucao_comprovada {
+        "execução não comprovada: faltam identidades de agent.up compatíveis com o par selecionado"
+    } else {
+        "evento do par e da sessão ausente na janela do destino: pode não ter sido alcançado, o horário pode divergir ou o arquivo ter sido rotacionado"
+    };
+    let closed = ultimo(local, &["session.closed"]);
     let session = match closed.filter(|r| r.texto("motivo") == Some("error")) {
         Some(r) => passo(
             "sessao",
@@ -382,13 +468,13 @@ fn cadeia(s: &Selecao<'_>, remote: &[&Registro], destino_informado: bool) -> Vec
         ),
         None => exigir(
             "sessao",
-            &local,
+            local,
             &["session.open", "session.sent"],
             "abertura e envio da sessão não registrados",
         ),
     };
-    let refusal = ultimo(&local, &["session.refused"])
-        .or_else(|| ultimo(&remote, &["enter.refused"]))
+    let refusal = ultimo(local, &["session.refused"])
+        .or_else(|| ultimo(remote, &["enter.refused"]))
         .or_else(|| closed.filter(|r| r.texto("motivo") == Some("refused")));
     let entry = match refusal {
         Some(r) => passo(
@@ -399,12 +485,12 @@ fn cadeia(s: &Selecao<'_>, remote: &[&Registro], destino_informado: bool) -> Vec
         ),
         None => exigir(
             "entrada_destino",
-            &remote,
+            remote,
             &["enter.received"],
             missing_remote,
         ),
     };
-    let emulation = match ultimo(&remote, &["emulate.error"]) {
+    let emulation = match ultimo(remote, &["emulate.error"]) {
         Some(r) => passo(
             "emulacao",
             Estado::Falhou,
@@ -413,12 +499,12 @@ fn cadeia(s: &Selecao<'_>, remote: &[&Registro], destino_informado: bool) -> Vec
         ),
         None => exigir(
             "emulacao",
-            &remote,
+            remote,
             &["emulate.start", "emulate.positioned"],
             missing_remote,
         ),
     };
-    let both = |nome, here, there| match (ultimo(&local, &[here]), ultimo(&remote, &[there])) {
+    let both = |nome, here, there| match (ultimo(local, &[here]), ultimo(remote, &[there])) {
         (Some(r), Some(_)) => passo(nome, Estado::Ok, Some(r), Some("confirmado nos dois lados")),
         _ => passo(
             nome,
@@ -453,12 +539,22 @@ fn cadeia(s: &Selecao<'_>, remote: &[&Registro], destino_informado: bool) -> Vec
             Some("fechamento com motivo conhecido não registrado"),
         ),
     };
+    let retorno =
+        match ultimo(remote, &["return.failed"]).or_else(|| ultimo(local, &["return.failed"])) {
+            Some(r) => passo(
+                "retorno",
+                Estado::Falhou,
+                Some(r),
+                r.texto("erro").or(Some("falha ao enviar retorno")),
+            ),
+            None => both("retorno", "return.received", "return.sent"),
+        };
     let mut steps = vec![
         session,
         entry,
         emulation,
         both("datagramas", "datagram.first", "datagram.first"),
-        both("retorno", "return.received", "return.sent"),
+        retorno,
         finish,
     ];
     if let Some(reason) = closed.and_then(|r| r.texto("motivo")).filter(|reason| {
@@ -623,7 +719,14 @@ pub(crate) fn executar(e: &Entrada) -> Result<Saida, FalhaVerificar> {
     };
     let mut passos = vec![local, remote_inventory, routes, capture, attempt];
     if selection.houve_tentativa {
-        passos.extend(cadeia(&selection, &destino, e.destino.is_some()));
+        let (session_remote, execucao) =
+            remotos_da_sessao(&selection, &destino, boot.and_then(|r| r.texto("id")), peer);
+        passos.extend(cadeia(
+            &selection,
+            &session_remote,
+            e.destino.is_some(),
+            execucao,
+        ));
     }
     let quebra = passos
         .iter()

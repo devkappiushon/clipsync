@@ -206,11 +206,12 @@ fn timed(mut e: Value, minute: u32, second: u32) -> Value {
 
 fn chain(minute: u32, session: u32, attempt: u32) -> (Vec<Value>, Vec<Value>) {
     let mut source: Vec<_> = ready().into_iter().map(|e| timed(e, minute, 0)).collect();
+    source.insert(0, timed(event("agent.up", json!({"id":"bb"})), minute, 0));
     for (second, name, data) in [
         (
             1,
             "attempt.begin",
-            json!({"attempt":attempt,"origem":"barrier"}),
+            json!({"attempt":attempt,"origem":"barrier","peer":"aa"}),
         ),
         (
             2,
@@ -233,7 +234,8 @@ fn chain(minute: u32, session: u32, attempt: u32) -> (Vec<Value>, Vec<Value>) {
     ] {
         source.push(timed(event(name, data), minute, second));
     }
-    let destination = [
+    let mut destination: Vec<Value> = [
+        (0,"agent.up",json!({"id":"aa"})),
         (0,"inventory.prepared",json!({"monitores":1})),
         (3,"enter.received",json!({"session":session,"peer":"bb","mensagem":"enter_routes"})),
         (4,"emulate.start",json!({"session":session,"adaptador":"fake"})),
@@ -241,6 +243,17 @@ fn chain(minute: u32, session: u32, attempt: u32) -> (Vec<Value>, Vec<Value>) {
         (6,"datagram.first",json!({"session":session})),
         (8,"return.sent",json!({"session":session,"totais":{"recebidos":1,"ignorados":0,"perdidos":0,"fora_de_ordem":0}})),
     ].into_iter().map(|(s,n,d)|timed(event(n,d),minute,s)).collect();
+    // Como os produtores reais: todo evento da sessão identifica o par remoto.
+    for r in &mut source {
+        if !r["session"].is_null() {
+            r["peer"] = json!("aa");
+        }
+    }
+    for r in &mut destination {
+        if !r["session"].is_null() {
+            r["peer"] = json!("bb");
+        }
+    }
     (source, destination)
 }
 
@@ -504,7 +517,14 @@ fn destino_sem_sessao_nao_le_rotacao_implicitamente() -> Result<(), Box<dyn Erro
     let (source, dest) = chain(0, 101, 1);
     write_log(&e.origem, &source)?;
     let path = e.destino.as_deref().ok_or("dest")?;
-    write_log(path, &dest[..1])?;
+    write_log(
+        path,
+        &dest
+            .iter()
+            .filter(|r| r["session"].is_null())
+            .cloned()
+            .collect::<Vec<_>>(),
+    )?;
     write_log(&path.with_extension("jsonl.1"), &dest)?;
     let out = verificar::executar(&e)?;
     assert!(out.quebra.is_none());
@@ -668,5 +688,213 @@ fn reinicio_do_destino_tambem_invalida_inventario_antigo() -> Result<(), Box<dyn
     assert!(out.passos[1].estado == Estado::SemDado);
     assert_eq!(out.json()["parada"], "inventario_destino");
     assert!(out.quebra.is_none());
+    Ok(())
+}
+
+#[test]
+fn destino_de_outro_peer_nao_confirma_nem_recusa_a_sessao() -> Result<(), Box<dyn Error>> {
+    let (source, mut dest) = chain(0, 101, 1);
+    for r in &mut dest {
+        if !r["session"].is_null() {
+            r["peer"] = json!("cc");
+        }
+    }
+    let out = run_logs(&source, &dest)?;
+    assert_eq!(out.json()["parada"], "entrada_destino");
+    assert!(out.quebra.is_none());
+    assert!(out.incompleta());
+    let (source, mut dest) = chain(0, 101, 1);
+    dest.push(timed(
+        event(
+            "enter.refused",
+            json!({"session":101,"peer":"cc","motivo":"locked"}),
+        ),
+        0,
+        7,
+    ));
+    let out = run_logs(&source, &dest)?;
+    assert!(out.quebra.is_none());
+    assert!(out.json()["parada"].is_null());
+    assert!(!out.incompleta());
+    Ok(())
+}
+
+#[test]
+fn destino_fora_da_execucao_ou_janela_nao_prova_sucesso() -> Result<(), Box<dyn Error>> {
+    for (minute, reboot) in [(0, false), (0, true), (30, false)] {
+        let (source, _) = chain(20, 101, 1);
+        let (_, mut dest) = chain(0, 101, 1);
+        for r in &mut dest {
+            if !r["session"].is_null() {
+                *r = timed(r.clone(), minute, 3);
+            }
+            if r["evento"] == "inventory.prepared" {
+                *r = timed(r.clone(), 20, 0);
+            }
+        }
+        if reboot {
+            dest.push(timed(event("agent.up", json!({"id":"aa"})), 10, 0));
+        }
+        let out = run_logs(&source, &dest)?;
+        assert_eq!(
+            out.json()["parada"],
+            "entrada_destino",
+            "minuto={minute}, reinício={reboot}"
+        );
+        assert!(out.quebra.is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn sem_identidade_da_execucao_nao_atribui_eventos_remotos() -> Result<(), Box<dyn Error>> {
+    for remote in [false, true] {
+        let (mut source, mut dest) = chain(0, 101, 1);
+        let target = if remote { &mut dest } else { &mut source };
+        target.retain(|v| v["evento"] != "agent.up");
+        let out = run_logs(&source, &dest)?;
+        assert_eq!(out.json()["parada"], "entrada_destino");
+        assert!(out.quebra.is_none());
+        assert!(out.texto().contains("execução não comprovada"));
+    }
+    Ok(())
+}
+
+#[test]
+fn troca_preserva_fechamento_anterior_sem_misturar_tentativas() -> Result<(), Box<dyn Error>> {
+    let dir = tempfile::tempdir()?;
+    let mut e = entrada(dir.path(), true);
+    e.ultima = false;
+    e.sessao = Some(101);
+    let (mut source, dest) = chain(0, 101, 1);
+    source.retain(|r| {
+        !matches!(
+            r["evento"].as_str(),
+            Some("session.closed" | "return.received")
+        )
+    });
+    source.extend([
+        timed(
+            event(
+                "attempt.begin",
+                json!({"attempt":2,"peer":"cc","origem":"switch"}),
+            ),
+            0,
+            7,
+        ),
+        timed(
+            event(
+                "session.closed",
+                json!({"attempt":1,"session":101,"peer":"aa","motivo":"switch"}),
+            ),
+            0,
+            8,
+        ),
+        timed(
+            event(
+                "session.open",
+                json!({"attempt":2,"session":202,"peer":"cc"}),
+            ),
+            0,
+            9,
+        ),
+        timed(
+            event(
+                "session.sent",
+                json!({"attempt":2,"session":202,"peer":"cc"}),
+            ),
+            0,
+            10,
+        ),
+    ]);
+    write_log(&e.origem, &source)?;
+    write_log(e.destino.as_deref().ok_or("destino")?, &dest)?;
+    let old = verificar::executar(&e)?;
+    assert_eq!(old.tentativa, Some(1));
+    assert!(old.passos[10].estado == Estado::Ok);
+    assert_eq!(old.passos[10].motivo.as_deref(), Some("switch"));
+    assert_eq!(old.json()["parada"], "retorno");
+    assert!(old.quebra.is_none());
+    e.sessao = Some(202);
+    let next = verificar::executar(&e)?;
+    assert_eq!(next.tentativa, Some(2));
+    assert!(next.passos[4].estado == Estado::Ok);
+    assert!(next.passos[10].estado == Estado::SemDado);
+    assert!(
+        !next.passos[10]
+            .linha
+            .as_ref()
+            .is_some_and(|line| line.contains("switch"))
+    );
+    Ok(())
+}
+
+#[test]
+fn novo_agent_up_impede_usar_fechamento_de_outra_execucao() -> Result<(), Box<dyn Error>> {
+    let (mut source, dest) = chain(0, 101, 1);
+    source.retain(|r| r["evento"] != "session.closed");
+    source.extend([
+        timed(event("agent.up", json!({"id":"bb"})), 0, 10),
+        timed(
+            event(
+                "session.closed",
+                json!({"attempt":1,"session":101,"peer":"aa","motivo":"return"}),
+            ),
+            0,
+            11,
+        ),
+    ]);
+    let dir = tempfile::tempdir()?;
+    let mut e = entrada(dir.path(), true);
+    e.ultima = false;
+    e.sessao = Some(101);
+    write_log(&e.origem, &source)?;
+    write_log(e.destino.as_deref().ok_or("destino")?, &dest)?;
+    let out = verificar::executar(&e)?;
+    assert!(out.passos[10].estado == Estado::SemDado);
+    assert!(out.quebra.is_none());
+    Ok(())
+}
+
+#[test]
+fn return_failed_do_par_prova_quebra_e_de_outro_par_e_ignorado() -> Result<(), Box<dyn Error>> {
+    let (mut source, mut dest) = chain(0, 101, 1);
+    source.retain(|r| {
+        !matches!(
+            r["evento"].as_str(),
+            Some("return.received" | "session.closed")
+        )
+    });
+    dest.retain(|r| r["evento"] != "return.sent");
+    dest.push(timed(
+        event(
+            "return.failed",
+            json!({"session":101,"peer":"bb","erro":"transport"}),
+        ),
+        0,
+        8,
+    ));
+    let out = run_logs(&source, &dest)?;
+    assert_eq!(out.quebra.as_deref(), Some("retorno"));
+    assert_eq!(out.passos[9].motivo.as_deref(), Some("transport"));
+    assert!(
+        out.passos[9]
+            .linha
+            .as_ref()
+            .is_some_and(|line| line.contains("return.failed"))
+    );
+    assert!(out.incompleta());
+    let (source, mut dest) = chain(0, 101, 1);
+    dest.push(timed(
+        event(
+            "return.failed",
+            json!({"session":101,"peer":"cc","erro":"transport"}),
+        ),
+        0,
+        8,
+    ));
+    let out = run_logs(&source, &dest)?;
+    assert!(out.quebra.is_none());
+    assert!(!out.incompleta());
     Ok(())
 }
