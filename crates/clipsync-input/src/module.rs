@@ -1616,16 +1616,62 @@ impl State {
             .map_or_else(|| id.short(), |p| p.name.clone())
     }
 
-    /// `return.sent`: the destination pushed the cursor back to the source (contract §17.2).
-    fn log_return_sent(&self, from: PeerId, session: u32, pos: f32) {
+    /// Protocol 3 message to `to`; kept for the backpressure harness, which drives the queue
+    /// directly. Production paths log through `send_return` and `refuse_on_with`.
+    #[cfg(test)]
+    fn send_v3(&mut self, to: PeerId, connection: u64, m: InputMsg) {
+        if !self
+            .host
+            .peers()
+            .iter()
+            .any(|p| p.id == to && p.remote_version >= SPAN_PROTOCOL)
+        {
+            return;
+        }
+        let host = self.host.clone();
+        if !self.network.spawn(async move {
+            host.send_reliable_on(to, connection, ModuleMsg::Input(m))
+                .await
+        }) {
+            self.last_block = Some(msg::NETWORK_BUSY.into());
+        }
+    }
+
+    /// Sends the way back and logs `return.sent` only after the send succeeds; a failure or a
+    /// full queue is `return.failed` with the reason (contract §17.2).
+    fn send_return(&mut self, to: PeerId, connection: u64, m: InputMsg, session: u32, pos: f32) {
         let (recebidos, perdidos, fora_de_ordem) = self
             .incoming
-            .get(&from)
+            .get(&to)
             .map_or((0, 0, 0), |i| (i.received, i.lost, i.out_of_order));
         let totais = format!(
             "{{\"recebidos\":{recebidos},\"perdidos\":{perdidos},\"fora_de_ordem\":{fora_de_ordem}}}"
         );
-        tracing::info!(evento = "return.sent", session, peer = %from, pos = capture::frac3(pos), totais = %totais, "cursor returned to the source");
+        let pos = capture::frac3(pos);
+        if !self
+            .host
+            .peers()
+            .iter()
+            .any(|p| p.id == to && p.remote_version >= SPAN_PROTOCOL)
+        {
+            tracing::info!(evento = "return.failed", session, peer = %to, erro = "peer_too_old", "way back not sent");
+            return;
+        }
+        let host = self.host.clone();
+        let queued = self.network.spawn(async move {
+            let sent = host
+                .send_reliable_on(to, connection, ModuleMsg::Input(m))
+                .await;
+            match &sent {
+                Ok(()) => tracing::info!(evento = "return.sent", session, peer = %to, pos, totais = %totais, "cursor returned to the source"),
+                Err(e) => tracing::info!(evento = "return.failed", session, peer = %to, erro = capture::send_error_code(e), "way back not sent"),
+            }
+            sent
+        });
+        if !queued {
+            tracing::info!(evento = "return.failed", session, peer = %to, erro = "network_busy", "way back not queued");
+            self.last_block = Some(msg::NETWORK_BUSY.into());
+        }
     }
 
     /// `Enter`, `EnterAt` and `EnterSpan` (`back` is the way-back span of the last one).
@@ -1681,8 +1727,8 @@ impl State {
             );
             return;
         }
+        tracing::info!(evento = "emulate.start", session, peer = %from, adaptador = self.emu.name(), reutilizado = self.emu_started, "emulator in use");
         if !self.emu_started {
-            tracing::info!(evento = "emulate.start", session, peer = %from, adaptador = self.emu.name(), "emulator starting");
             match self.emu.start().await {
                 Ok(()) => self.emu_started = true,
                 Err(e) => {
@@ -1808,14 +1854,15 @@ impl State {
         reason: RejectReason,
         motivo: &'static str,
     ) {
-        tracing::info!(evento = "enter.refused", session, peer = %to, motivo, "entry refused");
         let host = self.host.clone();
         let v3 = host
             .peers()
             .iter()
             .any(|p| p.id == to && p.remote_version >= SPAN_PROTOCOL);
-        if !self.network.spawn(async move {
-            if v3 {
+        // One `enter.refused` per refusal, emitted with the real state of the notice: after the
+        // send, or at once when it could not even be queued.
+        let queued = self.network.spawn(async move {
+            let sent = if v3 {
                 host.send_reliable_on(
                     to,
                     connection,
@@ -1824,25 +1871,15 @@ impl State {
                 .await
             } else {
                 host.reject_input_on(to, connection, reason).await
+            };
+            match &sent {
+                Ok(()) => tracing::info!(evento = "enter.refused", session, peer = %to, motivo, enviada = true, "entry refused"),
+                Err(e) => tracing::info!(evento = "enter.refused", session, peer = %to, motivo, enviada = false, erro = capture::send_error_code(e), "entry refused, notice not sent"),
             }
-        }) {
-            self.last_block = Some(msg::NETWORK_BUSY.into());
-        }
-    }
-    fn send_v3(&mut self, to: PeerId, connection: u64, m: InputMsg) {
-        if !self
-            .host
-            .peers()
-            .iter()
-            .any(|p| p.id == to && p.remote_version >= SPAN_PROTOCOL)
-        {
-            return;
-        }
-        let host = self.host.clone();
-        if !self.network.spawn(async move {
-            host.send_reliable_on(to, connection, ModuleMsg::Input(m))
-                .await
-        }) {
+            sent
+        });
+        if !queued {
+            tracing::info!(evento = "enter.refused", session, peer = %to, motivo, enviada = false, erro = "network_busy", "entry refused, notice not queued");
             self.last_block = Some(msg::NETWORK_BUSY.into());
         }
     }
@@ -1891,6 +1928,8 @@ impl State {
                 inc.lost += u64::from(dg.seq - last - 1);
                 inc.last_seq = Some(dg.seq);
             }
+            // An exact duplicate of the last datagram fills no gap; an older one is assumed to.
+            Some(last) if dg.seq == last => inc.out_of_order += 1,
             Some(_) => {
                 inc.out_of_order += 1;
                 inc.lost = inc.lost.saturating_sub(1);
@@ -1928,6 +1967,7 @@ impl State {
             && !events.is_empty()
             && let Err(e) = self.emu.emit(&events).await
         {
+            tracing::info!(evento = "emulate.error", session, peer = %from, adaptador = self.emu.name(), erro = %e, "emulation failed after entry");
             if v4 || matches!(e, InputError::Locked) {
                 // The screen locked in the middle of the session: the source gets the cursor back.
                 self.incoming.remove(&from);
@@ -1956,23 +1996,30 @@ impl State {
             }
         }
         if let Some(returned) = returned_route {
-            self.log_return_sent(from, session, returned.pos);
+            let pos = returned.pos;
             if let Some(i) = self.incoming.get_mut(&from) {
                 i.active = false;
             }
             self.release_all().await;
-            self.send_v3(from, context.connection, InputMsg::ReturnedRoute(returned));
+            self.send_return(
+                from,
+                context.connection,
+                InputMsg::ReturnedRoute(returned),
+                session,
+                pos,
+            );
         }
         if let Some(pos) = returned {
-            self.log_return_sent(from, session, pos);
             if let Some(i) = self.incoming.get_mut(&from) {
                 i.active = false;
             }
             self.release_all().await;
-            self.send_v3(
+            self.send_return(
                 from,
                 context.connection,
                 InputMsg::Returned { session, pos },
+                session,
+                pos,
             );
             let name = self.peer_name(from);
             self.last_event = Some(msg::returned_from(&name));

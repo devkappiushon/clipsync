@@ -886,7 +886,10 @@ impl EmulateAdapter for PortalEmulate {
         let fd = rd
             .connect_to_eis(&session, RdConnectOptions::default())
             .await
-            .map_err(map_err)?;
+            .map_err(|e| {
+                tracing::info!(evento = "portal.connect_eis", portal = "remote_desktop", motivo = "refused", erro = %e, "EIS connection refused");
+                map_err(e)
+            })?;
         tracing::info!(
             evento = "portal.connect_eis",
             portal = "remote_desktop",

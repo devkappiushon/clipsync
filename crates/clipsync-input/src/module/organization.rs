@@ -564,8 +564,8 @@ impl State {
         {
             return;
         }
+        tracing::info!(evento = "emulate.start", session = entry.session, peer = %from, adaptador = self.emu.name(), reutilizado = self.emu_started, "emulator in use");
         if !self.emu_started {
-            tracing::info!(evento = "emulate.start", session = entry.session, peer = %from, adaptador = self.emu.name(), "emulator starting");
             if let Err(e) = self.emu.start().await {
                 tracing::info!(evento = "emulate.error", session = entry.session, peer = %from, adaptador = self.emu.name(), erro = %e, "emulator did not start");
                 self.release_all().await;

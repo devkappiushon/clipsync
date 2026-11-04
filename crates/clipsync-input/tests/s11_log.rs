@@ -12,7 +12,8 @@ use clipsync_input::layout_document::{LayoutDocument, Organization};
 use clipsync_input::monitor_identities::{Evidence, Observation};
 use clipsync_input::{
     BarrierSpec, CaptureAdapter, CaptureEvent, FakeCapture, FakeCaptureHandle, FakeEmulate,
-    InputConfig, InputError, Layout, LayoutDevice, LayoutOptions, Zone, build_with_layout,
+    FakeEmulateHandle, InputConfig, InputError, Layout, LayoutDevice, LayoutOptions, Zone,
+    build_with_layout,
 };
 use clipsync_proto::monitors::*;
 use clipsync_proto::*;
@@ -37,6 +38,7 @@ struct Node {
     id: PeerId,
     host: Arc<dyn ModuleHost>,
     tx: mpsc::Sender<ModuleInput>,
+    emu: FakeEmulateHandle,
     _dir: tempfile::TempDir,
 }
 
@@ -137,7 +139,7 @@ fn fake(observation: &ObservedMonitors) -> Box<dyn CaptureAdapter> {
 
 fn spawn(hub: &MemHub, name: &str, dir: tempfile::TempDir, cap: Box<dyn CaptureAdapter>) -> Node {
     let node = hub.add_node(name, INPUT);
-    let (emu, _emu) = FakeEmulate::new();
+    let (emu, emu_handle) = FakeEmulate::new();
     let module = build_with_layout(InputConfig::default(), cap, Box::new(emu), dir.path()).unwrap();
     let host = node.host.clone();
     tokio::spawn(module.run(node.host, node.rx));
@@ -145,6 +147,7 @@ fn spawn(hub: &MemHub, name: &str, dir: tempfile::TempDir, cap: Box<dyn CaptureA
         id: node.id,
         host,
         tx: node.tx,
+        emu: emu_handle,
         _dir: dir,
     }
 }
@@ -1134,6 +1137,11 @@ async fn destino_conta_primeiro_datagrama_e_retorno() {
         "{retorno:?}"
     );
     assert_eq!(totais["perdidos"].as_u64(), Some(0), "{retorno:?}");
+    assert!(
+        !captura.tem("return.failed"),
+        "{:?}",
+        captura.todos("return.failed")
+    );
 }
 
 /// The continuous capture logs when it starts, with the barrier count, and when it stops.
@@ -1232,4 +1240,122 @@ async fn capture_ready_descreve_o_trecho_instalado() {
         trecho[1].as_f64().unwrap() < 1.0,
         "o canto morto recorta o fim do trecho: {pronto:?}"
     );
+}
+
+// --------------------------------------------------------------- ajustes de revisão (Argus T7/T8)
+
+/// Every entry logs `emulate.start`; the second one says the adapter was reused.
+#[tokio::test]
+async fn segunda_sessao_tem_emulate_start() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let a = hub.add_node("a", INPUT);
+    let b_id = node_id("b");
+    let dir = tempfile::tempdir().unwrap();
+    write_devices(dir.path(), &[a.id, b_id]);
+    let b = spawn(&hub, "b", dir, fake(&receiver_observation("N", "ib")));
+    hub.set_remote_version(a.id, 1);
+    hub.link(a.id, b.id, PeerPerms::default(), CONTROL);
+    settle(&b).await;
+    until("inventory.prepared", || captura.tem("inventory.prepared")).await;
+    settle(&b).await;
+    let entrar = |session: u32| {
+        ModuleMsg::Input(InputMsg::Enter {
+            session,
+            edge: Edge::Left,
+            pos: 0.25,
+        })
+    };
+    a.host.send_reliable(b.id, entrar(81)).await.unwrap();
+    until("posicionada 81", || {
+        captura
+            .todos("emulate.positioned")
+            .iter()
+            .any(|e| e.campo("session") == Some("81"))
+    })
+    .await;
+    a.host
+        .send_reliable(b.id, ModuleMsg::Input(InputMsg::Leave { session: 81 }))
+        .await
+        .unwrap();
+    settle(&b).await;
+    a.host.send_reliable(b.id, entrar(82)).await.unwrap();
+    until("posicionada 82", || {
+        captura
+            .todos("emulate.positioned")
+            .iter()
+            .any(|e| e.campo("session") == Some("82"))
+    })
+    .await;
+    let inicios = captura.todos("emulate.start");
+    assert_eq!(inicios.len(), 2, "{inicios:?}");
+    assert_eq!(
+        inicios[0].campo("reutilizado"),
+        Some("false"),
+        "{inicios:?}"
+    );
+    assert_eq!(inicios[1].campo("session"), Some("82"), "{inicios:?}");
+    assert_eq!(inicios[1].campo("reutilizado"), Some("true"), "{inicios:?}");
+}
+
+/// Emulation that fails after the entry is positioned shows up as `emulate.error`.
+#[tokio::test]
+async fn falha_de_emissao_gera_emulate_error() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let a = hub.add_node("a", INPUT);
+    let b_id = node_id("b");
+    let dir = tempfile::tempdir().unwrap();
+    write_devices(dir.path(), &[a.id, b_id]);
+    let b = spawn(&hub, "b", dir, fake(&receiver_observation("N", "ib")));
+    hub.set_remote_version(a.id, 3);
+    hub.link(a.id, b.id, PeerPerms::default(), CONTROL);
+    settle(&b).await;
+    until("inventory.prepared", || captura.tem("inventory.prepared")).await;
+    settle(&b).await;
+    a.host
+        .send_reliable(
+            b.id,
+            ModuleMsg::Input(InputMsg::EnterSpan {
+                session: 53,
+                edge: Edge::Left,
+                monitor: None,
+                pos: 0.5,
+                back_from: 0.0,
+                back_to: 1.0,
+            }),
+        )
+        .await
+        .unwrap();
+    until("emulate.positioned", || captura.tem("emulate.positioned")).await;
+    b.emu.set_locked(true);
+    a.host
+        .send_datagram(
+            b.id,
+            InputDatagram {
+                session: 53,
+                seq: 0,
+                t_mono_us: 0,
+                events: vec![InputEvent::Motion { dx: 1.0, dy: 0.0 }],
+            },
+        )
+        .unwrap();
+    until("emulate.error", || captura.tem("emulate.error")).await;
+    let erro = captura.primeiro("emulate.error").expect("emulate.error");
+    assert_eq!(erro.campo("session"), Some("53"), "{erro:?}");
+    assert_eq!(erro.campo("adaptador"), Some("fake"), "{erro:?}");
+    until("enter.refused", || {
+        captura
+            .todos("enter.refused")
+            .iter()
+            .any(|e| e.campo("session") == Some("53"))
+    })
+    .await;
+    let recusa = captura
+        .todos("enter.refused")
+        .into_iter()
+        .find(|e| e.campo("session") == Some("53"))
+        .expect("enter.refused 53");
+    assert_eq!(recusa.campo("motivo"), Some("locked"), "{recusa:?}");
+    assert_eq!(recusa.campo("enviada"), Some("true"), "{recusa:?}");
 }
