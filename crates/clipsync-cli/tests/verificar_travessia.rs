@@ -80,7 +80,10 @@ fn tudo_pronto_sem_tentativa() -> Result<(), Box<dyn Error>> {
     write_log(&e.origem, &ready())?;
     write_log(
         e.destino.as_deref().ok_or("destino")?,
-        &[event("inventory.prepared", json!({"monitores":1}))],
+        &[
+            event("agent.up", json!({"id":"aa"})),
+            event("inventory.prepared", json!({"monitores":1})),
+        ],
     )?;
     let output = verificar::executar(&e)?;
     assert_eq!(output.passos.len(), 5);
@@ -187,7 +190,10 @@ fn preparado_no_destino_sem_recebimento_explicita_lacuna() -> Result<(), Box<dyn
     write_log(&e.origem, &events)?;
     write_log(
         e.destino.as_deref().ok_or("destino")?,
-        &[event("inventory.prepared", json!({"monitores":1}))],
+        &[
+            event("agent.up", json!({"id":"aa"})),
+            event("inventory.prepared", json!({"monitores":1})),
+        ],
     )?;
     let output = verificar::executar(&e)?;
     assert_eq!(
@@ -753,7 +759,14 @@ fn sem_identidade_da_execucao_nao_atribui_eventos_remotos() -> Result<(), Box<dy
         let target = if remote { &mut dest } else { &mut source };
         target.retain(|v| v["evento"] != "agent.up");
         let out = run_logs(&source, &dest)?;
-        assert_eq!(out.json()["parada"], "entrada_destino");
+        assert_eq!(
+            out.json()["parada"],
+            if remote {
+                "inventario_destino"
+            } else {
+                "entrada_destino"
+            }
+        );
         assert!(out.quebra.is_none());
         assert!(out.texto().contains("execução não comprovada"));
     }
@@ -896,5 +909,86 @@ fn return_failed_do_par_prova_quebra_e_de_outro_par_e_ignorado() -> Result<(), B
     let out = run_logs(&source, &dest)?;
     assert!(out.quebra.is_none());
     assert!(!out.incompleta());
+    Ok(())
+}
+
+#[test]
+fn inventario_remoto_exige_identidade_do_par_selecionado() -> Result<(), Box<dyn Error>> {
+    for count in [0, 1] {
+        let (source, mut destination) = chain(0, 101, 1);
+        destination[0]["id"] = json!("cc");
+        destination[1]["monitores"] = json!(count);
+        let out = run_logs(&source, &destination)?;
+        let inventory = &out.passos[1];
+        assert!(
+            inventory.estado == Estado::SemDado,
+            "usou inventário de outro par com {count} monitores"
+        );
+        assert!(inventory.linha.is_none());
+        assert!(
+            inventory
+                .motivo
+                .as_deref()
+                .is_some_and(|reason| reason.contains("execução não comprovada"))
+        );
+        assert!(out.quebra.is_none());
+        assert_eq!(out.json()["parada"], "inventario_destino");
+        assert!(out.incompleta());
+        destination.remove(0);
+        let out = run_logs(&source, &destination)?;
+        assert!(out.passos[1].estado == Estado::SemDado);
+        assert!(out.quebra.is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn tentativa_sem_abertura_nao_herda_fechamento_da_anterior() -> Result<(), Box<dyn Error>> {
+    for filtered in [false, true] {
+        let (mut source, destination) = chain(0, 101, 1);
+        source.retain(|r| {
+            r["ts"]
+                .as_str()
+                .is_some_and(|ts| ts < "2026-11-04T14:00:07.000Z")
+        });
+        source.extend([
+            timed(
+                event(
+                    "attempt.begin",
+                    json!({"attempt":2,"peer":"aa","origem":"switch"}),
+                ),
+                0,
+                7,
+            ),
+            timed(
+                event(
+                    "session.closed",
+                    json!({"attempt":1,"session":101,"peer":"aa","motivo":"switch"}),
+                ),
+                0,
+                8,
+            ),
+        ]);
+        if filtered {
+            source.push(timed(
+                event(
+                    "attempt.filtered",
+                    json!({"attempt":2,"peer":"aa","motivo":"inventory_changed"}),
+                ),
+                0,
+                9,
+            ));
+        }
+        let out = run_logs(&source, &destination)?;
+        assert_eq!(out.tentativa, Some(2));
+        assert_eq!(
+            out.sessao, None,
+            "herdou sessão anterior; filtered={filtered}"
+        );
+        assert!(out.passos[10].estado == Estado::SemDado);
+        assert!(out.passos[10].linha.is_none());
+        assert!(out.incompleta());
+        assert_eq!(out.quebra.as_deref(), filtered.then_some("tentativa"));
+    }
     Ok(())
 }

@@ -336,7 +336,18 @@ fn selecionar<'a>(records: &[&'a Registro], e: &Entrada) -> Selecao<'a> {
         .skip(anchor + 1)
         .find(|(_, r)| r.evento == "attempt.begin" || r.evento == "agent.up")
         .map_or(records.len(), |(i, _)| i);
-    let eventos = records[start..end].to_vec();
+    let tentativa = records[start]
+        .numero("attempt")
+        .or_else(|| chosen.numero("attempt"));
+    // Um fechamento por switch pode entrar nesta janela depois do begin novo.
+    // O attempt explícito de outro ciclo não serve para inferir sua sessão.
+    let eventos: Vec<_> = records[start..end]
+        .iter()
+        .copied()
+        .filter(|r| {
+            tentativa.is_none_or(|wanted| r.numero("attempt").is_none_or(|actual| actual == wanted))
+        })
+        .collect();
     let begin = eventos.iter().copied().find(|r| inicio(r));
     let opening = ultimo(&eventos, &["session.open"]);
     let sessao = e
@@ -626,7 +637,11 @@ pub(crate) fn executar(e: &Entrada) -> Result<Saida, FalhaVerificar> {
         "inventario_origem",
         ultimo(&prerequisites, &["inventory.prepared"]),
     );
-    let remote_prepared = ultimo(&remote, &["inventory.prepared"]);
+    let remote_identified =
+        peer.is_some_and(|p| !p.is_empty() && remote_boot.and_then(|r| r.texto("id")) == Some(p));
+    let remote_prepared = remote_identified
+        .then(|| ultimo(&remote, &["inventory.prepared"]))
+        .flatten();
     let remote_inventory = match received {
         Some(r) if r.evento == "inventory.missing" => passo(
             "inventario_destino",
@@ -639,6 +654,12 @@ pub(crate) fn executar(e: &Entrada) -> Result<Saida, FalhaVerificar> {
             Estado::SemDado,
             None,
             Some("arquivo do destino não informado"),
+        ),
+        _ if !remote_identified => passo(
+            "inventario_destino",
+            Estado::SemDado,
+            None,
+            Some("execução não comprovada: agent.up do destino não identifica o par selecionado"),
         ),
         None if remote_prepared.is_some() => passo(
             "inventario_destino",
