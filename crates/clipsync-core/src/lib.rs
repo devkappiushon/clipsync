@@ -8,6 +8,7 @@ use clipsync_proto::CloseCode;
 pub mod agent;
 pub mod control;
 pub mod diag;
+pub mod logging;
 pub mod msg;
 pub mod pairing;
 pub mod profile;
