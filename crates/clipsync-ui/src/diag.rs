@@ -836,6 +836,11 @@ fn known_log_text(key: &str, text: &str) -> bool {
                 | "apply_failed"
                 | "version_mismatch"
                 | "send_failed"
+                | "stopped"
+                | "emulator_start_failed"
+                | "entry_positioning_failed"
+                | "route_invalid"
+                | "inventory_unconfirmed"
         ),
         "mensagem" => matches!(text, "enter_routes" | "enter_span" | "enter_at" | "enter"),
         "origem" => matches!(text, "barrier" | "switch" | "test"),
@@ -1850,6 +1855,39 @@ mod tests {
                 "chave {field} não autoriza texto livre"
             );
         }
+    }
+
+    #[test]
+    fn cauda_preserva_motivos_do_loopback_e_das_recusas_de_entrada() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = clipsync_core::logging::log_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let g = Gathered {
+            diag: serde_json::from_value(serde_json::json!({"items":[],"network":{"listen":null,"addresses":[],"peers":[]},"blocks":[]})).unwrap(),
+            status: None, devices: vec![], device_name: None,
+        };
+        let read_row = |motivo: &str| {
+            let raw = serde_json::json!({
+                "v":1, "ts":"2026-11-04T14:00:00.123Z", "evento":"enter.refused", "nivel":"info",
+                "alvo":"clipsync_input::module::organization", "motivo":motivo, "session":7,
+            });
+            std::fs::write(&path, raw.to_string()).unwrap();
+            let preview = preview_with_log(&g, dir.path());
+            let row: serde_json::Value =
+                serde_json::from_str(preview.text.split(LOG_HEADER).nth(1).unwrap().trim())
+                    .unwrap();
+            row["motivo"].clone()
+        };
+        for motivo in [
+            "stopped",
+            "emulator_start_failed",
+            "entry_positioning_failed",
+            "route_invalid",
+            "inventory_unconfirmed",
+        ] {
+            assert_eq!(read_row(motivo), motivo, "motivo {motivo} some da cauda");
+        }
+        assert_eq!(read_row("falha em /home/pessoa/arquivo"), "<texto omitido>");
     }
 
     #[test]
