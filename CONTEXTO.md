@@ -3,36 +3,30 @@
 **Atualizado:** 2026-11-04 (sessão do Maestro · scaffold)
 
 ## Onde estou
-A v0.5.0 está publicada (31/10/2026, commit `590c137`, o mesmo da `main`). Esta sessão preparou o repositório para ficar público, fechou a documentação da versão (andar DOC: README e quatro guias) e concluiu a revisão visual da interface. Commits `e3925b4` (interface) e `af7e089` (docs e capturas) enviados para a `main` em 04/11/2026; repositório público e `main` protegida contra force-push e deleção.
+Plano "diagnóstico verificável por log" (`docs/superpowers/plans/2026-11-04-diagnostico-por-log.md`, contrato §17) em execução para o usuário conseguir, com a IA, ler nos logs das duas máquinas onde a travessia do mouse para. Fatias 1, 2a, 2b, 3 e 5 commitadas na `main` local; fatia 4 (pacote de suporte e tela Diagnóstico) com o Rivet. Tudo sem push: aguarda o `push` do usuário para enviar a `main` e disparar o empacotamento manual (artefatos, sem release).
 
 ## Estado real (verificado)
-- `main` = tag `v0.5.0` = `590c137`; release com 6 pacotes + `SHA256SUMS`, CI `41161430657` e empacotamento `41161435861` verdes (`gh release view`, `gh run list`).
-- Árvore sem segredo, chave ou token; caminhos `/home/...`, nome de host, IP da LAN e ids reais anonimizados em `docs/` (`git grep`: zero ocorrências). O histórico do git ainda os contém; reescrever invalidaria as 7 tags e os links dos releases.
-- `.superpowers/` (834 MB) e `retomada-b07/` entraram no `.gitignore`.
-- Revisão visual feita em 04/11 pelo portal `Telas Maestro` (10 capturas, 1280×800 e 960×640, claro e escuro). Quatro ajustes de CSS e a versão do mock em 0.5.0, registrados em `docs/contrato.md` §16.6; tabelas com `scrollWidth` igual a `clientWidth` em 1280 e 960 (portal `evaluate`).
-- Capturas novas em `docs/telas/v0.5.0/` (sete telas, webp); o README mostra Dispositivos e Layout.
-- Node 268/268; `conferir-unsafe.sh` e `conferir-privacidade.sh` ok; grep do critério §12.9 item 5 (estilo em linha, `innerHTML`, travessão) vazio em `ui/`.
-- Portal criado novo pelo CLI fica fora da área visível do canvas e não renderiza para `screenshot`; o portal antigo `Telas Maestro` (do Maestro #3) captura normalmente.
-- Release v0.5.0 no GitHub com as notas de `docs/releases/v0.5.0.md` em links absolutos (`gh release view`: 4 links `blob/main/docs/`). CI do push: run `41767599534` (Node verde; Linux e Windows em andamento às 11h de 04/11).
-- `crates/clipsync-input/src/adapter/portal.rs` tem uma alteração não commitada de 03/11 09:27 (EventSink, um único `ConnectToEIS` por sessão do portal), de outro agente; ficou fora dos commits.
-- Guias do andar DOC aplicados a partir de `/tmp/clipsync-doc-r3-2026-11-03` (hashes 6/6, 0 links quebrados, Sentinel PASSA 5/5, Fact e Argus sem achado remanescente).
+- Commits locais desde `f179b4f`: `f7cb334`, `0db8a2d`, `9258ed6`, `65ca7c6`, `d1136b7`, `89aba99`, `ba0fcbd`, `239b715`, `f5e55aa`, `188b10d`, `954ff90` (`git log --oneline f179b4f..HEAD`).
+- Input: 20 binários de teste verdes, `tests/s11_log.rs` 18/18; clippy e fmt limpos (`cargo test -p clipsync-input --locked`). Core, proto, CLI e UI: 397 testes verdes na T2 (Rivet), CLI 52/52 na T9; `cargo fmt --all -- --check` ok no workspace.
+- `./target/debug/clipsync verificar-travessia` reproduz o caso do usuário com logs sintéticos: quebra em `rotas` (`no_remote_inventory`), parada em `inventario_destino`, código 1 (amostra em `docs/verificar-por-log.md`).
+- Revisões: Sentinel PASSA T1 (2 Minor absorvidos) e T2-bis (`ba0fcbd`); Argus reprovou T1, T2, T3, T4, T5+T6 com achados tratados em `0db8a2d`, `ba0fcbd`, `f5e55aa` e `188b10d`; re-revisões de `188b10d`, `239b715` e `f5e55aa` pendentes em `docs/verdicts.md`.
+- Time: Vector, Keel, Bolt, Flux e Pixel sem cota (OpenCode gratuito); Rivet e Argus (Codex) e Sentinel ativos. O Maestro fez as fatias do input e as decisões de plano; F4 passou de Pixel para Rivet.
+- `portal.rs` (EventSink): reprovado pelo Argus com 3 Important; guardado no ramo `wip/portal-eis-link` (`505bcaa`), fora da `main`.
+- Simulador em 5174 no ar para a F4 do Rivet (`curl` 200); derrubar ao fim.
+- Repositório público desde 04/11; `main` protegida contra force-push e deleção; v0.5.0 com notas de links absolutos; v0.5.1 não publicada.
 
 ## Próximo passo
-Conferir o CI do push (`gh run view 41767599534`); se verde, seguir para a validação física de `docs/pendencias-v0.5.0.md`. Decidir com Vector · input o destino da alteração em `portal.rs`.
+Com o `push` do usuário: `git push origin main`, depois `gh workflow run release.yml --ref main` para gerar os artefatos; o usuário instala nas duas máquinas, tenta a travessia, copia `logs/clipsync.jsonl` de cada uma e roda o verificador (`docs/verificar-por-log.md`). Em paralelo: fechar F4 (Rivet) e as re-revisões do Argus; só então a tag v0.5.1.
 
 ## Decidido (não reabrir)
 - Licença continua "Todos os direitos reservados" até o usuário escolher.
-- Input Leap fica até o módulo de entrada do ClipSync rodar nas máquinas reais.
-- Borda por monitor e por segmento é requisito central.
-- Mock e galeria de componentes ficam fora do pacote (`ui-dev`), achado S6-03.
-- Incidente do teclado que não digita foi adiado em 2026-10-30.
-- T4-SEG-01 (corrida no backup) fica diferido e não bloqueia release.
-- Nenhum agente sobe servidor: o simulador em 5174 é do Maestro.
-- Recurso sem backend permanece visível e desabilitado (regra do `ui/README.md`): a tabela de Atalhos no Linux não vira um aviso único.
+- Notebook é só destino; o PC Windows é a origem com o mouse físico.
+- `[falhou]` só com prova explícita; ausência é `[sem dado]` e vira `parada`; códigos 0/1/2/3 conforme §17.3.
+- Sem crate novo; escritor único fechado com o agente; conteúdo, tecla e keycode nunca entram no log.
+- Pareceres do Argus ficam em `docs/verdicts.md` (o `ask` dele não alcança o Maestro).
+- `hooks.installed/dropped` do Windows e `ignorados` por sessão ficaram fora desta rodada (plano, seção Decisões).
 
 ## Aberto
-- Histórico do git, agora público, contém caminhos `/home/...` e nome de host antigos; reescrever invalidaria tags e links (aceito por omissão).
-- `portal.rs`: alteração de outro agente sem dono confirmado; não commitar sem revisão.
-- Figma não reflete a v0.5.0.
-- Teste físico nas duas máquinas: lista única em `docs/pendencias-v0.5.0.md`.
-- O script `resumo-diario` sobrescreve este arquivo com conteúdo de outros projetos (Roblox apareceu aqui em 03/11); decidir se o arquivo sai do git ou se o script passa a escrever só sobre este projeto.
+- Prova física nas duas máquinas: depende dos artefatos e do usuário.
+- O script `resumo-diario` continua sobrescrevendo este arquivo (aconteceu de novo em 04/11 07:34); decidir se sai do git ou se o script muda.
+- Figma não reflete a v0.5.0; `pendencias-v0.5.0.md` §1 segue aberta.
