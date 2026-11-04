@@ -304,6 +304,7 @@ fn state(host: Arc<dyn ModuleHost>) -> State {
         suspended: false,
         retry_on_zones: false,
         targets_key: String::new(),
+        routes_logged: None,
         cap_can_begin: true,
         resume_refused: false,
     }

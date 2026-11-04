@@ -309,6 +309,8 @@ struct State {
     retry_on_zones: bool,
     /// The targets the engine runs with, to retarget only on a real change.
     targets_key: String,
+    /// Last `routes.*` line emitted, so a route build is logged only when it changes.
+    routes_logged: Option<String>,
     /// The adapter can start a capture without a crossing (`can_begin`): a switch by button works.
     cap_can_begin: bool,
     /// The system refused Win+Alt+P as the way to resume: only the tray and the button are left.
@@ -370,6 +372,7 @@ impl Module for InputModule {
             suspended: false,
             retry_on_zones: false,
             targets_key: String::new(),
+            routes_logged: None,
             resume_refused: false,
             cap_can_begin: true,
         };
@@ -919,12 +922,36 @@ impl State {
     /// The barriers that exist on these zones. A link whose monitor is missing waits for it
     /// (§13.8 item 3); `report` says why in `last_block`.
     fn build_targets(&mut self, zones: &[Zone], report: bool) -> Vec<Target> {
-        if self
+        let organized = self
             .organization
             .document
             .as_ref()
-            .is_some_and(|d| d.organization.is_some())
-        {
+            .is_some_and(|d| d.organization.is_some());
+        let legacy_links = if organized {
+            0
+        } else {
+            self.derived_links().len()
+        };
+        let targets = self.compute_targets(zones, report, organized);
+        let (rotas, motivo) = if organized {
+            (
+                self.organization.route_links,
+                self.organization.route_reason,
+            )
+        } else if legacy_links == 0 {
+            (0, Some("no_links"))
+        } else {
+            (
+                legacy_links,
+                targets.is_empty().then_some("local_monitor_missing"),
+            )
+        };
+        log_routes(&mut self.routes_logged, rotas, &targets, motivo);
+        targets
+    }
+
+    fn compute_targets(&mut self, zones: &[Zone], report: bool, organized: bool) -> Vec<Target> {
+        if organized {
             return self.organization_targets(zones);
         }
 
@@ -1416,6 +1443,7 @@ impl State {
                 });
             }
             InputMsg::Enter { session, edge, pos } => {
+                tracing::info!(evento = "enter.received", session, peer = %from, mensagem = "enter", "entry received");
                 self.on_enter(
                     from,
                     session,
@@ -1435,6 +1463,7 @@ impl State {
                 monitor,
                 pos,
             } => {
+                tracing::info!(evento = "enter.received", session, peer = %from, mensagem = "enter_at", "entry received");
                 self.on_enter(
                     from,
                     session,
@@ -1456,6 +1485,7 @@ impl State {
                 back_from,
                 back_to,
             } => {
+                tracing::info!(evento = "enter.received", session, peer = %from, mensagem = "enter_span", "entry received");
                 self.on_enter(
                     from,
                     session,
@@ -1725,6 +1755,7 @@ impl State {
         }
     }
     fn refuse_on(&mut self, to: PeerId, session: u32, connection: u64, reason: RejectReason) {
+        tracing::info!(evento = "enter.refused", session, peer = %to, motivo = reject_code(reason), "entry refused");
         let host = self.host.clone();
         let v3 = host
             .peers()
@@ -2256,6 +2287,51 @@ async fn drive(
 /// A comparable summary of a set of targets: a retarget only happens when it changes.
 fn targets_key(targets: &[Target]) -> String {
     format!("{targets:?}")
+}
+
+/// `RejectReason` in the snake_case the log vocabulary uses (contract §17.2).
+fn reject_code(reason: RejectReason) -> &'static str {
+    match reason {
+        RejectReason::ModuleDisabled => "module_disabled",
+        RejectReason::NotAuthorized => "not_authorized",
+        RejectReason::Paused => "paused",
+        RejectReason::TooLarge => "too_large",
+        RejectReason::Invalid => "invalid",
+        RejectReason::Duplicate => "duplicate",
+        RejectReason::Stale => "stale",
+        RejectReason::Expired => "expired",
+        RejectReason::ApplyFailed => "apply_failed",
+        RejectReason::Locked => "locked",
+        RejectReason::VersionMismatch => "version_mismatch",
+    }
+}
+
+/// `routes.built` or `routes.empty`, once per distinct result (contract §17.2).
+fn log_routes(
+    last: &mut Option<String>,
+    rotas: usize,
+    targets: &[Target],
+    motivo: Option<&'static str>,
+) {
+    let mut pares: Vec<String> = targets.iter().map(|t| t.peer.short()).collect();
+    pares.sort();
+    pares.dedup();
+    let key = format!("{rotas}:{}:{pares:?}:{motivo:?}", targets.len());
+    if last.as_deref() == Some(key.as_str()) {
+        return;
+    }
+    *last = Some(key);
+    if targets.is_empty() {
+        tracing::info!(
+            evento = "routes.empty",
+            motivo = motivo.unwrap_or("no_links"),
+            rotas,
+            "no barrier derived"
+        );
+    } else {
+        let pares = serde_json::to_string(&pares).unwrap_or_else(|_| "[]".into());
+        tracing::info!(evento = "routes.built", rotas, barreiras = targets.len(), pares = %pares, "barriers derived");
+    }
 }
 
 #[cfg(test)]

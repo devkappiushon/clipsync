@@ -33,6 +33,10 @@ pub(super) struct OrganizationRuntime {
     pub ingress_suspended: bool,
     pub remote_epochs: HashMap<PeerId, u64>,
     pub plans: HashMap<usize, RoutePlan>,
+    /// Why the last route build came out empty (contract §17.2); `None` after a build with targets.
+    pub route_reason: Option<&'static str>,
+    /// Links of this machine considered in the last route build, for `routes.built`.
+    pub route_links: usize,
 }
 pub(super) struct Prepared {
     cap: Option<Box<dyn CaptureAdapter>>,
@@ -169,6 +173,13 @@ impl State {
             capabilities: observation.capabilities,
             monitors: snapshot.monitors,
         };
+        let monitores = inventory.monitors.len();
+        let uids = inventory
+            .monitors
+            .iter()
+            .map(|m| m.uid.to_hex())
+            .collect::<Vec<_>>();
+        let uids = serde_json::to_string(&uids).unwrap_or_else(|_| "[]".into());
         self.organization.catalog.insert(
             me,
             InventoryStamp {
@@ -178,6 +189,7 @@ impl State {
             },
             inventory,
         )?;
+        tracing::info!(evento = "inventory.prepared", monitores, uids = %uids, "local inventory prepared");
         self.organization.aliases = snapshot
             .aliases
             .into_iter()
@@ -362,13 +374,21 @@ impl State {
         };
         let host = self.host.clone();
         let to = info.id;
+        let monitores = local.inventory.monitors.len();
+        let revisao = local.inventory.rev;
         if !self.network.spawn(async move {
-            host.send_reliable_on(
-                to,
-                context.connection,
-                ModuleMsg::Input(InputMsg::InventoryV4(local.inventory)),
-            )
-            .await
+            let sent = host
+                .send_reliable_on(
+                    to,
+                    context.connection,
+                    ModuleMsg::Input(InputMsg::InventoryV4(local.inventory)),
+                )
+                .await;
+            match &sent {
+                Ok(_) => tracing::info!(evento = "inventory.sent", peer = %to, monitores, revisao, "inventory sent"),
+                Err(e) => tracing::info!(evento = "inventory.missing", peer = %to, motivo = "send_failed", erro = %e, "inventory not sent"),
+            }
+            sent
         }) {
             self.last_block = Some(msg::NETWORK_BUSY.into());
         }
@@ -394,6 +414,8 @@ impl State {
             self.ignored += 1;
             return;
         }
+        let monitores = inventory.monitors.len();
+        let revisao = inventory.rev;
         let changed =
             self.organization.catalog.get(from).is_none_or(|v| {
                 v.inventory != inventory || v.stamp.connection != context.connection
@@ -422,6 +444,7 @@ impl State {
             self.ignored += 1;
             return;
         }
+        tracing::info!(evento = "inventory.received", peer = %from, monitores, revisao, "inventory received");
         self.sync_links().await;
     }
     pub(super) async fn enter_routes(
@@ -430,6 +453,7 @@ impl State {
         entry: EnterRoutes,
         context: ReceiveContext,
     ) {
+        tracing::info!(evento = "enter.received", session = entry.session, peer = %from, mensagem = "enter_routes", "entry received");
         if self.organization.ingress_suspended || !self.authorized(from, context) {
             self.refuse_on(
                 from,
@@ -557,11 +581,14 @@ impl State {
     }
     pub(super) fn organization_targets(&mut self, zones: &[Zone]) -> Vec<Target> {
         self.organization.plans.clear();
+        self.organization.route_links = 0;
         if self.organization.suspended {
+            self.organization.route_reason = Some("suspended");
             return vec![];
         }
         let me = self.host.local_id();
         let Some(local) = self.organization.catalog.get(me) else {
+            self.organization.route_reason = Some("no_local_inventory");
             return vec![];
         };
         // Saving a copy is independent of being a supported physical source.
@@ -570,6 +597,7 @@ impl State {
             || local.inventory.space != clipsync_proto::CoordinateSpace::Physical
         {
             self.organization.problem = Some("origem local sem retorno posicionado".into());
+            self.organization.route_reason = Some("local_without_return");
             return vec![];
         }
         let Some(org) = self
@@ -578,6 +606,7 @@ impl State {
             .as_ref()
             .and_then(|d| d.organization.as_ref())
         else {
+            self.organization.route_reason = Some("no_organization");
             return vec![];
         };
         let views: Vec<_> = self
@@ -592,6 +621,7 @@ impl State {
             })
             .collect();
         let Some(document) = self.organization.document.as_ref() else {
+            self.organization.route_reason = Some("no_organization");
             return vec![];
         };
         let (legacy, unresolved) =
@@ -599,6 +629,7 @@ impl State {
                 Ok(v) => v,
                 Err(e) => {
                     self.organization.problem = Some(e.code().into());
+                    self.organization.route_reason = Some("unresolved_legacy");
                     return vec![];
                 }
             };
@@ -607,6 +638,7 @@ impl State {
                 Some("ligações legadas sem identidade confirmada permanecem inativas".into());
         }
         let mut links = Vec::new();
+        let mut why: Option<&'static str> = None;
         for l in org.links.iter().chain(legacy.iter()) {
             let (a, b) = if l.a.key.peer == me {
                 (&l.a, &l.b)
@@ -616,6 +648,7 @@ impl State {
                 continue;
             };
             let Some(remote) = self.organization.catalog.get(b.key.peer) else {
+                why = Some("no_remote_inventory");
                 continue;
             };
             if !self.inventory_valid(&[local.stamp, remote.stamp])
@@ -626,12 +659,15 @@ impl State {
                     .iter()
                     .all(|p| p.id != b.key.peer || p.remote_version < 4 || !p.connected)
             {
+                why = Some("remote_not_ready");
                 continue;
             }
             let Some(m) = local.inventory.monitors.iter().find(|m| m.uid == a.key.uid) else {
+                why = Some("local_monitor_missing");
                 continue;
             };
             if !remote.inventory.monitors.iter().any(|m| m.uid == b.key.uid) {
+                why = Some("remote_monitor_missing");
                 continue;
             }
             let matches: Vec<_> = zones
@@ -645,6 +681,7 @@ impl State {
                 })
                 .collect();
             if matches.len() != 1 {
+                why = Some("zone_not_found");
                 continue;
             }
             links.push((a.clone(), b.clone(), matches[0].index, remote));
@@ -729,8 +766,15 @@ impl State {
             self.organization.problem =
                 Some("unsupported_topology: mais de duas saídas para o monitor receptor".into());
             self.organization.plans.clear();
+            self.organization.route_reason = Some("unsupported_topology");
             return vec![];
         }
+        self.organization.route_links = links.len();
+        self.organization.route_reason = if targets.is_empty() {
+            Some(why.unwrap_or("no_links"))
+        } else {
+            None
+        };
         targets
     }
 }

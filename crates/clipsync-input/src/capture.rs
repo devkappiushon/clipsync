@@ -305,6 +305,50 @@ pub(crate) fn send_error_text(e: &SendError) -> String {
     }
 }
 
+fn edge_code(edge: Edge) -> &'static str {
+    match edge {
+        Edge::Left => "left",
+        Edge::Right => "right",
+        Edge::Top => "top",
+        Edge::Bottom => "bottom",
+    }
+}
+
+/// `capture.start`: the adapter is about to install the barriers (contract §17.2).
+fn log_capture_start(adaptador: &str) {
+    tracing::info!(evento = "capture.start", adaptador, "capture starting");
+}
+
+/// `capture.failed`: the adapter refused to start; the reason is coarse by design.
+fn log_capture_failed(adaptador: &str, e: &InputError) {
+    let motivo = if matches!(e, InputError::PermissionDenied) {
+        "portal_denied"
+    } else {
+        "adapter_failed"
+    };
+    tracing::info!(evento = "capture.failed", adaptador, motivo, erro = %e, "capture did not start");
+}
+
+/// `capture.ready`: only with at least one barrier installed, listing where each one leads.
+fn log_capture_ready(adaptador: &str, targets: &[Target]) {
+    if targets.is_empty() {
+        return;
+    }
+    let barreiras: Vec<serde_json::Value> = targets
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "peer": t.peer.short(),
+                "monitor": t.peer_monitor,
+                "borda": edge_code(t.spec.edge),
+                "trecho": [t.local.0, t.local.1],
+            })
+        })
+        .collect();
+    let barreiras = serde_json::to_string(&barreiras).unwrap_or_else(|_| "[]".into());
+    tracing::info!(evento = "capture.ready", adaptador, barreiras = %barreiras, "capture ready");
+}
+
 /// Runs until `Ctl::Stop`; returns the adapter so the module can reuse it.
 pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
     let Engine {
@@ -330,9 +374,11 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
     let mut rx = if paused {
         None
     } else {
+        log_capture_start(cap.name());
         match cap.start(&specs).await {
             Ok(rx) => Some(rx),
             Err(e) => {
+                log_capture_failed(cap.name(), &e);
                 let text = match e {
                     InputError::PermissionDenied => msg::PORTAL_DENIED.to_owned(),
                     other => msg::adapter_failed(&other.to_string()),
@@ -355,6 +401,7 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
     }
     let last_zones = cap.known_zones();
     if rx.is_some() {
+        log_capture_ready(cap.name(), &targets);
         let _ = notes.send(Note::Zones(last_zones.clone()));
         let _ = notes.send(Note::Event(msg::capture_ready(targets.len())));
     }
@@ -476,14 +523,21 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
                 // Seu primeiro unlock exige outro start; nunca libera este rx para ativar.
                 st.snapshot_ready = observing_lock && lifecycle.snapshot.is_none();
                 st.session_locked = true;
+                log_capture_start(st.cap.name());
                 match st.cap.start(&specs).await {
                     Ok(new_rx) => {
+                        if !observing_lock {
+                            log_capture_ready(st.cap.name(), &st.targets);
+                        }
                         rx = Some(new_rx);
                         lifecycle.reacquire(st.cap.as_ref());
                         st.reconcile_lifecycle(&lifecycle).await;
                         st.available = true;
                     }
-                    Err(e) => st.notes(Note::Block(msg::adapter_failed(&e.to_string()))),
+                    Err(e) => {
+                        log_capture_failed(st.cap.name(), &e);
+                        st.notes(Note::Block(msg::adapter_failed(&e.to_string())));
+                    }
                 }
             }
         }

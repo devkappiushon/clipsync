@@ -9,6 +9,7 @@ publish.workspace = true
 clipsync-proto = { path = "../clipsync-proto" }
 clipsync-win = { path = "../clipsync-win" }
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 async-trait.workspace = true
@@ -28,6 +29,7 @@ zbus.workspace = true
 [dev-dependencies]
 clipsync-proto = { path = "../clipsync-proto", features = ["testing"] }
 tempfile.workspace = true
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true
