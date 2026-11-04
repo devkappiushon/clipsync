@@ -44,9 +44,9 @@ Roteiro de referência: [contrato §13.12](contrato.md#1312-roteiro-manual-do-us
 
 | Pendente | Estado |
 |---|---|
-| Tornar o repositório público | Árvore sem segredo, chave ou token (varredura em 03/11/2026). Caminhos locais, nome de host, IP da LAN e ids reais foram anonimizados na árvore; o histórico do git ainda os contém. `.superpowers/` e `retomada-b07/` passaram a ser ignorados. Falta a decisão do usuário e, se quiser, proteger a `main`. |
+| Tornar o repositório público | Feito em 04/11/2026: repositório público e `main` protegida contra force-push e deleção. Árvore sem segredo, chave ou token (varredura em 03/11/2026); caminhos locais, nome de host, IP da LAN e ids reais anonimizados na árvore. O histórico do git ainda os contém; reescrever invalidaria as 7 tags e os links dos releases. |
 | LICENSE | Ausente; ver seção 2. |
-| README e guias | Reescrita em andamento pelo andar DOC (README, `docs/instalar.md`, `docs/uso.md`, `docs/limitacoes.md`, `docs/desenvolvimento.md`). |
+| README e guias | Feitos em 04/11/2026 (commit `af7e089`): README com capturas; `docs/instalar.md`, `docs/uso.md`, `docs/limitacoes.md`, `docs/desenvolvimento.md`. |
 | Referências a `.superpowers/` | Vários documentos citam evidências nessa pasta, que fica fora do repositório. Elas valem só para quem tem o checkout original. |
 
 Histórico: [pendências da v0.4.0](pendencias-v0.4.0.md) e [notas da v0.5.0](releases/v0.5.0.md).
