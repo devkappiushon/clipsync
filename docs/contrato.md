@@ -1668,6 +1668,18 @@ O usuário responde por passo ("ok" ou o que viu), e o Argus registra.
 4. Precisa ir do notebook direto ao terceiro PC, sem passar pelo PC? Fica fora da S7.
 5. Precisa controlar, de outra máquina, programas abertos como administrador no PC? O Windows bloqueia essa entrada sem elevar o ClipSync, e a S7 não eleva.
 
+### 13.15 Captura do portal Linux após o primeiro `start` · 04/11/2026 · Vector
+
+O portal `InputCapture` v1 aceita **um único `ConnectToEIS` por sessão**. Uma segunda chamada na mesma sessão é recusada pelo portal com "Already connected". A versão publicada da v0.5.0 chamava `ConnectToEIS` a cada `start()` e, no `stop()`, encerrava a thread do laço EIS mantendo a sessão. Resultado: a primeira captura de cada sessão do agente funcionava e a seguinte falhava na reconexão, embora o diálogo do portal não reaparecesse (o v1 não tem `restore_token`, §8 regra 9).
+
+Comportamento registrado em `crates/clipsync-input/src/adapter/portal.rs`:
+
+1. `start()` instala as barreiras no conjunto de zonas corrente e conecta o EIS só quando a sessão ainda não teve `ConnectToEIS`. A thread do laço EIS passa a viver além do `stop()`.
+2. `stop()` desliga a captura no portal e desata o receptor de eventos; a sessão e o link EIS continuam vivos. Um novo `start()` só ata um receptor novo, sem novo `ConnectToEIS` e sem novo diálogo.
+3. O receptor é único por vez (`EventSink`): atar fecha o anterior e evento sem receptor é descartado, não enfileirado. Não há entrega de eventos acumulados entre `stop()` e `start()`.
+4. Quando o link morre de fato (EIS fechado, erro do laço ou thread encerrada), o próximo `start()` descarta a sessão e cria outra, com o diálogo do portal incluído. Só esse caminho pede permissão de novo.
+
+Sem mudança de trait, de protocolo, de persistência ou de dependência; a regra 9 da §8 continua valendo para o diálogo e o token do RemoteDesktop. A prova no portal real continua pendente: `portal_loopback` segue `#[ignore]` e manual (§9 item 6), e não foi executado nesta rodada. Evidência automática do módulo: `cargo fmt --all --check` sem diferença, `cargo clippy -p clipsync-input --all-targets --locked -- -D warnings` sem achado e `cargo test -p clipsync-input --locked` com 319 testes aprovados e 2 ignorados.
 
 ## 14. S8 · diagnóstico e configuração da travessia (v1.34)
 
@@ -1959,3 +1971,69 @@ A interface anuncia um atalho Win+Alt (tecla no botão Pausar tudo, rótulos e `
 ### 16.6 Polimento visual pós-publicação · 04/11/2026
 
 Revisão raster das telas no simulador (portal do Maestri, 1280×800 e 960×640, temas claro e escuro), só apresentação, sem mudança no contrato de dados. Quatro ajustes: a célula Permissões da tabela de Dispositivos quebra linha, e a tabela cabe ao lado do painel sem rolagem horizontal; a região viva `.anunciador` fica fora do fluxo e deixa de abrir um vão de `gap` acima do primeiro aviso (Dispositivos e Layout), e a mensagem de topo vazia do Layout não ocupa linha da grade; o cabeçalho de coluna do tipo mono (Endereço, Tipo) usa a fonte de texto; o simulador declara a versão 0.5.0. Evidência: capturas em `docs/telas/v0.5.0/`, `scrollWidth` igual a `clientWidth` nas tabelas em 1280 e 960, Node 268/268, `conferir-unsafe.sh` e `conferir-privacidade.sh` ok.
+
+## 17. Diagnóstico verificável por log (v1.40)
+
+Adendo v1.40, Maestro, 04/11/2026. Desenho aprovado: [diagnóstico por log](superpowers/specs/2026-11-04-diagnostico-por-log-design.md); plano: [diagnóstico por log](superpowers/plans/2026-11-04-diagnostico-por-log.md). Onde o desenho deixou escolha, este adendo decide. A S10 e os invariantes anteriores continuam vigentes; nenhuma regra antiga é reescrita.
+
+### 17.1 Arquivo, escritor e descarga
+
+1. **Caminho único e puro.** O arquivo é `<perfil>/logs/clipsync.jsonl`. `clipsync_core::logging::log_path(profile_dir: &Path) -> PathBuf` é puro: não lê, não cria, não canonicaliza e não depende do agente. É a única fonte do caminho para CLI, agente, interface e pacote de suporte. No Linux, `<perfil>` é o da §3; no Windows, `%LOCALAPPDATA%\clipsync`.
+2. **Permissões.** O diretório `logs/` nasce 0700 e o arquivo 0600 no Unix; no Windows herda a ACL do perfil. Falha de permissão não impede o agente de subir: o stderr continua, o arquivo não é criado e `log_path` continua sendo o caminho previsto.
+3. **Escritor único.** Só o processo que roda o agente abre o arquivo para escrita. `agent::run_reserved` chama `logging::open_file(&profile.dir, &config.device_name)` depois de ler identidade e `config.toml` e antes de `Mesh::start`; o app com agente no processo e o `clipsync run` passam pelo mesmo ponto. Nenhum outro comando da CLI (`status`, `verificar-travessia`, `log caminho`) abre o arquivo para escrita. O lock de agente único do perfil (§3) garante um escritor por arquivo; duas instâncias do agente no mesmo perfil já são recusadas antes daqui.
+4. **Rotação.** 5 MiB por arquivo, com `clipsync.jsonl.1` e `clipsync.jsonl.2`; a rotação acontece antes da linha que excederia o limite, no mesmo processo, por `rename`, e `.2` é descartado. Se a rotação falhar, o agente continua escrevendo no arquivo atual e um `warn` vai ao stderr uma vez; nenhuma linha é perdida por causa da rotação.
+5. **Descarga por linha.** Cada evento vira exatamente uma linha UTF-8 terminada em `\n`, escrita com uma única `write_all` e `flush` antes de retornar. Nada de `BufWriter` segurando o fim do log quando o processo trava.
+6. **Antes de abrir.** Eventos emitidos antes de `open_file` são descartados e contados; `agent.up` leva `descartados`, com teto de 200 no valor reportado. O contador não cresce sem limite.
+7. **Filtros.** `CLIPSYNC_LOG` continua controlando só o stderr. O arquivo usa a diretiva `warn,clipsync_core=info,clipsync_input=info,clipsync_clipboard=info,clipsync_proto=info,clipsync_ui=info,clipsync_cli=info,clipsync_app=info`; `CLIPSYNC_LOG_ARQUIVO`, quando definida, substitui essa diretiva inteira no formato `EnvFilter`. O filtro do arquivo é independente do stderr e não muda o nível do que já aparece na tela.
+
+### 17.2 Esquema v1
+
+1. **Campos comuns em toda linha:** `v` (inteiro, hoje `1`), `ts` (UTC, RFC 3339 com milissegundos, sufixo `Z`), `nivel` (`info`, `warn` ou `error`), `host` (nome deste dispositivo no momento da abertura), `alvo` (target do `tracing`) e `evento` (nome do vocabulário). O campo `mensagem` aparece quando o evento tem texto; campos extras do `tracing` entram como strings ou números no mesmo nível.
+2. **Vocabulário vinculante:** `inventory.prepared`, `inventory.sent`, `inventory.received`, `inventory.missing`, `routes.built`, `routes.empty`, `capture.start`, `capture.failed`, `capture.ready`, `attempt.begin`, `barrier.activated`, `attempt.filtered`, `session.open`, `session.sent`, `session.active`, `session.refused`, `datagram.first`, `return.received`, `return.sent`, `session.closed`, `enter.received`, `enter.refused`, `emulate.start`, `emulate.positioned`, `emulate.error`, `agent.up`, `peer.connected`, `peer.disconnected`, `module.input.start`, `module.input.stop`, `portal.session.created`, `portal.connect_eis`, `hooks.installed`, `hooks.dropped`. Evento novo é mudança deste contrato; evento desconhecido é ignorado pelo verificador, não é erro.
+3. **Campos por evento:** os do §4.6 do desenho, com estas precisões vinculantes:
+   - `barrier.activated` e `return.*` usam `pos` como fração `0.0..=1.0` ao longo da borda, com três casas decimais; não é `x`/`y`.
+   - `attempt.begin.origem` é `barrier` (captura contínua), `switch` (`InputSwitch`, "Ir para dispositivo") ou `test` (`InputLoopback`, "Testar passagem", janela de 5 s). Os três abrem sessão; `test` pode terminar em `attempt.filtered{motivo:"no_activation"}` sem sessão.
+   - `capture.start` leva `adaptador`; quando a abertura falha, `capture.failed` leva `adaptador` e `motivo` (`portal_denied`, `adapter_failed`); `capture.ready` só existe quando a captura começou, com pelo menos uma barreira, e leva a lista `barreiras`.
+   - `routes.empty.motivo` é um destes: `suspended`, `no_local_inventory`, `local_without_return`, `no_organization`, `unresolved_legacy`, `no_remote_inventory`, `remote_not_ready`, `local_monitor_missing`, `remote_monitor_missing`, `zone_not_found`, `no_links`, `unsupported_topology` (mais de duas saídas para o mesmo monitor receptor).
+   - `session.closed` leva `motivo` e `totais {enviados, descartados}`; `return.sent` leva `totais {recebidos, ignorados, perdidos, fora_de_ordem}`.
+   - `enter.refused.motivo` é fino, em snake_case, e inclui `monitor_not_found`; o fio continua com `RejectReason::ApplyFailed`.
+   - `capture.ready.barreiras` é lista de `{peer, monitor, borda, trecho}`; `trecho` é `[from, to]` em frações e `monitor` pode ser `null`.
+4. **Privacidade.** Nenhum evento carrega conteúdo de clipboard, preview, keycode, tecla ou texto digitado. `peer` é sempre o id curto (`PeerId::short()`, já usado pelo `Display`); o nome do par só aparece quando o status já o expõe. O `host` é o `device_name` do perfil. O pacote de suporte redige a cauda com as agulhas já usadas em `diag.rs`.
+5. **Correlação.** `session` é o id aleatório da sessão existente, nunca zero. `attempt` é contador local da origem, começa em 1, incrementa por tentativa e não é o `session`. Todo evento de sessão leva `session`; todo evento de tentativa leva `attempt`. A cadeia canônica é: inventário (as duas máquinas), rotas, captura pronta, tentativa, sessão aberta e enviada, recebida no destino, emulação posicionada, primeiro datagrama nos dois lados, retorno, sessão fechada.
+6. **Uma linha, um evento.** Sem `span`, sem multiline, sem JSON aninhado além de `barreiras`, `totais`, `pos` e `trecho`. A ordem dos campos não é significativa; o verificador lê por nome.
+
+### 17.3 Verificador
+
+1. **Comando.** `clipsync verificar-travessia --origem <arquivo> [--destino <arquivo>] [--sessao <id> | --ultima] [--desde <instante|duração>] [--json]`. Sem `--sessao` nem `--ultima`, vale `--ultima`. `--desde` aceita RFC 3339 com fuso ou uma duração (`30m`, `2h`) contada a partir do maior `ts` do arquivo de origem, não do relógio da máquina, para o resultado ser reproduzível em logs copiados.
+2. **Entrada.** Lê só os arquivos indicados, nunca o agente, a rede ou o perfil. Arquivo ausente, JSON inválido ou `v` maior que 1: erro de leitura ou de esquema, código 3, sem inventar passos. `v` menor que 1: aviso e segue com os eventos conhecidos.
+3. **Saída.** Uma linha por passo, na ordem canônica, com `[ok]`, `[falhou]` ou `[sem dado]`, o evento e o motivo. O primeiro `[falhou]` é a quebra; `[sem dado]` depois da quebra não é segunda quebra. Na captura, `capture.failed` é `[falhou]` com o motivo, mesmo sem `capture.ready`; sem os dois, o passo é `[sem dado]`. Sem tentativa na janela, imprime os pré-requisitos e conclui "nenhuma tentativa registrada: a origem nunca viu o cursor na barreira". Com `--destino` ausente ou arquivo rotacionado sem a sessão, os passos do destino saem `[sem dado]` com o motivo.
+4. **Códigos de saída.** `0` quando nenhum passo falhou e a cadeia chegou ao fim; `1` quando há quebra; `2` erro de uso do clap; `3` arquivo ilegível, JSON inválido ou esquema futuro. O verificador não altera arquivo, não abre socket e não chama o agente.
+5. **JSON.** `--json` devolve `{ "v": 1, "tentativa": <n|null>, "sessao": <n|null>, "passos": [{ "nome", "estado", "linha", "motivo" }], "quebra": <nome|null> }`; `linha` é a linha crua que provou o passo, ou `null`. O texto humano e o JSON dizem a mesma coisa.
+
+### 17.4 Mudanças de comportamento
+
+1. **`capture.rs`:** os erros hoje descartados em `let _ = self.open(..)` e em `opened(Err)` passam a registrar `attempt.filtered` ou `session.closed` com o motivo, por variante. O que a interface mostra não muda.
+2. **`organization.rs`:** monitor não encontrado no destino passa a recusar com `ApplyFailed` no fio e `enter.refused{motivo:"monitor_not_found"}` no log. A origem passa a ver a recusa e fecha a sessão; hoje ela acredita que a sessão abriu. Não há variante nova de protocolo nem mudança de `PROTOCOL_VERSION`.
+3. Nenhuma outra mudança de comportamento é autorizada nesta fatia. O loopback de "Testar passagem" continua com a mesma janela e o mesmo efeito; os eventos novos não podem alterar o que ele faz.
+
+### 17.5 Posse, ordem e revisão
+
+1. **F1 (vertical mínimo), Rivet · slice:** `clipsync-core/src/logging.rs` (novo), `clipsync-core/src/lib.rs`, `clipsync-core/src/agent.rs`, `clipsync-core/src/msg.rs` (só se precisar de texto), `clipsync-core/Cargo.toml`, `clipsync-proto/src/control.rs`, `clipsync-cli/src/main.rs`, `clipsync-cli/src/verificar.rs` (novo), `clipsync-cli/src/cmds.rs`, `clipsync-cli/src/msg.rs`, `clipsync-cli/Cargo.toml`, `clipsync-app/src/main.rs`, `clipsync-ui/src/status.rs`. **Vector · input** entrega os pontos de `clipsync-input`: `inventory.*`, `routes.*`, `capture.start`/`failed`/`ready` e `enter.received|refused`, com o teste de `Layer`; os arquivos são `clipsync-input/src/module.rs`, `clipsync-input/src/module/organization.rs`, `clipsync-input/src/capture.rs` (só `capture.start`/`failed`/`ready`) e `clipsync-input/Cargo.toml` (dev-dependency). O `AppState` com `log_path` é o de `clipsync-ui/src/status.rs`; o `AppState` de runtime em `clipsync-app/src/state.rs` não muda e não carrega caminho.
+2. **F2a (origem), Vector:** `clipsync-input/src/capture.rs`, `route_session.rs`, `clipsync-input/src/msg.rs` e o trecho de `module.rs` do `drive`/`run_loopback` para `attempt.begin` e `attempt.filtered{no_activation}`.
+3. **F2b (destino), Vector:** `clipsync-input/src/module.rs` (regiões de `on_enter`, `on_datagram` e emulação), `clipsync-input/src/module/organization.rs` (`enter_routes` e emulação v4), `clipsync-input/src/adapter/portal.rs` e `clipsync-input/src/adapter/win/*`.
+4. **F3, Rivet:** `clipsync-cli/src/verificar.rs`, `clipsync-cli/src/main.rs` e `clipsync-cli/Cargo.toml` (`serde_json`).
+5. **F4, Pixel · interface:** `clipsync-ui/src/diag.rs`, `crates/clipsync-app/ui/js/telas/diagnostico.js`, mock e testes Node.
+6. **F5, Maestro:** `docs/verificar-por-log.md` e este §17.
+7. **Ordem e exclusividade.** F1 antes de F2a e F2b; F2a e F2b em série porque compartilham `module.rs`; F3 depois de F1 (o esqueleto nasce em F1) e pode andar em paralelo com F2; F4 depois de F2; F5 por último. Cada arquivo tem um dono por vez; todos trabalham no mesmo checkout. Argus revisa cada fatia; Sentinel revisa F1 (permissões, redação e escritor único) e F4 (cauda e redação no pacote).
+
+### 17.6 Aceite
+
+1. Depois de uma tentativa física nas duas máquinas, copiar `logs/clipsync.jsonl` (e `.1`/`.2` se houver) de cada uma e rodar o verificador. A saída tem de apontar o primeiro passo falho com a linha de prova; a IA que só lê a saída chega à mesma conclusão. O caso atual ("cursor não passa") tem de sair como `inventory.missing`/`no_remote_inventory`/`capture.ready` ausente, não como "portal silencioso" sem prova.
+2. `cargo fmt --all --check`, `cargo clippy --workspace --exclude clipsync-app --all-targets --locked -- -D warnings`, `cargo test --workspace --exclude clipsync-app --locked`, o teste Node do simulador e os dois scripts do CI passam. O app Tauri continua sem compilar neste notebook; a prova dele é o CI.
+3. O arquivo existe com 0600 no Linux, uma linha por evento, sem conteúdo de tecla nem clipboard, e `clipsync status`, `clipsync log caminho` e a tela Diagnóstico mostram o mesmo caminho de `log_path`. Fake, cross-compilação e CI não fecham a prova física; a evidência mínima é o par de arquivos do usuário.
+
+### 17.7 Arestas e `Cargo.lock`
+
+1. **Sem crate nem versão nova.** As arestas desta fatia são features de crates já fixados no `[workspace.dependencies]`: `tracing-subscriber.workspace = true` em `clipsync-core`; `serde_json.workspace = true` em `clipsync-cli` e `clipsync-input`; `tracing-subscriber.workspace = true` como dev-dependency em `clipsync-input`. O `clipsync-cli` já depende de `time`; passa a declarar `time = { workspace = true, features = ["parsing"] }` para o `--desde` absoluto e para a duração relativa ao maior `ts` da origem. `humantime` já está fixado para a duração.
+2. **Lockfile.** O `time` continua em `=0.3.55`; a feature `parsing` não acrescenta crate nem versão. `Cargo.lock` só muda se o grafo de pacotes mudar; conferir `git diff Cargo.lock`.
+3. **Regra operacional.** Toda mudança em `Cargo.toml` exige `cargo update --workspace --offline` imediato, antes de rodar teste ou build, e o diff do `Cargo.lock` é conferido. Não atualizar versão por conta própria.
