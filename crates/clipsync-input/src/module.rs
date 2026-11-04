@@ -7,7 +7,9 @@ use crate::adapter::{
     BarrierSpec, CaptureAdapter, CaptureEvent, EmulateAdapter, Hotkey, InputError, Zone, ZoneRef,
     entry_events, same_zones,
 };
-use crate::capture::{self, Ctl, Engine, Note, SPAN_PROTOCOL, Target, ZONES_POLL, new_session};
+use crate::capture::{
+    self, Ctl, Engine, Note, SPAN_PROTOCOL, Target, ZONES_POLL, new_session, reject_code,
+};
 use crate::config::{InputConfig, map_pos, zone_ref};
 use crate::layout::{DerivedBarrier, Endpoint, Layout, trim_dead_corner};
 use crate::layout_document::LayoutDocument;
@@ -2053,9 +2055,20 @@ async fn drive(
     }
     let mut lifecycle = LifecycleCursor::new(cap);
     let specs: Vec<BarrierSpec> = barriers.iter().map(|b| b.spec.clone()).collect();
-    let mut ev_rx = cap.start(&specs).await.map_err(|e| match e {
-        InputError::PermissionDenied => msg::PORTAL_DENIED.to_owned(),
-        other => msg::adapter_failed(&other.to_string()),
+    let attempt = new_session();
+    tracing::info!(evento = "attempt.begin", attempt, origem = "test", peer = %to, "attempt begins");
+    let mut ev_rx = cap.start(&specs).await.map_err(|e| {
+        let (motivo, text) = match e {
+            InputError::PermissionDenied => ("portal_denied", msg::PORTAL_DENIED.to_owned()),
+            other => ("adapter_failed", msg::adapter_failed(&other.to_string())),
+        };
+        tracing::info!(
+            evento = "attempt.filtered",
+            attempt,
+            motivo,
+            "attempt filtered"
+        );
+        text
     })?;
     let deadline = Instant::now() + Duration::from_secs(u64::from(seconds));
     let context = host
@@ -2129,7 +2142,18 @@ async fn drive(
                     break;
                 }
                 opening = None;
-                match result { Ok(()) => active = true, Err(e) => { failure = Some(e.to_string()); break; } }
+                match result {
+                    Ok(()) => {
+                        tracing::info!(evento = "session.sent", attempt, session, peer = %to, "entry sent");
+                        tracing::info!(evento = "session.active", attempt, session, peer = %to, "session active");
+                        active = true
+                    }
+                    Err(e) => {
+                        tracing::info!(evento = "session.closed", attempt, session, peer = %to, motivo = "error", erro = capture::send_error_code(&e), "session not sent");
+                        failure = Some(e.to_string());
+                        break;
+                    }
+                }
                 continue;
             }
             _ = std::future::ready(()), if active && !queue.is_empty() => { if let Some(ev) = queue.pop_front() { replay = true; ev } else { continue } },
@@ -2155,12 +2179,14 @@ async fn drive(
         match ev {
             CaptureEvent::Activated { .. } if !snapshot_ready => continue,
             CaptureEvent::Activated { barrier, pos, .. } => {
+                tracing::info!(evento = "barrier.activated", attempt, barreira = barrier, peer = %to, pos = f64::from(pos), "barrier activated");
                 if session != 0 {
                     failure = Some(msg::SESSION_CANCELLED.to_owned());
                     break;
                 }
                 session = new_session();
                 session_cell.store(session, Ordering::SeqCst);
+                tracing::info!(evento = "session.open", attempt, session, peer = %to, mensagem = "enter", rota = barrier, "session opening");
                 let (edge, pos) = barriers.get(barrier).map_or((Edge::Left, pos), |b| {
                     (b.peer_edge, map_pos(b.local, b.remote, pos))
                 });
@@ -2254,10 +2280,29 @@ async fn drive(
         })
         .await;
     }
+    if session != 0 {
+        let motivo = match &failure {
+            None => "return",
+            Some(f) if f == msg::SOURCE_SCREEN_LOCKED => "lock",
+            Some(f) if f == RejectReason::Paused.pt() => "pause",
+            Some(f) if f == msg::PEER_OFFLINE => "peer_down",
+            Some(_) => "error",
+        };
+        tracing::info!(evento = "session.closed", attempt, session, peer = %to, motivo, erro = failure.as_deref().unwrap_or(""), totais = %format!("{{\"enviados\":{seq},\"descartados\":0}}"), "session closed");
+    }
     if let Some(f) = failure {
+        if session == 0 {
+            tracing::info!(evento = "attempt.filtered", attempt, motivo = "error", erro = %f, "attempt filtered");
+        }
         return Err(f);
     }
     if session == 0 {
+        tracing::info!(
+            evento = "attempt.filtered",
+            attempt,
+            motivo = "no_activation",
+            "attempt filtered"
+        );
         return Err(msg::NO_ACTIVATION.to_owned());
     }
     tokio::time::timeout(
@@ -2287,23 +2332,6 @@ async fn drive(
 /// A comparable summary of a set of targets: a retarget only happens when it changes.
 fn targets_key(targets: &[Target]) -> String {
     format!("{targets:?}")
-}
-
-/// `RejectReason` in the snake_case the log vocabulary uses (contract §17.2).
-fn reject_code(reason: RejectReason) -> &'static str {
-    match reason {
-        RejectReason::ModuleDisabled => "module_disabled",
-        RejectReason::NotAuthorized => "not_authorized",
-        RejectReason::Paused => "paused",
-        RejectReason::TooLarge => "too_large",
-        RejectReason::Invalid => "invalid",
-        RejectReason::Duplicate => "duplicate",
-        RejectReason::Stale => "stale",
-        RejectReason::Expired => "expired",
-        RejectReason::ApplyFailed => "apply_failed",
-        RejectReason::Locked => "locked",
-        RejectReason::VersionMismatch => "version_mismatch",
-    }
 }
 
 /// `routes.built` or `routes.empty`, once per distinct result (contract §17.2).

@@ -11,8 +11,8 @@ use clipsync_input::inventory::ObservedMonitors;
 use clipsync_input::layout_document::{LayoutDocument, Organization};
 use clipsync_input::monitor_identities::{Evidence, Observation};
 use clipsync_input::{
-    BarrierSpec, CaptureAdapter, CaptureEvent, FakeCapture, FakeEmulate, InputConfig, InputError,
-    Layout, LayoutDevice, Zone, build_with_layout,
+    BarrierSpec, CaptureAdapter, CaptureEvent, FakeCapture, FakeCaptureHandle, FakeEmulate,
+    InputConfig, InputError, Layout, LayoutDevice, LayoutOptions, Zone, build_with_layout,
 };
 use clipsync_proto::monitors::*;
 use clipsync_proto::*;
@@ -620,4 +620,332 @@ async fn falha_da_captura_registra_motivo_proprio() {
         "sem captura não há capture.ready: {:?}",
         captura.todos("capture.ready")
     );
+}
+
+// --------------------------------------------------------------- harness da origem (layout legado)
+
+/// A source with a legacy `layout.toml` link and a fake capture the test can activate.
+struct Origem {
+    id: PeerId,
+    tx: mpsc::Sender<ModuleInput>,
+    cap: FakeCaptureHandle,
+    _dir: tempfile::TempDir,
+}
+
+/// A raw node: no module, only the host, to read what arrives and answer by hand.
+struct Bruto {
+    id: PeerId,
+    host: Arc<dyn ModuleHost>,
+    rx: mpsc::Receiver<ModuleInput>,
+}
+
+fn zona_padrao() -> Zone {
+    Zone {
+        index: 0,
+        name: Some("eDP-1".into()),
+        x: 0,
+        y: 0,
+        width: 1920,
+        height: 1080,
+        scale: 1.0,
+    }
+}
+
+fn ponta(peer: PeerId, edge: Edge, from: f32, to: f32) -> clipsync_input::Endpoint {
+    clipsync_input::Endpoint {
+        peer,
+        monitor: "eDP-1".into(),
+        edge,
+        from,
+        to,
+    }
+}
+
+/// `a`'s right edge (lower half) into the whole left edge of `b`.
+fn layout_ab(a: PeerId, b: PeerId) -> Layout {
+    Layout {
+        rev: 3,
+        options: LayoutOptions { dead_corner_px: 0 },
+        devices: vec![device(a, "a"), device(b, "b")],
+        links: vec![clipsync_input::Link {
+            id: "l1".into(),
+            a: ponta(a, Edge::Right, 0.5, 1.0),
+            b: ponta(b, Edge::Left, 0.0, 1.0),
+        }],
+    }
+}
+
+fn origem(hub: &MemHub, name: &str, layout: &Layout) -> Origem {
+    let dir = tempfile::tempdir().unwrap();
+    layout
+        .write(&dir.path().join(clipsync_input::LAYOUT_FILE))
+        .unwrap();
+    let node = hub.add_node(name, INPUT);
+    let (cap_ad, cap) = FakeCapture::new(vec![zona_padrao()]);
+    let (emu_ad, _emu) = FakeEmulate::new();
+    let module = build_with_layout(
+        InputConfig::default(),
+        Box::new(cap_ad),
+        Box::new(emu_ad),
+        dir.path(),
+    )
+    .unwrap();
+    tokio::spawn(module.run(node.host, node.rx));
+    Origem {
+        id: node.id,
+        tx: node.tx,
+        cap,
+        _dir: dir,
+    }
+}
+
+fn bruto(hub: &MemHub, name: &str) -> Bruto {
+    let n = hub.add_node(name, INPUT);
+    Bruto {
+        id: n.id,
+        host: n.host,
+        rx: n.rx,
+    }
+}
+
+async fn estabilizar(tx: &mpsc::Sender<ModuleInput>) {
+    let ModuleReply::Status(_) = command(tx, ModuleCommand::Status).await else {
+        panic!("status")
+    };
+}
+
+/// Next reliable input message at a raw node, or `None` after `ms`.
+async fn proxima_entrada(b: &mut Bruto, ms: u64) -> Option<InputMsg> {
+    let end = Instant::now() + Duration::from_millis(ms);
+    loop {
+        let left = end.saturating_duration_since(Instant::now());
+        match tokio::time::timeout(left, b.rx.recv()).await {
+            Ok(Some(ModuleInput::Reliable {
+                msg: ModuleMsg::Input(m),
+                ..
+            })) => return Some(m),
+            Ok(Some(_)) => continue,
+            _ => return None,
+        }
+    }
+}
+
+/// Source and raw destination linked for control, with the barrier installed.
+async fn par_ligado(hub: &MemHub, captura: &logs::Captura) -> (Origem, Bruto) {
+    let a = origem(hub, "a", &layout_ab(node_id("a"), node_id("b")));
+    let b = bruto(hub, "b");
+    hub.link(a.id, b.id, PeerPerms::default(), CONTROL);
+    estabilizar(&a.tx).await;
+    until("capture.ready", || captura.tem("capture.ready")).await;
+    (a, b)
+}
+
+// --------------------------------------------------------------- casos da origem (tarefas 5 e 6)
+
+/// `Ir para dispositivo` opens an attempt of its own and a session on the linked peer.
+#[tokio::test]
+async fn switch_abre_tentativa() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let (a, mut b) = par_ligado(&hub, &captura).await;
+
+    let reply = command(&a.tx, ModuleCommand::InputSwitch { to: b.id }).await;
+    assert!(matches!(reply, ModuleReply::Done), "{reply:?}");
+    assert!(
+        proxima_entrada(&mut b, 2000).await.is_some(),
+        "o Enter chega ao destino"
+    );
+    until("session.sent", || captura.tem("session.sent")).await;
+
+    let inicio = captura.primeiro("attempt.begin").expect("attempt.begin");
+    assert_eq!(inicio.campo("origem"), Some("switch"), "{inicio:?}");
+    let attempt = numero(&inicio, "attempt");
+    assert!(attempt > 0);
+    let aberta = captura.primeiro("session.open").expect("session.open");
+    assert_eq!(aberta.campo("mensagem"), Some("enter_span"), "{aberta:?}");
+    assert_eq!(numero(&aberta, "attempt"), attempt, "{aberta:?}");
+    assert!(numero(&aberta, "session") > 0, "{aberta:?}");
+    assert_eq!(
+        aberta.campo("peer"),
+        Some(b.id.short().as_str()),
+        "{aberta:?}"
+    );
+    let enviada = captura.primeiro("session.sent").expect("session.sent");
+    assert_eq!(numero(&enviada, "session"), numero(&aberta, "session"));
+}
+
+/// A barrier crossed with the lock on begins an attempt that the filter ends, without a session.
+#[tokio::test]
+async fn barreira_filtrada_termina_tentativa() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let (a, _b) = par_ligado(&hub, &captura).await;
+    assert!(matches!(
+        command(&a.tx, ModuleCommand::InputLock { locked: true }).await,
+        ModuleReply::Done
+    ));
+
+    a.cap.activate(0, 0.75);
+    until("attempt.filtered", || captura.tem("attempt.filtered")).await;
+
+    let inicio = captura.primeiro("attempt.begin").expect("attempt.begin");
+    assert_eq!(inicio.campo("origem"), Some("barrier"), "{inicio:?}");
+    let ativada = captura
+        .primeiro("barrier.activated")
+        .expect("barrier.activated");
+    assert_eq!(ativada.campo("barreira"), Some("0"), "{ativada:?}");
+    assert_eq!(numero(&ativada, "attempt"), numero(&inicio, "attempt"));
+    let filtrada = captura
+        .primeiro("attempt.filtered")
+        .expect("attempt.filtered");
+    assert_eq!(filtrada.campo("motivo"), Some("locked"), "{filtrada:?}");
+    assert_eq!(numero(&filtrada, "attempt"), numero(&inicio, "attempt"));
+    assert!(!captura.tem("session.open"), "trava: nenhuma sessão abre");
+}
+
+/// An activation on a barrier that leads nowhere is filtered with its own reason.
+#[tokio::test]
+async fn barreira_desconhecida_e_filtrada() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let (a, _b) = par_ligado(&hub, &captura).await;
+
+    a.cap.activate(7, 0.5);
+    until("attempt.filtered", || captura.tem("attempt.filtered")).await;
+    let filtrada = captura
+        .primeiro("attempt.filtered")
+        .expect("attempt.filtered");
+    assert_eq!(
+        filtrada.campo("motivo"),
+        Some("unknown_barrier"),
+        "{filtrada:?}"
+    );
+    assert!(!captura.tem("session.open"));
+}
+
+/// `Testar passagem` without a crossing is a real attempt that ends in `no_activation`.
+#[tokio::test]
+async fn teste_sem_ativacao_termina() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let (a, b) = par_ligado(&hub, &captura).await;
+
+    let reply = command(
+        &a.tx,
+        ModuleCommand::InputLoopback {
+            to: b.id,
+            seconds: 1,
+        },
+    )
+    .await;
+    assert!(matches!(reply, ModuleReply::Error(_)), "{reply:?}");
+    let inicios = captura.todos("attempt.begin");
+    let teste = inicios
+        .iter()
+        .find(|e| e.campo("origem") == Some("test"))
+        .unwrap_or_else(|| panic!("attempt.begin de teste: {inicios:?}"));
+    let filtrada = captura
+        .todos("attempt.filtered")
+        .into_iter()
+        .find(|e| e.campo("attempt") == teste.campo("attempt"))
+        .expect("attempt.filtered do teste");
+    assert_eq!(
+        filtrada.campo("motivo"),
+        Some("no_activation"),
+        "{filtrada:?}"
+    );
+}
+
+/// Crossing, first datagram and the way back: the session cycle in the origin's log.
+#[tokio::test]
+async fn sessao_abre_envia_e_fecha() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let (a, mut b) = par_ligado(&hub, &captura).await;
+
+    a.cap.activate(0, 0.75);
+    until("session.active", || captura.tem("session.active")).await;
+    let aberta = captura.primeiro("session.open").expect("session.open");
+    let session = numero(&aberta, "session") as u32;
+    assert_eq!(aberta.campo("mensagem"), Some("enter_span"), "{aberta:?}");
+    assert!(matches!(
+        proxima_entrada(&mut b, 2000).await,
+        Some(InputMsg::EnterSpan { .. })
+    ));
+
+    a.cap.push(InputEvent::Motion { dx: 3.0, dy: 0.0 });
+    until("datagram.first", || captura.tem("datagram.first")).await;
+    let primeiro = captura.primeiro("datagram.first").expect("datagram.first");
+    assert_eq!(numero(&primeiro, "session") as u32, session);
+
+    b.host
+        .send_reliable(
+            a.id,
+            ModuleMsg::Input(InputMsg::Returned { session, pos: 0.5 }),
+        )
+        .await
+        .unwrap();
+    until("session.closed", || captura.tem("session.closed")).await;
+    let retorno = captura
+        .primeiro("return.received")
+        .expect("return.received");
+    assert_eq!(numero(&retorno, "session") as u32, session, "{retorno:?}");
+    let fechada = captura.primeiro("session.closed").expect("session.closed");
+    assert_eq!(fechada.campo("motivo"), Some("return"), "{fechada:?}");
+    assert_eq!(numero(&fechada, "session") as u32, session);
+    let totais = lista(&fechada, "totais");
+    assert_eq!(totais["enviados"].as_u64(), Some(1), "{fechada:?}");
+    assert_eq!(totais["descartados"].as_u64(), Some(0), "{fechada:?}");
+    assert_eq!(
+        captura.todos("session.closed").len(),
+        1,
+        "um único fechamento"
+    );
+}
+
+/// Pausing the mesh in the middle of a session closes it once, with `pause` as the reason.
+#[tokio::test]
+async fn pausa_fecha_com_motivo() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let (a, _b) = par_ligado(&hub, &captura).await;
+
+    a.cap.activate(0, 0.75);
+    until("session.active", || captura.tem("session.active")).await;
+    hub.set_paused(a.id, true);
+    until("session.closed", || captura.tem("session.closed")).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let fechadas = captura.todos("session.closed");
+    assert_eq!(fechadas.len(), 1, "{fechadas:?}");
+    assert_eq!(fechadas[0].campo("motivo"), Some("pause"), "{fechadas:?}");
+}
+
+/// The destination does not allow control: the origin logs the refusal and closes the session.
+#[tokio::test]
+async fn recusa_do_destino_fecha() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let a = origem(&hub, "a", &layout_ab(node_id("a"), node_id("b")));
+    let b = bruto(&hub, "b");
+    hub.link(a.id, b.id, PeerPerms::default(), PeerPerms::default());
+    estabilizar(&a.tx).await;
+    until("capture.ready", || captura.tem("capture.ready")).await;
+
+    a.cap.activate(0, 0.75);
+    until("session.closed", || captura.tem("session.closed")).await;
+    let fechada = captura.primeiro("session.closed").expect("session.closed");
+    match fechada.campo("motivo") {
+        Some("refused") => {
+            let recusa = captura
+                .primeiro("session.refused")
+                .expect("session.refused");
+            assert_eq!(recusa.campo("motivo"), Some("not_authorized"), "{recusa:?}");
+            assert_eq!(numero(&recusa, "session"), numero(&fechada, "session"));
+        }
+        Some("error") => assert_eq!(fechada.campo("erro"), Some("not_authorized"), "{fechada:?}"),
+        outro => panic!("motivo inesperado {outro:?}: {fechada:?}"),
+    }
+    // The send itself succeeds, so the origin sees `session.active` until the refusal arrives:
+    // the log keeps that order on purpose.
+    drop(b);
 }

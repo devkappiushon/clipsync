@@ -268,6 +268,11 @@ struct Session {
     peer: PeerId,
     id: u32,
     seq: u32,
+    /// Attempt that opened this session (contract §17.2).
+    attempt: u32,
+    /// Datagrams sent and dropped, reported in `session.closed`.
+    sent: u64,
+    dropped: u64,
     /// Protocol 2 peers only; with protocol 3 the destination decides the way back.
     cursor: Option<VirtualCursor>,
     target: Target,
@@ -291,6 +296,66 @@ const OPEN_BUFFER: usize = 256;
 pub(crate) fn new_session() -> u32 {
     let b = EventId::random().0;
     u32::from_le_bytes([b[0], b[1], b[2], b[3]]).max(1)
+}
+
+/// Why `open` did not start a session: `code` for the log, `text` for the interface.
+struct OpenError {
+    code: &'static str,
+    text: String,
+}
+impl OpenError {
+    fn new(code: &'static str, text: impl Into<String>) -> Self {
+        Self {
+            code,
+            text: text.into(),
+        }
+    }
+}
+impl From<OpenError> for String {
+    fn from(e: OpenError) -> Self {
+        e.text
+    }
+}
+
+/// `SendError` in the snake_case the log vocabulary uses (contract §17.2).
+pub(crate) fn send_error_code(e: &SendError) -> &'static str {
+    match e {
+        SendError::NotConnected => "not_connected",
+        SendError::NotAuthorized => "not_authorized",
+        SendError::RemoteModuleDisabled => "remote_module_disabled",
+        SendError::LocalModuleDisabled => "local_module_disabled",
+        SendError::Paused => "paused",
+        SendError::RemoteTooOld => "remote_too_old",
+        SendError::TooLarge => "too_large",
+        SendError::Transport(_) => "transport",
+    }
+}
+
+/// `RejectReason` in the snake_case the log vocabulary uses (contract §17.2).
+pub(crate) fn reject_code(reason: RejectReason) -> &'static str {
+    match reason {
+        RejectReason::ModuleDisabled => "module_disabled",
+        RejectReason::NotAuthorized => "not_authorized",
+        RejectReason::Paused => "paused",
+        RejectReason::TooLarge => "too_large",
+        RejectReason::Invalid => "invalid",
+        RejectReason::Duplicate => "duplicate",
+        RejectReason::Stale => "stale",
+        RejectReason::Expired => "expired",
+        RejectReason::ApplyFailed => "apply_failed",
+        RejectReason::Locked => "locked",
+        RejectReason::VersionMismatch => "version_mismatch",
+    }
+}
+
+/// `attempt.filtered`: the attempt ended before a session existed.
+fn log_filtered(attempt: u32, motivo: &str) {
+    tracing::info!(
+        evento = "attempt.filtered",
+        attempt,
+        motivo,
+        "attempt filtered"
+    );
 }
 
 pub(crate) fn send_error_text(e: &SendError) -> String {
@@ -430,6 +495,9 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
         opening: None,
         closing: None,
         reset_rx: false,
+        attempt: 0,
+        close_reason: None,
+        close_detail: None,
         available: rx.is_some(),
         pending: None,
         queue: VecDeque::new(),
@@ -682,9 +750,20 @@ struct Loop {
     available: bool,
     pending: Option<PendingSwitch>,
     queue: VecDeque<CaptureEvent>,
+    /// Local attempt counter (contract §17.2); 0 is never used.
+    attempt: u32,
+    /// Why the session being closed ended; `close_session` logs and clears it.
+    close_reason: Option<&'static str>,
+    close_detail: Option<String>,
 }
 
 impl Loop {
+    /// Next attempt id (contract §17.2); never 0.
+    fn next_attempt(&mut self) -> u32 {
+        self.attempt = self.attempt.wrapping_add(1).max(1);
+        self.attempt
+    }
+
     fn route_valid(&self, s: &RouteSession) -> bool {
         self.catalog.matches(&[
             InventoryStamp {
@@ -745,6 +824,7 @@ impl Loop {
             && (invalidated || (state.paused || self.quiesced) != self.paused || state.stopped)
         {
             self.paused = state.paused || state.stopped || self.quiesced;
+            self.close_reason = Some(if state.stopped { "stop" } else { "pause" });
             self.end_session(true).await;
             self.reset_rx = true;
         }
@@ -835,6 +915,12 @@ impl Loop {
         }
         let cancelled = opening.map(|o| (o.session, o.started)); // drops the send future now
         let attempt = s.map(|s| (s, send_leave)).or(cancelled);
+        let motivo = self.close_reason.take().unwrap_or("stop");
+        let erro = self.close_detail.take().unwrap_or_default();
+        if let Some((s, _)) = attempt.as_ref() {
+            let totais = format!("{{\"enviados\":{},\"descartados\":{}}}", s.sent, s.dropped);
+            tracing::info!(evento = "session.closed", attempt = s.attempt, session = s.id, peer = %s.peer, motivo, erro = %erro, totais = %totais, "session closed");
+        }
         self.queue.clear();
         self.reset_rx = true;
         if let Some(p) = self.pending.take() {
@@ -880,17 +966,25 @@ impl Loop {
     }
 
     async fn opened(&mut self, result: Result<(), SendError>) {
+        let Some((session, peer, attempt)) = self.current().map(|s| (s.id, s.peer, s.attempt))
+        else {
+            return;
+        };
         if let Err(e) = result {
             let text = send_error_text(&e);
             self.notes(Note::Block(text));
+            self.close_reason = Some("error");
+            self.close_detail = Some(send_error_code(&e).to_owned());
             self.end_session(true).await;
             return;
         }
+        tracing::info!(evento = "session.sent", attempt, session, peer = %peer, "entry sent");
         if self
             .current()
             .and_then(|s| s.routes.as_ref())
             .is_some_and(|r| !self.route_valid(r))
         {
+            self.close_reason = Some("inventory");
             self.end_session(true).await;
             return;
         }
@@ -901,21 +995,28 @@ impl Loop {
                     .is_none_or(|c| !c.connected || c.connection != o.session.connection)
             })
         {
+            self.close_reason = Some(if self.host.paused() {
+                "pause"
+            } else {
+                "peer_down"
+            });
             self.end_session(true).await;
             return;
         }
         let Some(o) = self.opening.take() else {
             return;
         };
-        let peer = o.session.peer;
         self.session = Some(o.session);
         if let Some((barrier, pos)) = o.begin
             && let Err(e) = self.cap.begin(barrier, pos).await
         {
             self.notes(Note::Block(msg::adapter_failed(&e.to_string())));
+            self.close_reason = Some("error");
+            self.close_detail = Some("begin_failed".into());
             self.end_session(true).await;
             return;
         }
+        tracing::info!(evento = "session.active", attempt, session, peer = %peer, "session active");
         if let Some(p) = self.pending.as_mut() {
             p.until = Some(Instant::now() + SWITCH_GRACE);
         }
@@ -963,7 +1064,7 @@ impl Loop {
     }
 
     /// Opens a session on `t.peer` entering at `pos` (already in destination terms).
-    async fn open(&mut self, t: &Target, pos: f32) -> Result<(), String> {
+    async fn open(&mut self, t: &Target, pos: f32, attempt: u32) -> Result<(), OpenError> {
         if self.cleanup.busy() {
             // The adapter may already have captured physically in this new Engine.
             // Release before external network cleanup and retire this producer generation,
@@ -971,7 +1072,10 @@ impl Loop {
             self.release().await;
             self.queue.clear();
             self.reset_rx = true;
-            return Err(msg::SESSION_CANCELLED.into());
+            return Err(OpenError::new("cleanup_pending", msg::SESSION_CANCELLED));
+        }
+        if self.current().is_some() {
+            self.close_reason = Some("switch");
         }
         self.end_session(true).await;
         let id = new_session();
@@ -992,14 +1096,17 @@ impl Loop {
             .as_ref()
             .is_some_and(|p| version < 4 || !self.route_valid(&p.session))
         {
-            return Err("inventário de rota alterado".into());
+            return Err(OpenError::new(
+                "inventory_changed",
+                "inventário de rota alterado",
+            ));
         }
         let m = ModuleMsg::Input(match (&t.peer_monitor, version >= LAYOUT_PROTOCOL) {
             _ if plan.is_some() => {
                 let mut entry = plan
                     .as_ref()
                     .map(|p| p.entry.clone())
-                    .ok_or_else(|| "rota ausente".to_owned())?;
+                    .ok_or_else(|| OpenError::new("route_missing", "rota ausente"))?;
                 entry.session = id;
                 entry.pos = pos;
                 InputMsg::EnterRoutes(entry)
@@ -1033,10 +1140,22 @@ impl Loop {
             .host
             .peer_input_context(t.peer)
             .filter(|c| c.connected)
-            .ok_or_else(|| msg::PEER_OFFLINE.to_owned())?
+            .ok_or_else(|| OpenError::new("peer_offline", msg::PEER_OFFLINE))?
             .connection;
         let host = self.host.clone();
         let peer = t.peer;
+        let mensagem = match &m {
+            ModuleMsg::Input(InputMsg::EnterRoutes(_)) => "enter_routes",
+            ModuleMsg::Input(InputMsg::EnterSpan { .. }) => "enter_span",
+            ModuleMsg::Input(InputMsg::EnterAt { .. }) => "enter_at",
+            _ => "enter",
+        };
+        let rota = self
+            .targets
+            .iter()
+            .position(|x| same_barrier(x, t))
+            .map_or(-1, |i| i as i64);
+        tracing::info!(evento = "session.open", attempt, session = id, peer = %peer, mensagem, rota, "session opening");
         self.opening = Some(Opening {
             session: Session {
                 routes: plan.map(|p| RouteSession {
@@ -1047,6 +1166,9 @@ impl Loop {
                 connection,
                 id,
                 seq: 0,
+                attempt,
+                sent: 0,
+                dropped: 0,
                 cursor: (!v3).then(|| VirtualCursor::new(t.peer_edge)),
                 target: t.clone(),
             },
@@ -1071,29 +1193,54 @@ impl Loop {
     async fn event(&mut self, ev: CaptureEvent) {
         match ev {
             CaptureEvent::Activated { barrier, pos, .. } => {
+                let attempt = self.next_attempt();
+                tracing::info!(
+                    evento = "attempt.begin",
+                    attempt,
+                    origem = "barrier",
+                    "attempt begins"
+                );
+                match self.targets.get(barrier) {
+                    Some(t) => {
+                        tracing::info!(evento = "barrier.activated", attempt, barreira = barrier, peer = %t.peer, pos = f64::from(pos), "barrier activated")
+                    }
+                    None => tracing::info!(
+                        evento = "barrier.activated",
+                        attempt,
+                        barreira = barrier,
+                        pos = f64::from(pos),
+                        "barrier activated"
+                    ),
+                }
                 if self.locked || self.paused || self.session_locked {
                     self.release().await;
-                    let text = if self.session_locked {
-                        msg::SOURCE_SCREEN_LOCKED.to_owned()
+                    let (text, motivo) = if self.session_locked {
+                        (msg::SOURCE_SCREEN_LOCKED.to_owned(), "screen_locked")
                     } else if self.locked {
-                        msg::LOCKED.to_owned()
+                        (msg::LOCKED.to_owned(), "locked")
                     } else {
-                        RejectReason::Paused.pt().to_owned()
+                        (RejectReason::Paused.pt().to_owned(), "paused")
                     };
+                    log_filtered(attempt, motivo);
                     self.notes(Note::Event(text));
                     return;
                 }
                 let Some(t) = self.targets.get(barrier).cloned() else {
                     self.release().await;
+                    log_filtered(attempt, "unknown_barrier");
                     return;
                 };
                 let dest = map_pos(t.local, t.remote, pos);
-                let _ = self.open(&t, dest).await;
+                if let Err(e) = self.open(&t, dest, attempt).await {
+                    log_filtered(attempt, e.code);
+                }
             }
             CaptureEvent::Input { t_mono_us, ev } => {
                 if self.opening.is_some() {
                     if self.queue.len() == OPEN_BUFFER {
                         self.notes(Note::Block(msg::OPEN_BUFFER_FULL.to_owned()));
+                        self.close_reason = Some("error");
+                        self.close_detail = Some("open_buffer_full".into());
                         self.end_session(true).await;
                     } else {
                         self.queue.push_back(CaptureEvent::Input { t_mono_us, ev });
@@ -1120,6 +1267,8 @@ impl Loop {
             }
             CaptureEvent::Error(e) => {
                 self.notes(Note::Block(msg::adapter_failed(&e)));
+                self.close_reason = Some("error");
+                self.close_detail = Some("capture_error".into());
                 self.end_session(true).await;
             }
             CaptureEvent::Hotkey(h) => self.notes(Note::Hotkey(h)),
@@ -1162,13 +1311,25 @@ impl Loop {
             t_mono_us,
             events,
         };
+        let first = s.seq == 0;
         s.seq = s.seq.wrapping_add(1);
         let peer = s.peer;
-        if let Err(e) = self.host.send_datagram(peer, dg) {
-            tracing::warn!("datagram not sent: {e}");
+        let session = s.id;
+        match self.host.send_datagram(peer, dg) {
+            Ok(()) => {
+                s.sent += 1;
+                if first {
+                    tracing::info!(evento = "datagram.first", session, peer = %peer, "first datagram sent");
+                }
+            }
+            Err(e) => {
+                s.dropped += 1;
+                tracing::warn!("datagram not sent: {e}");
+            }
         }
         if back {
             let name = self.peer_name(peer);
+            self.close_reason = Some("return");
             self.end_session(true).await;
             self.notes(Note::Event(msg::returned_from(&name)));
         }
@@ -1177,6 +1338,7 @@ impl Loop {
     /// This machine's screen locked: `ReleaseAll` and `Leave` to the destination, cursor back
     /// (§13.6 item 6).
     async fn close_for_lock(&mut self) {
+        self.close_reason = Some("lock");
         self.end_session(true).await;
     }
 
@@ -1227,11 +1389,13 @@ impl Loop {
             }
             Ctl::InvalidateRoutes => {
                 if self.current().is_some_and(|s| s.routes.is_some()) {
+                    self.close_reason = Some("inventory");
                     self.end_session(true).await;
                 }
                 self.reset_rx = true;
             }
             Ctl::RoutePlans(plans) => {
+                self.close_reason = Some("inventory");
                 self.end_session(true).await;
                 self.reset_rx = true;
                 self.route_plans = plans;
@@ -1247,6 +1411,10 @@ impl Loop {
                     .filter(|s| self.route_valid(s) && !self.locked)
                     .and_then(|s| s.resolve(from, context.connection, &returned, s.inventories));
                 if let Some((barrier, pos)) = resolved {
+                    if let Some(s) = self.current() {
+                        tracing::info!(evento = "return.received", session = s.id, peer = %from, pos = f64::from(pos), "cursor returned");
+                    }
+                    self.close_reason = Some("return");
                     self.close_session(true, Some((barrier, pos))).await;
                 } else {
                     self.notes(Note::Ignored);
@@ -1274,6 +1442,8 @@ impl Loop {
                 let back = t.local.0 + k * (t.local.1 - t.local.0);
                 let barrier = self.targets.iter().position(|x| same_barrier(x, &t));
                 let name = self.peer_name(from);
+                tracing::info!(evento = "return.received", session, peer = %from, pos = f64::from(pos), "cursor returned");
+                self.close_reason = Some("return");
                 self.close_session(true, barrier.map(|i| (i, back))).await;
                 self.notes(Note::Event(msg::returned_from(&name)));
             }
@@ -1287,6 +1457,8 @@ impl Loop {
                     .is_some_and(|s| s.peer == from && s.id == session)
                 {
                     // The peer refused: no `Leave`, just the cursor back.
+                    tracing::info!(evento = "session.refused", session, peer = %from, motivo = reject_code(reason), "entry refused by the peer");
+                    self.close_reason = Some("refused");
                     self.end_session(false).await;
                     let text = msg::refused_by(&self.peer_name(from), reason);
                     self.notes(Note::Block(text.clone()));
@@ -1311,6 +1483,7 @@ impl Loop {
                     .current()
                     .is_some_and(|s| !targets.iter().any(|t| same_barrier(t, &s.target)))
                 {
+                    self.close_reason = Some("inventory");
                     self.end_session(true).await;
                 }
                 self.targets = targets;
@@ -1333,6 +1506,7 @@ impl Loop {
                     self.reset_rx = true;
                 }
                 if on {
+                    self.close_reason = Some("lock");
                     self.end_session(true).await;
                 }
             }
@@ -1344,11 +1518,14 @@ impl Loop {
                 self.paused = on || self.quiesced;
                 self.reset_rx = true;
                 if on {
+                    self.close_reason = Some("pause");
                     self.end_session(true).await;
                 }
             }
             Ctl::Rejected { from, reason } => {
-                if self.current().is_some_and(|s| s.peer == from) {
+                if let Some(session) = self.current().filter(|s| s.peer == from).map(|s| s.id) {
+                    tracing::info!(evento = "session.refused", session, peer = %from, motivo = reject_code(reason), "entry rejected by the peer");
+                    self.close_reason = Some("refused");
                     self.end_session(false).await;
                     self.notes(Note::Block(reason.pt().to_owned()));
                 }
@@ -1360,6 +1537,7 @@ impl Loop {
             }
             Ctl::PeerDown(id) => {
                 if self.current().is_some_and(|s| s.peer == id) {
+                    self.close_reason = Some("peer_down");
                     self.end_session(false).await;
                     self.notes(Note::Block(msg::PEER_OFFLINE.to_owned()));
                 }
@@ -1392,30 +1570,42 @@ impl Loop {
     }
 
     async fn switch(&mut self, to: PeerId) -> Result<(), String> {
+        let attempt = self.next_attempt();
+        tracing::info!(evento = "attempt.begin", attempt, origem = "switch", peer = %to, "attempt begins");
+        let filtered = |motivo: &'static str, text: String| {
+            log_filtered(attempt, motivo);
+            Err(text)
+        };
         // A deliberate gate remains the reason after cancellation stops the producer.
         if self.locked {
-            return Err(msg::LOCKED.to_owned());
+            return filtered("locked", msg::LOCKED.to_owned());
         }
         if self.paused {
-            return Err(RejectReason::Paused.pt().to_owned());
+            return filtered("paused", RejectReason::Paused.pt().to_owned());
         }
         if !self.available {
-            return Err(msg::adapter_failed("captura indisponível"));
+            return filtered(
+                "capture_unavailable",
+                msg::adapter_failed("captura indisponível"),
+            );
         }
         if self.session_locked {
-            return Err(msg::SOURCE_SCREEN_LOCKED.to_owned());
+            return filtered("screen_locked", msg::SOURCE_SCREEN_LOCKED.to_owned());
         }
         let Some(t) = self.targets.iter().find(|t| t.peer == to).cloned() else {
-            return Err(msg::NOT_LINKED.to_owned());
+            return filtered("not_linked", msg::NOT_LINKED.to_owned());
         };
         if !self.host.peers().iter().any(|p| p.id == to && p.connected) {
-            return Err(msg::PEER_OFFLINE.to_owned());
+            return filtered("peer_offline", msg::PEER_OFFLINE.to_owned());
         }
         if !self.cap.can_begin() {
-            return Err(msg::SWITCH_UNAVAILABLE.to_owned());
+            return filtered("switch_unavailable", msg::SWITCH_UNAVAILABLE.to_owned());
         }
         let middle = (t.remote.0 + t.remote.1) / 2.0;
-        self.open(&t, middle).await?;
+        if let Err(e) = self.open(&t, middle, attempt).await {
+            log_filtered(attempt, e.code);
+            return Err(e.into());
+        }
         // The session is open: now the local keyboard and mouse have to follow it (a crossing
         // does this by itself; a switch does not cross anything).
         let barrier = self
