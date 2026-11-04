@@ -15,11 +15,11 @@ pub(crate) struct Entrada {
     pub origem: PathBuf,
     #[arg(long)]
     pub destino: Option<PathBuf>,
-    #[arg(long, conflicts_with = "ultima")]
+    #[arg(long, conflicts_with = "ultima", value_parser = clap::value_parser!(u32).range(1..))]
     pub sessao: Option<u32>,
     #[arg(long)]
     pub ultima: bool,
-    #[arg(long)]
+    #[arg(long, value_parser = validar_desde)]
     pub desde: Option<String>,
     #[arg(long)]
     pub json: bool,
@@ -30,6 +30,8 @@ pub(crate) struct Saida {
     pub sessao: Option<u32>,
     pub passos: Vec<Passo>,
     pub quebra: Option<String>,
+    pub parada: Option<String>,
+    houve_tentativa: bool,
 }
 
 #[derive(Serialize)]
@@ -183,17 +185,301 @@ fn inventario(nome: &'static str, registro: Option<&Registro>) -> Passo {
     }
 }
 
+const GAP: &str = "sem registro: passo não alcançado ou log truncado";
+
+fn validar_desde(value: &str) -> Result<String, String> {
+    if OffsetDateTime::parse(value, &Rfc3339).is_ok()
+        || humantime::parse_duration(value)
+            .ok()
+            .and_then(|v| time::Duration::try_from(v).ok())
+            .is_some()
+    {
+        Ok(value.to_owned())
+    } else {
+        Err("use um instante RFC 3339 com fuso ou uma duração, como 30m ou 2h".into())
+    }
+}
+
+fn corte(
+    value: Option<&str>,
+    records: &[Registro],
+) -> Result<Option<OffsetDateTime>, FalhaVerificar> {
+    let Some(value) = value else { return Ok(None) };
+    if let Ok(ts) = OffsetDateTime::parse(value, &Rfc3339) {
+        return Ok(Some(ts));
+    }
+    let duration = humantime::parse_duration(value)
+        .ok()
+        .and_then(|v| time::Duration::try_from(v).ok())
+        .ok_or_else(|| schema("--desde inválido"))?;
+    Ok(records.last().and_then(|r| r.ts.checked_sub(duration)))
+}
+
+fn inicio(r: &Registro) -> bool {
+    matches!(r.evento.as_str(), "attempt.begin" | "barrier.activated")
+}
+fn evento_sessao(r: &Registro) -> bool {
+    matches!(
+        r.evento.as_str(),
+        "session.open"
+            | "session.sent"
+            | "session.active"
+            | "session.refused"
+            | "session.closed"
+            | "datagram.first"
+            | "return.received"
+    ) && r.numero("session").is_some_and(|s| s != 0)
+}
+
+struct Selecao<'a> {
+    marco: Option<&'a Registro>,
+    inicio: Option<&'a Registro>,
+    eventos: Vec<&'a Registro>,
+    tentativa: Option<u32>,
+    sessao: Option<u32>,
+    houve_tentativa: bool,
+}
+
+fn selecionar<'a>(records: &[&'a Registro], e: &Entrada) -> Selecao<'a> {
+    let current_boot = records
+        .iter()
+        .rposition(|r| r.evento == "agent.up")
+        .unwrap_or(0);
+    let anchor = if !e.ultima
+        && let Some(session) = e.sessao
+    {
+        records
+            .iter()
+            .rposition(|r| r.evento == "session.open" && r.numero("session") == Some(session))
+            .or_else(|| {
+                records
+                    .iter()
+                    .position(|r| evento_sessao(r) && r.numero("session") == Some(session))
+            })
+    } else {
+        records
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(i, r)| {
+                *i >= current_boot
+                    && (inicio(r)
+                        || matches!(r.evento.as_str(), "attempt.filtered" | "session.open"))
+            })
+            .map(|(i, _)| i)
+            .or_else(|| {
+                records
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find(|(i, r)| *i >= current_boot && evento_sessao(r))
+                    .map(|(i, _)| i)
+            })
+    };
+    let Some(anchor) = anchor else {
+        return Selecao {
+            marco: None,
+            inicio: None,
+            eventos: vec![],
+            tentativa: None,
+            sessao: e.sessao,
+            houve_tentativa: e.sessao.is_some(),
+        };
+    };
+    let chosen = records[anchor];
+    let mut start = anchor;
+    // O contador reinicia com o processo. Nunca procurar por id através de outra
+    // tentativa, fechamento ou inicialização; a correlação inclui o intervalo.
+    if chosen.evento != "attempt.begin" {
+        for i in (0..anchor).rev() {
+            let r = records[i];
+            if matches!(r.evento.as_str(), "agent.up" | "session.closed") {
+                break;
+            }
+            if inicio(r) || r.evento == "attempt.filtered" {
+                if chosen.numero("attempt").is_some()
+                    && r.numero("attempt") == chosen.numero("attempt")
+                {
+                    start = i;
+                    if r.evento == "attempt.begin" {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            if r.evento == "session.open"
+                && chosen.numero("session").is_some()
+                && r.numero("session") != chosen.numero("session")
+            {
+                break;
+            }
+        }
+    }
+    let end = records
+        .iter()
+        .enumerate()
+        .skip(anchor + 1)
+        .find(|(_, r)| r.evento == "attempt.begin" || r.evento == "agent.up")
+        .map_or(records.len(), |(i, _)| i);
+    let eventos = records[start..end].to_vec();
+    let begin = eventos.iter().copied().find(|r| inicio(r));
+    let opening = ultimo(&eventos, &["session.open"]);
+    let sessao = e
+        .sessao
+        .or_else(|| opening.and_then(|r| r.numero("session")))
+        .or_else(|| {
+            eventos
+                .iter()
+                .find(|r| evento_sessao(r))
+                .and_then(|r| r.numero("session"))
+        });
+    Selecao {
+        marco: Some(records[start]),
+        inicio: begin,
+        tentativa: begin.or(opening).unwrap_or(chosen).numero("attempt"),
+        sessao,
+        eventos,
+        houve_tentativa: true,
+    }
+}
+
+fn exigir(nome: &'static str, records: &[&Registro], events: &[&str], missing: &str) -> Passo {
+    if events
+        .iter()
+        .all(|event| ultimo(records, &[event]).is_some())
+    {
+        passo(nome, Estado::Ok, ultimo(records, events), None)
+    } else {
+        passo(nome, Estado::SemDado, None, Some(missing))
+    }
+}
+
+fn cadeia(s: &Selecao<'_>, remote: &[&Registro], destino_informado: bool) -> Vec<Passo> {
+    let local: Vec<_> = s
+        .eventos
+        .iter()
+        .copied()
+        .filter(|r| s.sessao.is_some() && r.numero("session") == s.sessao)
+        .collect();
+    let remote: Vec<_> = remote
+        .iter()
+        .copied()
+        .filter(|r| s.sessao.is_some() && r.numero("session") == s.sessao)
+        .collect();
+    let missing_remote = if destino_informado {
+        "evento da sessão ausente no destino: pode não ter sido alcançado ou o arquivo ter sido rotacionado"
+    } else {
+        "arquivo do destino não informado"
+    };
+    let closed = ultimo(&local, &["session.closed"]);
+    let session = match closed.filter(|r| r.texto("motivo") == Some("error")) {
+        Some(r) => passo(
+            "sessao",
+            Estado::Falhou,
+            Some(r),
+            r.texto("erro").or(Some("error")),
+        ),
+        None => exigir(
+            "sessao",
+            &local,
+            &["session.open", "session.sent"],
+            "abertura e envio da sessão não registrados",
+        ),
+    };
+    let refusal = ultimo(&local, &["session.refused"])
+        .or_else(|| ultimo(&remote, &["enter.refused"]))
+        .or_else(|| closed.filter(|r| r.texto("motivo") == Some("refused")));
+    let entry = match refusal {
+        Some(r) => passo(
+            "entrada_destino",
+            Estado::Falhou,
+            Some(r),
+            r.texto("motivo").or(Some("refused")),
+        ),
+        None => exigir(
+            "entrada_destino",
+            &remote,
+            &["enter.received"],
+            missing_remote,
+        ),
+    };
+    let emulation = match ultimo(&remote, &["emulate.error"]) {
+        Some(r) => passo(
+            "emulacao",
+            Estado::Falhou,
+            Some(r),
+            r.texto("motivo").or(r.texto("erro")),
+        ),
+        None => exigir(
+            "emulacao",
+            &remote,
+            &["emulate.start", "emulate.positioned"],
+            missing_remote,
+        ),
+    };
+    let both = |nome, here, there| match (ultimo(&local, &[here]), ultimo(&remote, &[there])) {
+        (Some(r), Some(_)) => passo(nome, Estado::Ok, Some(r), Some("confirmado nos dois lados")),
+        _ => passo(
+            nome,
+            Estado::SemDado,
+            None,
+            Some("evento não registrado nos dois lados"),
+        ),
+    };
+    let finish = match closed {
+        Some(r)
+            if matches!(
+                r.texto("motivo"),
+                Some(
+                    "return"
+                        | "refused"
+                        | "error"
+                        | "pause"
+                        | "lock"
+                        | "stop"
+                        | "peer_down"
+                        | "switch"
+                        | "inventory"
+                )
+            ) =>
+        {
+            passo("fechamento", Estado::Ok, Some(r), r.texto("motivo"))
+        }
+        r => passo(
+            "fechamento",
+            Estado::SemDado,
+            r,
+            Some("fechamento com motivo conhecido não registrado"),
+        ),
+    };
+    let mut steps = vec![
+        session,
+        entry,
+        emulation,
+        both("datagramas", "datagram.first", "datagram.first"),
+        both("retorno", "return.received", "return.sent"),
+        finish,
+    ];
+    if let Some(reason) = closed.and_then(|r| r.texto("motivo")).filter(|reason| {
+        matches!(
+            *reason,
+            "pause" | "lock" | "stop" | "peer_down" | "switch" | "inventory"
+        )
+    }) && let Some(step) = steps.iter_mut().find(|p| p.estado == Estado::SemDado)
+    {
+        step.motivo = Some(format!(
+            "{}; sessão interrompida: {reason}",
+            step.motivo.as_deref().unwrap_or("")
+        ));
+    }
+    steps
+}
+
 pub(crate) fn executar(e: &Entrada) -> Result<Saida, FalhaVerificar> {
     let origem = ler(&e.origem)?;
     let destino = e.destino.as_deref().map(ler).transpose()?;
-    let desde = e
-        .desde
-        .as_deref()
-        .map(|v| {
-            OffsetDateTime::parse(v, &Rfc3339)
-                .map_err(|_| schema("--desde exige um instante RFC 3339 nesta versão"))
-        })
-        .transpose()?;
+    let desde = corte(e.desde.as_deref(), &origem)?;
     let origem: Vec<_> = origem
         .iter()
         .filter(|r| desde.is_none_or(|ts| r.ts >= ts))
@@ -203,41 +489,32 @@ pub(crate) fn executar(e: &Entrada) -> Result<Saida, FalhaVerificar> {
         .flatten()
         .filter(|r| desde.is_none_or(|ts| r.ts >= ts))
         .collect();
-    let session_open = origem.iter().rev().copied().find(|r| {
-        r.evento == "session.open" && r.numero("session") == e.sessao && e.sessao.is_some()
+    let selection = selecionar(&origem, e);
+    let chosen = selection.marco;
+    let opening = ultimo(&selection.eventos, &["session.open"]);
+    let boot = origem.iter().rev().copied().find(|r| {
+        r.evento == "agent.up" && chosen.is_none_or(|c| (r.ts, r.indice) <= (c.ts, c.indice))
     });
-    let chosen = if e.ultima || e.sessao.is_none() {
-        ultimo(&origem, &["attempt.begin", "barrier.activated"])
-    } else {
-        session_open.and_then(|s| {
-            origem.iter().rev().copied().find(|r| {
-                matches!(r.evento.as_str(), "attempt.begin" | "barrier.activated")
-                    && r.numero("attempt") == s.numero("attempt")
-            })
-        })
-    };
-    let tentativa = chosen.and_then(|r| r.numero("attempt"));
-    let opening = session_open.or_else(|| {
-        tentativa.and_then(|n| {
-            origem
-                .iter()
-                .rev()
-                .copied()
-                .find(|r| r.evento == "session.open" && r.numero("attempt") == Some(n))
-        })
-    });
-    let sessao = e
-        .sessao
-        .or_else(|| opening.and_then(|r| r.numero("session")));
     let prerequisites: Vec<_> = origem
         .iter()
         .copied()
-        .filter(|r| chosen.is_none_or(|c| (r.ts, r.indice) <= (c.ts, c.indice)))
+        .filter(|r| {
+            chosen.is_none_or(|c| (r.ts, r.indice) <= (c.ts, c.indice))
+                && boot.is_none_or(|b| (r.ts, r.indice) >= (b.ts, b.indice))
+        })
         .collect();
+    let remote_boot = destino
+        .iter()
+        .rev()
+        .copied()
+        .find(|r| r.evento == "agent.up" && chosen.is_none_or(|c| r.ts <= c.ts));
     let remote: Vec<_> = destino
         .iter()
         .copied()
-        .filter(|r| chosen.is_none_or(|c| r.ts <= c.ts))
+        .filter(|r| {
+            chosen.is_none_or(|c| r.ts <= c.ts)
+                && remote_boot.is_none_or(|b| (r.ts, r.indice) >= (b.ts, b.indice))
+        })
         .collect();
     let peer = opening
         .and_then(|r| r.texto("peer"))
@@ -284,7 +561,13 @@ pub(crate) fn executar(e: &Entrada) -> Result<Saida, FalhaVerificar> {
         ),
         Some(r)
             if r.numero("rotas").is_some_and(|n| n > 0)
-                && r.numero("barreiras").is_some_and(|n| n > 0) =>
+                && r.numero("barreiras").is_some_and(|n| n > 0)
+                && peer.is_none_or(|p| {
+                    r.dados
+                        .get("pares")
+                        .and_then(Value::as_array)
+                        .is_some_and(|peers| peers.iter().any(|v| v.as_str() == Some(p)))
+                }) =>
         {
             passo("rotas", Estado::Ok, Some(r), None)
         }
@@ -292,7 +575,7 @@ pub(crate) fn executar(e: &Entrada) -> Result<Saida, FalhaVerificar> {
             "rotas",
             Estado::SemDado,
             r,
-            Some("rotas e barreiras prontas não registradas"),
+            Some("rotas e barreiras prontas para o par selecionado não registradas"),
         ),
     };
     let capture = match ultimo(&prerequisites, &["capture.ready", "capture.failed"]) {
@@ -306,7 +589,11 @@ pub(crate) fn executar(e: &Entrada) -> Result<Saida, FalhaVerificar> {
             if r.dados
                 .get("barreiras")
                 .and_then(Value::as_array)
-                .is_some_and(|b| !b.is_empty()) =>
+                .is_some_and(|barriers| {
+                    barriers.iter().any(|b| {
+                        peer.is_none_or(|p| b.get("peer").and_then(Value::as_str) == Some(p))
+                    })
+                }) =>
         {
             passo("captura", Estado::Ok, Some(r), None)
         }
@@ -314,35 +601,58 @@ pub(crate) fn executar(e: &Entrada) -> Result<Saida, FalhaVerificar> {
             "captura",
             Estado::SemDado,
             r,
-            Some("captura com barreiras não registrada"),
+            Some("captura com barreiras para o par selecionado não registrada"),
         ),
     };
-    let filtered = tentativa.and_then(|n| {
-        origem
-            .iter()
-            .rev()
-            .copied()
-            .find(|r| r.evento == "attempt.filtered" && r.numero("attempt") == Some(n))
-    });
-    let attempt = match (chosen, filtered) {
+    let filtered = ultimo(&selection.eventos, &["attempt.filtered"]);
+    let attempt = match (selection.inicio, filtered) {
         (_, Some(r)) => passo("tentativa", Estado::Falhou, Some(r), r.texto("motivo")),
         (Some(r), None) => passo("tentativa", Estado::Ok, Some(r), None),
-        _ => passo("tentativa", Estado::SemDado, None, Some(NO_ATTEMPT)),
+        _ => passo(
+            "tentativa",
+            Estado::SemDado,
+            None,
+            Some(if selection.marco.is_none() && e.sessao.is_some() {
+                "sessão pedida não comprovada"
+            } else if selection.houve_tentativa {
+                "início da tentativa não registrado"
+            } else {
+                NO_ATTEMPT
+            }),
+        ),
     };
-    let passos = vec![local, remote_inventory, routes, capture, attempt];
+    let mut passos = vec![local, remote_inventory, routes, capture, attempt];
+    if selection.houve_tentativa {
+        passos.extend(cadeia(&selection, &destino, e.destino.is_some()));
+    }
     let quebra = passos
         .iter()
         .find(|p| p.estado == Estado::Falhou)
         .map(|p| p.nome.to_owned());
+    let parada = passos
+        .iter()
+        .find(|p| p.estado == Estado::SemDado)
+        .map(|p| p.nome.to_owned());
+    for p in &mut passos {
+        if p.estado == Estado::SemDado {
+            p.motivo = Some(format!("{}; {GAP}", p.motivo.as_deref().unwrap_or("")));
+        }
+    }
     Ok(Saida {
-        tentativa,
-        sessao,
+        tentativa: selection.tentativa,
+        sessao: selection.sessao,
         passos,
         quebra,
+        parada,
+        houve_tentativa: selection.houve_tentativa,
     })
 }
 
 impl Saida {
+    pub fn incompleta(&self) -> bool {
+        self.quebra.is_some() || (self.houve_tentativa && self.parada.is_some())
+    }
+
     pub fn texto(&self) -> String {
         let mut lines = Vec::new();
         for p in &self.passos {
@@ -365,10 +675,13 @@ impl Saida {
         if let Some(quebra) = &self.quebra {
             lines.push(format!("primeiro ponto de quebra: {quebra}"));
         }
+        if let Some(parada) = &self.parada {
+            lines.push(format!("parada: {parada}; {GAP}"));
+        }
         lines.join("\n")
     }
 
     pub fn json(&self) -> Value {
-        json!({"v":1,"tentativa":self.tentativa,"sessao":self.sessao,"passos":self.passos,"quebra":self.quebra})
+        json!({"v":1,"tentativa":self.tentativa,"sessao":self.sessao,"passos":self.passos,"quebra":self.quebra,"parada":self.parada})
     }
 }

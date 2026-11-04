@@ -232,7 +232,7 @@ fn verificar_logs(entrada: &verificar::Entrada) -> Result<(), Fail> {
     } else {
         println!("{}", output.texto());
     }
-    if output.quebra.is_some() {
+    if output.incompleta() {
         Err(Fail::error(String::new()))
     } else {
         Ok(())

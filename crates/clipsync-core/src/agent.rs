@@ -170,6 +170,8 @@ pub async fn run_reserved(
             }
         })
     });
+    // Marca a execução antes de qualquer produtor de inventário, rotas ou captura.
+    tracing::info!(evento = "agent.up", descartados = crate::logging::preopen_dropped(), id = %mesh.local_id(), addr = ?mesh.local_addr().ok(), "agent up");
     let mut tasks = JoinSet::new();
     for (m, rx) in runners {
         // Each module holds its own handle: none may outlive `run` here (see wait_port_released).
@@ -186,7 +188,6 @@ pub async fn run_reserved(
             let _ = tx.send(ModuleInput::Paused(true)).await;
         }
     }
-    tracing::info!(evento = "agent.up", descartados = crate::logging::preopen_dropped(), id = %mesh.local_id(), addr = ?mesh.local_addr().ok(), "agent up");
 
     let handler = Arc::new(Agent {
         profile: p.clone(),
