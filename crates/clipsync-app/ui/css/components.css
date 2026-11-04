@@ -426,6 +426,11 @@ kbd {
   font-variant-numeric: tabular-nums;
 }
 
+/* O cabeçalho da coluna fica na fonte de texto; só as células usam a mono. */
+.tabela th.mono {
+  font-family: inherit;
+}
+
 .tabela--selecionavel tbody tr {
   cursor: pointer;
 }

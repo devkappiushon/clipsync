@@ -19,7 +19,7 @@ estado.prefs = {
   notifications: { item_received: true, device_connected: false, block: true },
   appearance: { theme: temaInicial, reduce_motion: false },
   language: "pt-BR",
-  version: "0.4.0",
+  version: "0.5.0",
   license: "Todos os direitos reservados",
 };
 

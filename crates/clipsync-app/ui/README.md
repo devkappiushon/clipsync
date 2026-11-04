@@ -10,6 +10,8 @@ Frontend estático do app Tauri 2: HTML, CSS e JavaScript puros, sem npm, sem bu
 - Tema claro e escuro por tokens em `css/tokens.css` (escala de 8 pt, um raio, uma elevação). Nada de cor solta nas telas.
 - Todo botão assíncrono passa por `comCarregamento` (o `botao()` já faz isso). Toda tela tem estado vazio e estado de erro com a `message` do agente.
 - Recurso futuro sem backend permanece visível e desabilitado, nunca escondido, com o texto de indisponibilidade conforme `app_state.features`. Num ramo já desabilitado, a explicação separa suporte local ausente, módulo comprovadamente desligado e estado desconhecido, nessa ordem; booleano remoto falso não comprova módulo ausente (contrato §16.1).
+- Atalho Win+Alt só entra na tela por `atalhoGlobal()` de `js/estado.js`, que devolve null sem `features.global_shortcuts`: a interface não anuncia atalho que o sistema não registra (contrato §16.5).
+- Cabeçalho de coluna nunca fica na fonte mono (`.tabela th.mono` herda a fonte de texto). A região viva `.anunciador` fica fora do fluxo e nenhuma tela conta com ela para espaçamento; mensagem de topo vazia não ocupa linha da grade (`:empty` escondido).
 
 Critério de pronto da interface: §12.9 item 5 do contrato. Ele busca estilo em linha, atribuição de HTML e o caractere de travessão nesta pasta, e não pode achar nada. Por isso este README descreve essas regras sem escrevê-las.
 

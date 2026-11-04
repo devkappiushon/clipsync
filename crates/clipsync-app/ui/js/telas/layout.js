@@ -5,7 +5,7 @@ import { aviso, cabecalho, estadoErro, indisponivel } from "../areas.js";
 import { abrirDialogo, botao, campo, cartao, esqueleto, selo } from "../componentes.js";
 import { criarAnunciador, guardarFoco, interacaoAtual, restaurarFoco } from "../acessibilidade.js";
 import { h, novoId, trocar } from "../dom.js";
-import { consumirParDoLayout, obterApp, observarApp, recurso } from "../estado.js";
+import { atalhoGlobal, consumirParDoLayout, obterApp, observarApp, recurso } from "../estado.js";
 import { INDISPONIVEL, INDISPONIVEL_NESTE_SISTEMA, mensagemDe, seloDispositivo } from "../formatar.js";
 import { icone, svg } from "../icones.js";
 
@@ -399,12 +399,12 @@ export default function montar({ ir, assinar }) {
       "data-focus-key": chave("dispositivo", d.peer_id),
       "aria-pressed": String(selecao?.tipo === "dispositivo" && selecao.peerId === d.peer_id),
       "aria-describedby": "layout-canvas-ajuda",
-      "aria-label": `${d.name}${d.is_self ? " (esta máquina)" : ""}, ${ESTADOS[d.state] ?? d.state}${d.hotkey ? `, atalho Win+Alt+${d.hotkey}` : ""}.`,
+      "aria-label": `${d.name}${d.is_self ? " (esta máquina)" : ""}, ${ESTADOS[d.state] ?? d.state}${atalhoGlobal(d.hotkey) ? `, atalho ${atalhoGlobal(d.hotkey)}` : ""}.`,
     });
 
     const primeiroMonitor = [...meus].sort((a, b) => a.y - b.y || a.x - b.x)[0];
     const primeiro = tela(primeiroMonitor.x, primeiroMonitor.y);
-    const texto = `${d.name}${d.is_self ? " · esta máquina" : ""}${d.hotkey ? ` · Win+Alt+${d.hotkey}` : ""}${ativo ? " · ativo" : ""}${d.state !== "connected" && !d.is_self ? ` · ${ESTADOS[d.state] ?? d.state}` : ""}`;
+    const texto = `${d.name}${d.is_self ? " · esta máquina" : ""}${atalhoGlobal(d.hotkey) ? ` · ${atalhoGlobal(d.hotkey)}` : ""}${ativo ? " · ativo" : ""}${d.state !== "connected" && !d.is_self ? ` · ${ESTADOS[d.state] ?? d.state}` : ""}`;
     // Nome cabe na área da própria máquina, sem cobrir monitores vizinhos.
     const larguraGrupo = primeiroMonitor.w * escala;
     const rotulo = svg("text", { class: "layout__nome", x: primeiro.x + 8, y: primeiro.y + 16 });
@@ -908,7 +908,7 @@ export default function montar({ ir, assinar }) {
 
   function atalhoDaLigacao(l) {
     const outra = [l.a, l.b].map((p) => layout.devices.find((d) => d.peer_id === p.peer_id)).find((d) => d && !d.is_self);
-    return outra?.hotkey ? `Win+Alt+${outra.hotkey}` : null;
+    return atalhoGlobal(outra?.hotkey);
   }
 
   function pintarLigacoes() {
@@ -1097,7 +1097,7 @@ export default function montar({ ir, assinar }) {
   function pintarRodape() {
     const travar = botao({
       rotulo: layout.screen_locked ? "Destravar esta tela" : "Travar nesta tela",
-      atalho: recurso("screen_lock") ? "Win+Alt+L" : null,
+      atalho: recurso("screen_lock") ? atalhoGlobal("L") : null,
       desabilitado: !recurso("screen_lock"),
       dataset: { focusKey: "layout-travar" },
       aoClicar: () => executar(() => api.lockToScreen({ locked: !layout.screen_locked })),
@@ -1147,7 +1147,7 @@ export default function montar({ ir, assinar }) {
         botao({
           rotulo: d.name,
           icone: "avancar",
-          atalho: d.hotkey ? `Win+Alt+${d.hotkey}` : null,
+          atalho: atalhoGlobal(d.hotkey),
           desabilitado: !recurso("switch_device") || d.state !== "connected",
           "aria-pressed": String(layout.active_peer_id === d.peer_id),
           aoClicar: () => executar(() => api.switchToDevice({ peer_id: d.peer_id })),

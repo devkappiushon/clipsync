@@ -25,6 +25,11 @@
   display: none;
 }
 
+/* Mensagem de topo vazia não ocupa uma linha da grade: sem vão entre o cabeçalho e o primeiro aviso. */
+.layout__corpo > :empty {
+  display: none;
+}
+
 .layout__principal,
 .layout__lateral {
   display: flex;

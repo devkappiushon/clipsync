@@ -26,6 +26,13 @@ export function pausaObservada(estado) {
 /** Recurso ligado nesta versão? Ex.: recurso("peer_pause"). Sem estado carregado, false. */
 export const recurso = (nome) => app?.features?.[nome] === true;
 
+/**
+ * Texto de um atalho global (Win+Alt+tecla) só onde o sistema o registra, isto é, com
+ * features.global_shortcuts confirmado (hoje só o Windows com o módulo de entrada ativo).
+ * Fora disso devolve null, e a interface não anuncia um atalho que não existe.
+ */
+export const atalhoGlobal = (tecla) => (tecla !== null && tecla !== undefined && tecla !== "" && recurso("global_shortcuts") ? `Win+Alt+${tecla}` : null);
+
 export function observarApp(fn) {
   aoMudarApp.add(fn);
   return () => aoMudarApp.delete(fn);

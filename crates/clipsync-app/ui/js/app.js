@@ -7,7 +7,7 @@ import { api } from "./api.js";
 import { estadoErro } from "./areas.js";
 import { botao, comCarregamento } from "./componentes.js";
 import { h, trocar } from "./dom.js";
-import { aplicarAparencia, assinar, atualizarApp, iniciarEventos, obterApp, observarApp, pausaObservada } from "./estado.js";
+import { aplicarAparencia, assinar, atalhoGlobal, atualizarApp, iniciarEventos, obterApp, observarApp, pausaObservada } from "./estado.js";
 import { mensagemDe } from "./formatar.js";
 import { icone } from "./icones.js";
 
@@ -136,6 +136,8 @@ function pintarRodape(app) {
   el.pausar.querySelector(".icone")?.remove();
   el.pausar.prepend(icone(pausa === true ? "retomar" : "pausa"));
   el.pausarRotulo.textContent = pausa === null && !["stopped", "failed"].includes(app.agent) ? "Pausa não confirmada" : pausa ? "Retomar tudo" : "Pausar tudo";
+  // A tecla só aparece onde o sistema registra o atalho; no Linux não há atalho global nesta versão.
+  el.pausar.querySelector("kbd")?.toggleAttribute("hidden", atalhoGlobal("P") === null);
 }
 
 /** Faixa persistente: polling atualiza texto, sem trocar o botão que está em uso. */

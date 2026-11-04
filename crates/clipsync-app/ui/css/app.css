@@ -555,8 +555,10 @@ h3 {
   justify-self: start;
 }
 
+/* Região viva só para leitor de tela: fora do fluxo, para não contar como item de flex ou grade
+   e abrir um vão de `gap` entre o cabeçalho e o primeiro bloco visível. */
 .anunciador {
-  position: relative;
+  position: absolute;
   height: 0;
   min-height: 0;
 }
