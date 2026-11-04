@@ -474,22 +474,40 @@ impl State {
         }
         f.entered = Some(index);
         let Some(local) = self.organization.catalog.get(self.host.local_id()) else {
-            self.refuse_on(
+            self.refuse_on_with(
                 from,
                 entry.session,
                 context.connection,
                 RejectReason::ApplyFailed,
+                "no_local_inventory",
             );
             return;
         };
+        // The entry monitor must exist here: the route cannot be tracked without it.
+        if !local
+            .inventory
+            .monitors
+            .iter()
+            .any(|m| m.uid == entry.monitor)
+        {
+            self.refuse_on_with(
+                from,
+                entry.session,
+                context.connection,
+                RejectReason::ApplyFailed,
+                "monitor_not_found",
+            );
+            return;
+        }
         let track = match RouteTrack::new(&local.inventory, &entry) {
             Ok(t) => t,
             Err(_) => {
-                self.refuse_on(
+                self.refuse_on_with(
                     from,
                     entry.session,
                     context.connection,
                     RejectReason::ApplyFailed,
+                    "route_invalid",
                 );
                 return;
             }
@@ -497,11 +515,17 @@ impl State {
         if !self.confirm_local_inventory(entry.inventories.target).await
             || !self.authorized(from, context)
         {
-            self.refuse_on(
+            let motivo = if self.authorized(from, context) {
+                "inventory_unconfirmed"
+            } else {
+                "not_authorized"
+            };
+            self.refuse_on_with(
                 from,
                 entry.session,
                 context.connection,
                 RejectReason::ApplyFailed,
+                motivo,
             );
             return;
         }
@@ -511,6 +535,13 @@ impl State {
             .iter()
             .find(|m| m.uid == entry.monitor)
         else {
+            self.refuse_on_with(
+                from,
+                entry.session,
+                context.connection,
+                RejectReason::ApplyFailed,
+                "monitor_not_found",
+            );
             return;
         };
         let zone = Zone {
@@ -534,13 +565,16 @@ impl State {
             return;
         }
         if !self.emu_started {
-            if self.emu.start().await.is_err() {
+            tracing::info!(evento = "emulate.start", session = entry.session, peer = %from, adaptador = self.emu.name(), "emulator starting");
+            if let Err(e) = self.emu.start().await {
+                tracing::info!(evento = "emulate.error", session = entry.session, peer = %from, adaptador = self.emu.name(), erro = %e, "emulator did not start");
                 self.release_all().await;
-                self.refuse_on(
+                self.refuse_on_with(
                     from,
                     entry.session,
                     context.connection,
                     RejectReason::ApplyFailed,
+                    "emulator_start_failed",
                 );
                 return;
             }
@@ -553,21 +587,23 @@ impl State {
             self.release_all().await;
             return;
         }
-        if self
+        if let Err(e) = self
             .emu
             .enter(&zone, std::slice::from_ref(&zone), entry.edge, entry.pos)
             .await
-            .is_err()
         {
+            tracing::info!(evento = "emulate.error", session = entry.session, peer = %from, adaptador = self.emu.name(), erro = %e, "entry positioning failed");
             self.release_all().await;
-            self.refuse_on(
+            self.refuse_on_with(
                 from,
                 entry.session,
                 context.connection,
                 RejectReason::ApplyFailed,
+                "entry_positioning_failed",
             );
             return;
         }
+        tracing::info!(evento = "emulate.positioned", session = entry.session, peer = %from, adaptador = self.emu.name(), pos = f64::from(entry.pos), "entry positioned");
         if !self.confirm_local_inventory(entry.inventories.target).await
             || self.organization.ingress_suspended
             || !self.authorized(from, context)

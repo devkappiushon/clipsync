@@ -949,3 +949,204 @@ async fn recusa_do_destino_fecha() {
     // the log keeps that order on purpose.
     drop(b);
 }
+
+// --------------------------------------------------------------- casos do destino (tarefas 7 e 8)
+
+/// A v4 entry toward a monitor this machine does not have is refused with `ApplyFailed` on the
+/// wire and `monitor_not_found` in the log; before, the destination returned in silence.
+#[tokio::test]
+async fn monitor_ausente_recusa_apply_failed() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let a = hub.add_node("a", INPUT);
+    let b_id = node_id("b");
+    let obs_b = receiver_observation("N", "ib");
+    let dir = tempfile::tempdir().unwrap();
+    write_devices(dir.path(), &[a.id, b_id]);
+    let b = spawn(&hub, "b", dir, fake(&obs_b));
+    hub.link(a.id, b.id, CONTROL, CONTROL);
+    settle(&b).await;
+    until("inventory.prepared", || captura.tem("inventory.prepared")).await;
+    settle(&b).await;
+    let estado = state(command(&b.tx, ModuleCommand::InputState).await);
+    let local = estado
+        .inventories
+        .iter()
+        .find(|v| v.stamp.peer == b.id)
+        .expect("inventário local de b");
+    let existente = local.inventory.monitors[0].uid;
+    let entry = EnterRoutes {
+        session: 77,
+        inventories: InventoryRevisions {
+            source: 1,
+            target: local.stamp.rev,
+        },
+        monitor: MonitorUid([9; 16]),
+        edge: Edge::Left,
+        pos: 0.5,
+        routes: SessionRoutes {
+            first: ExitRoute {
+                id: RouteId(0),
+                monitor: existente,
+                edge: Edge::Left,
+                from: 0.0,
+                to: 1.0,
+            },
+            second: None,
+        },
+    };
+    a.host
+        .send_reliable(b.id, ModuleMsg::Input(InputMsg::EnterRoutes(entry)))
+        .await
+        .unwrap();
+    until("enter.refused", || {
+        captura
+            .todos("enter.refused")
+            .iter()
+            .any(|e| e.campo("session") == Some("77"))
+    })
+    .await;
+    let recusada = captura
+        .todos("enter.refused")
+        .into_iter()
+        .find(|e| e.campo("session") == Some("77"))
+        .expect("enter.refused da sessão 77");
+    assert_eq!(
+        recusada.campo("motivo"),
+        Some("monitor_not_found"),
+        "{recusada:?}"
+    );
+    assert!(
+        !captura.tem("emulate.start"),
+        "sem monitor o emulador não começa"
+    );
+
+    let mut rx = a.rx;
+    let end = Instant::now() + Duration::from_secs(2);
+    let refused = loop {
+        match tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
+            Ok(Some(ModuleInput::Reliable {
+                msg:
+                    ModuleMsg::Input(InputMsg::Refused {
+                        session: 77,
+                        reason,
+                    }),
+                ..
+            })) => break reason,
+            _ => assert!(Instant::now() < end, "timeout waiting for: Refused"),
+        }
+    };
+    assert_eq!(refused, RejectReason::ApplyFailed);
+}
+
+/// Legacy entry: the emulator start and the positioned cursor appear in the destination's log.
+#[tokio::test]
+async fn emulacao_registra_inicio_e_posicao() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let a = hub.add_node("a", INPUT);
+    let b_id = node_id("b");
+    let dir = tempfile::tempdir().unwrap();
+    write_devices(dir.path(), &[a.id, b_id]);
+    let b = spawn(&hub, "b", dir, fake(&receiver_observation("N", "ib")));
+    hub.set_remote_version(a.id, 1);
+    hub.link(a.id, b.id, PeerPerms::default(), CONTROL);
+    settle(&b).await;
+    until("inventory.prepared", || captura.tem("inventory.prepared")).await;
+    settle(&b).await;
+
+    a.host
+        .send_reliable(
+            b.id,
+            ModuleMsg::Input(InputMsg::Enter {
+                session: 51,
+                edge: Edge::Left,
+                pos: 0.25,
+            }),
+        )
+        .await
+        .unwrap();
+    until("emulate.positioned", || captura.tem("emulate.positioned")).await;
+    let inicio = captura.primeiro("emulate.start").expect("emulate.start");
+    assert_eq!(inicio.campo("session"), Some("51"), "{inicio:?}");
+    assert_eq!(inicio.campo("adaptador"), Some("fake"), "{inicio:?}");
+    let posicionado = captura
+        .primeiro("emulate.positioned")
+        .expect("emulate.positioned");
+    assert_eq!(posicionado.campo("session"), Some("51"), "{posicionado:?}");
+    assert_eq!(posicionado.campo("peer"), Some(a.id.short().as_str()));
+    assert!(!captura.tem("emulate.error"));
+}
+
+/// Protocol 3 entry with a way back: first datagram counted and the return sent with totals.
+#[tokio::test]
+async fn destino_conta_primeiro_datagrama_e_retorno() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let a = hub.add_node("a", INPUT);
+    let b_id = node_id("b");
+    let dir = tempfile::tempdir().unwrap();
+    write_devices(dir.path(), &[a.id, b_id]);
+    let b = spawn(&hub, "b", dir, fake(&receiver_observation("N", "ib")));
+    hub.set_remote_version(a.id, 3);
+    hub.link(a.id, b.id, PeerPerms::default(), CONTROL);
+    settle(&b).await;
+    until("inventory.prepared", || captura.tem("inventory.prepared")).await;
+    settle(&b).await;
+
+    a.host
+        .send_reliable(
+            b.id,
+            ModuleMsg::Input(InputMsg::EnterSpan {
+                session: 52,
+                edge: Edge::Left,
+                monitor: None,
+                pos: 0.5,
+                back_from: 0.0,
+                back_to: 1.0,
+            }),
+        )
+        .await
+        .unwrap();
+    until("emulate.positioned", || captura.tem("emulate.positioned")).await;
+    let datagrama = |seq: u32, dx: f32| InputDatagram {
+        session: 52,
+        seq,
+        t_mono_us: 0,
+        events: vec![InputEvent::Motion { dx, dy: 0.0 }],
+    };
+    a.host.send_datagram(b.id, datagrama(0, 1.0)).unwrap();
+    until("datagram.first", || captura.tem("datagram.first")).await;
+    let primeiro = captura.primeiro("datagram.first").expect("datagram.first");
+    assert_eq!(primeiro.campo("session"), Some("52"), "{primeiro:?}");
+
+    // Pushing hard against the entry edge: the destination hands the cursor back.
+    for seq in 1..6 {
+        a.host.send_datagram(b.id, datagrama(seq, -4000.0)).unwrap();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    until("return.sent", || captura.tem("return.sent")).await;
+    let retorno = captura.primeiro("return.sent").expect("return.sent");
+    assert_eq!(retorno.campo("session"), Some("52"), "{retorno:?}");
+    let totais = lista(&retorno, "totais");
+    assert!(
+        totais["recebidos"].as_u64().is_some_and(|n| n >= 2),
+        "{retorno:?}"
+    );
+    assert_eq!(totais["perdidos"].as_u64(), Some(0), "{retorno:?}");
+}
+
+/// The continuous capture logs when it starts, with the barrier count, and when it stops.
+#[tokio::test]
+async fn module_input_start_stop() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let (a, _b) = par_ligado(&hub, &captura).await;
+    let inicio = captura
+        .primeiro("module.input.start")
+        .expect("module.input.start");
+    assert_eq!(inicio.campo("barreiras"), Some("1"), "{inicio:?}");
+
+    a.tx.send(ModuleInput::Shutdown).await.unwrap();
+    until("module.input.stop", || captura.tem("module.input.stop")).await;
+}

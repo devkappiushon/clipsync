@@ -119,7 +119,15 @@ impl PortalCapture {
                     .set_capabilities(Capabilities::Keyboard | Capabilities::Pointer),
             )
             .await
-            .map_err(map_err)?;
+            .map_err(|e| {
+                tracing::info!(evento = "portal.session.created", portal = "input_capture", motivo = "refused", erro = %e, "portal session refused");
+                map_err(e)
+            })?;
+        tracing::info!(
+            evento = "portal.session.created",
+            portal = "input_capture",
+            "portal session created"
+        );
         self.ic = Some(ic);
         self.session = Some(session);
         self.watch_zones().await?;
@@ -310,7 +318,15 @@ impl CaptureAdapter for PortalCapture {
         let fd = ic
             .connect_to_eis(session, ConnectToEISOptions::default())
             .await
-            .map_err(map_err)?;
+            .map_err(|e| {
+                tracing::info!(evento = "portal.connect_eis", portal = "input_capture", motivo = "refused", erro = %e, "EIS connection refused");
+                map_err(e)
+            })?;
+        tracing::info!(
+            evento = "portal.connect_eis",
+            portal = "input_capture",
+            "EIS connected"
+        );
         let stream = UnixStream::from(fd);
         let (tx, rx) = mpsc::channel(4096);
         // Publish lock state before any producer can enqueue activation/input, also avoiding
@@ -831,7 +847,15 @@ impl EmulateAdapter for PortalEmulate {
         let session = rd
             .create_session(RdCreateOptions::default())
             .await
-            .map_err(map_err)?;
+            .map_err(|e| {
+                tracing::info!(evento = "portal.session.created", portal = "remote_desktop", motivo = "refused", erro = %e, "portal session refused");
+                map_err(e)
+            })?;
+        tracing::info!(
+            evento = "portal.session.created",
+            portal = "remote_desktop",
+            "portal session created"
+        );
         let token = self.store.load();
         rd.select_devices(
             &session,
@@ -863,6 +887,11 @@ impl EmulateAdapter for PortalEmulate {
             .connect_to_eis(&session, RdConnectOptions::default())
             .await
             .map_err(map_err)?;
+        tracing::info!(
+            evento = "portal.connect_eis",
+            portal = "remote_desktop",
+            "EIS connected"
+        );
         let stream = UnixStream::from(fd);
         let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>(64);
         let (ready_tx, ready_rx) = oneshot::channel::<()>();

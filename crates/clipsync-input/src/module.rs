@@ -1042,6 +1042,7 @@ impl State {
             return;
         }
         self.retry_on_zones = false;
+        let barreiras = targets.len();
         self.targets_key = format!(
             "{}{:?}",
             targets_key(&targets),
@@ -1067,6 +1068,11 @@ impl State {
             ctl,
             task: tokio::spawn(capture::run(engine)),
         });
+        tracing::info!(
+            evento = "module.input.start",
+            barreiras,
+            "continuous capture started"
+        );
     }
 
     /// The zones or the trusted peers changed: swap the barriers in place when they differ, stop
@@ -1126,6 +1132,7 @@ impl State {
             Err(_) => self.last_block = Some(msg::adapter_failed("captura")),
         }
         self.cont = None;
+        tracing::info!(evento = "module.input.stop", "continuous capture stopped");
     }
 
     /// Barriers of a loopback toward `to`: the links of `layout.toml`, else the manual
@@ -1603,6 +1610,18 @@ impl State {
             .map_or_else(|| id.short(), |p| p.name.clone())
     }
 
+    /// `return.sent`: the destination pushed the cursor back to the source (contract §17.2).
+    fn log_return_sent(&self, from: PeerId, session: u32, pos: f32) {
+        let (recebidos, perdidos, fora_de_ordem) = self
+            .incoming
+            .get(&from)
+            .map_or((0, 0, 0), |i| (i.received, i.lost, i.out_of_order));
+        let totais = format!(
+            "{{\"recebidos\":{recebidos},\"perdidos\":{perdidos},\"fora_de_ordem\":{fora_de_ordem}}}"
+        );
+        tracing::info!(evento = "return.sent", session, peer = %from, pos = f64::from(pos), totais = %totais, "cursor returned to the source");
+    }
+
     /// `Enter`, `EnterAt` and `EnterSpan` (`back` is the way-back span of the last one).
     async fn on_enter(
         &mut self,
@@ -1657,15 +1676,23 @@ impl State {
             return;
         }
         if !self.emu_started {
+            tracing::info!(evento = "emulate.start", session, peer = %from, adaptador = self.emu.name(), "emulator starting");
             match self.emu.start().await {
                 Ok(()) => self.emu_started = true,
                 Err(e) => {
                     tracing::warn!("emulator start failed: {e}");
+                    tracing::info!(evento = "emulate.error", session, peer = %from, adaptador = self.emu.name(), erro = %e, "emulator did not start");
                     self.last_block = Some(match e {
                         InputError::PermissionDenied => msg::PORTAL_DENIED.to_owned(),
                         _ => msg::EMULATOR_FAILED.to_owned(),
                     });
-                    self.refuse_on(from, session, context.connection, RejectReason::ApplyFailed);
+                    self.refuse_on_with(
+                        from,
+                        session,
+                        context.connection,
+                        RejectReason::ApplyFailed,
+                        "emulator_start_failed",
+                    );
                     return;
                 }
             }
@@ -1688,13 +1715,19 @@ impl State {
         };
         match placed {
             Err(InputError::Locked) => {
+                tracing::info!(evento = "emulate.error", session, peer = %from, adaptador = self.emu.name(), erro = "locked", "entry refused by the lock");
                 self.incoming.remove(&from);
                 self.release_all().await;
                 self.refuse_on(from, session, context.connection, RejectReason::Locked);
                 return;
             }
-            Err(e) => tracing::warn!("entry positioning failed: {e}"),
-            Ok(()) => {}
+            Err(e) => {
+                tracing::warn!("entry positioning failed: {e}");
+                tracing::info!(evento = "emulate.error", session, peer = %from, adaptador = self.emu.name(), erro = %e, "entry positioning failed");
+            }
+            Ok(()) => {
+                tracing::info!(evento = "emulate.positioned", session, peer = %from, adaptador = self.emu.name(), pos = f64::from(pos), "entry positioned");
+            }
         }
         if !self.authorized(from, context) {
             self.release_all().await;
@@ -1757,7 +1790,19 @@ impl State {
         }
     }
     fn refuse_on(&mut self, to: PeerId, session: u32, connection: u64, reason: RejectReason) {
-        tracing::info!(evento = "enter.refused", session, peer = %to, motivo = reject_code(reason), "entry refused");
+        self.refuse_on_with(to, session, connection, reason, reject_code(reason));
+    }
+
+    /// Same `Rejected`/`Refused` on the wire, with a finer `motivo` in the log (contract §17.2).
+    fn refuse_on_with(
+        &mut self,
+        to: PeerId,
+        session: u32,
+        connection: u64,
+        reason: RejectReason,
+        motivo: &'static str,
+    ) {
+        tracing::info!(evento = "enter.refused", session, peer = %to, motivo, "entry refused");
         let host = self.host.clone();
         let v3 = host
             .peers()
@@ -1832,7 +1877,10 @@ impl State {
             return;
         }
         match inc.last_seq {
-            None => inc.last_seq = Some(dg.seq),
+            None => {
+                inc.last_seq = Some(dg.seq);
+                tracing::info!(evento = "datagram.first", session = dg.session, peer = %from, "first datagram received");
+            }
             Some(last) if dg.seq > last => {
                 inc.lost += u64::from(dg.seq - last - 1);
                 inc.last_seq = Some(dg.seq);
@@ -1902,6 +1950,7 @@ impl State {
             }
         }
         if let Some(returned) = returned_route {
+            self.log_return_sent(from, session, returned.pos);
             if let Some(i) = self.incoming.get_mut(&from) {
                 i.active = false;
             }
@@ -1909,6 +1958,7 @@ impl State {
             self.send_v3(from, context.connection, InputMsg::ReturnedRoute(returned));
         }
         if let Some(pos) = returned {
+            self.log_return_sent(from, session, pos);
             if let Some(i) = self.incoming.get_mut(&from) {
                 i.active = false;
             }
