@@ -1346,7 +1346,11 @@ async fn emulador_encerrado_pela_plataforma_e_recriado_na_entrada_seguinte() {
     let inicios = captura.todos("emulate.start");
     assert_eq!(inicios.len(), 2, "{inicios:?}");
     assert_eq!(inicios[1].campo("session"), Some("92"), "{inicios:?}");
-    assert_eq!(inicios[1].campo("reutilizado"), Some("false"), "{inicios:?}");
+    assert_eq!(
+        inicios[1].campo("reutilizado"),
+        Some("false"),
+        "{inicios:?}"
+    );
     assert!(b.emu.started(), "o emulador volta a valer");
 }
 
