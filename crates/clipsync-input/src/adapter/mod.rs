@@ -177,6 +177,11 @@ pub trait EmulateAdapter: Send + 'static {
     fn name(&self) -> &'static str;
     /// A portal dialog may appear here (not with a valid restore token).
     async fn start(&mut self) -> Result<(), InputError>;
+    /// False once the platform ended a started emulation on its own (GNOME closes the EIS on a
+    /// lock or a portal restart). The module then stops it and starts it again on the next entry.
+    fn alive(&self) -> bool {
+        true
+    }
     async fn emit(&mut self, events: &[InputEvent]) -> Result<(), InputError>;
     /// Releases every pressed key and button.
     async fn release_all(&mut self) -> Result<(), InputError>;

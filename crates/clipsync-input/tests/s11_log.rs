@@ -1298,6 +1298,58 @@ async fn segunda_sessao_tem_emulate_start() {
     assert_eq!(inicios[1].campo("reutilizado"), Some("true"), "{inicios:?}");
 }
 
+/// The platform ended the emulation between two entries (GNOME closes the EIS on a lock, for
+/// instance): the next entry starts the emulator again instead of reusing the dead one.
+#[tokio::test]
+async fn emulador_encerrado_pela_plataforma_e_recriado_na_entrada_seguinte() {
+    let captura = logs::capturar();
+    let hub = MemHub::new();
+    let a = hub.add_node("a", INPUT);
+    let b_id = node_id("b");
+    let dir = tempfile::tempdir().unwrap();
+    write_devices(dir.path(), &[a.id, b_id]);
+    let b = spawn(&hub, "b", dir, fake(&receiver_observation("N", "ib")));
+    hub.set_remote_version(a.id, 1);
+    hub.link(a.id, b.id, PeerPerms::default(), CONTROL);
+    settle(&b).await;
+    until("inventory.prepared", || captura.tem("inventory.prepared")).await;
+    settle(&b).await;
+    let entrar = |session: u32| {
+        ModuleMsg::Input(InputMsg::Enter {
+            session,
+            edge: Edge::Left,
+            pos: 0.25,
+        })
+    };
+    a.host.send_reliable(b.id, entrar(91)).await.unwrap();
+    until("posicionada 91", || {
+        captura
+            .todos("emulate.positioned")
+            .iter()
+            .any(|e| e.campo("session") == Some("91"))
+    })
+    .await;
+    a.host
+        .send_reliable(b.id, ModuleMsg::Input(InputMsg::Leave { session: 91 }))
+        .await
+        .unwrap();
+    settle(&b).await;
+    b.emu.end();
+    a.host.send_reliable(b.id, entrar(92)).await.unwrap();
+    until("posicionada 92", || {
+        captura
+            .todos("emulate.positioned")
+            .iter()
+            .any(|e| e.campo("session") == Some("92"))
+    })
+    .await;
+    let inicios = captura.todos("emulate.start");
+    assert_eq!(inicios.len(), 2, "{inicios:?}");
+    assert_eq!(inicios[1].campo("session"), Some("92"), "{inicios:?}");
+    assert_eq!(inicios[1].campo("reutilizado"), Some("false"), "{inicios:?}");
+    assert!(b.emu.started(), "o emulador volta a valer");
+}
+
 /// Emulation that fails after the entry is positioned shows up as `emulate.error`.
 #[tokio::test]
 async fn falha_de_emissao_gera_emulate_error() {

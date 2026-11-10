@@ -841,7 +841,12 @@ impl EmulateAdapter for PortalEmulate {
 
     async fn start(&mut self) -> Result<(), InputError> {
         if self.cmd.is_some() {
-            return Ok(());
+            if self.alive() {
+                return Ok(());
+            }
+            // The EIS loop ended (GNOME closed the EIS or the portal session): drop the dead
+            // session and open a new one, silent with the restore token.
+            self.stop().await?;
         }
         let rd = RemoteDesktop::new().await.map_err(map_err)?;
         let session = rd
@@ -923,6 +928,10 @@ impl EmulateAdapter for PortalEmulate {
         self.cmd = Some(cmd_tx);
         self.lock_watch = Some(LockWatch::start(None).await);
         Ok(())
+    }
+
+    fn alive(&self) -> bool {
+        !self.cmd.as_ref().is_some_and(mpsc::Sender::is_closed)
     }
 
     async fn emit(&mut self, events: &[InputEvent]) -> Result<(), InputError> {

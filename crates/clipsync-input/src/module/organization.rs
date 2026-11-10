@@ -564,6 +564,11 @@ impl State {
         {
             return;
         }
+        if self.emu_started && !self.emu.alive() {
+            tracing::warn!("emulator ended by the platform, starting it again");
+            let _ = self.emu.stop().await;
+            self.emu_started = false;
+        }
         tracing::info!(evento = "emulate.start", session = entry.session, peer = %from, adaptador = self.emu.name(), reutilizado = self.emu_started, "emulator in use");
         if !self.emu_started {
             if let Err(e) = self.emu.start().await {

@@ -343,6 +343,8 @@ struct EmuState {
     pressed: HashSet<(bool, u32)>,
     release_calls: usize,
     locked: bool,
+    /// The platform ended the emulation (`end()`); `start()` clears it.
+    ended: bool,
     events: Vec<InputEvent>,
 }
 
@@ -381,6 +383,13 @@ impl FakeEmulateHandle {
     pub fn set_locked(&self, on: bool) {
         lock(&self.st).locked = on;
     }
+    /// Plays the platform ending the emulation on its own (EIS disconnected, portal session
+    /// closed): `alive()` turns false and every call fails until `start()` runs again.
+    pub fn end(&self) {
+        let mut s = lock(&self.st);
+        s.ended = true;
+        s.started = false;
+    }
     /// Every event applied so far, in order.
     pub fn events(&self) -> Vec<InputEvent> {
         lock(&self.st).events.clone()
@@ -393,11 +402,19 @@ impl EmulateAdapter for FakeEmulate {
         "fake"
     }
     async fn start(&mut self) -> Result<(), InputError> {
-        lock(&self.st).started = true;
+        let mut s = lock(&self.st);
+        s.started = true;
+        s.ended = false;
         Ok(())
+    }
+    fn alive(&self) -> bool {
+        !lock(&self.st).ended
     }
     async fn emit(&mut self, events: &[InputEvent]) -> Result<(), InputError> {
         let mut s = lock(&self.st);
+        if s.ended {
+            return Err(InputError::Eis("emulation task ended".into()));
+        }
         if !s.started {
             return Err(InputError::Other("emulator not started".into()));
         }
