@@ -2,15 +2,15 @@
 
 Compartilhe teclado, mouse e área de transferência de texto entre computadores Linux (GNOME Wayland) e Windows, num app só e sem servidor central. Cada módulo é opcional.
 
-**Estado:** a v0.5.0 está publicada no GitHub desde 31/10/2026 (commit `590c137`), com o editor de monitores independentes e mensagens mais claras sobre a disponibilidade dos recursos. Teclado e mouse por posição seguem experimentais, e o percurso físico A ↔ notebook ↔ B ainda não tem aceite. O clipboard pode transmitir conteúdo marcado como sensível: use `clipsync pause` ao copiar senhas. Detalhes em [limitações](docs/limitacoes.md).
+**Estado:** a v0.5.1 está publicada no GitHub desde 10/11/2026. Ela traz o log verificável da travessia e recria o controle do mouse no notebook depois de suspender ou bloquear a tela. Teclado e mouse por posição seguem experimentais, e o percurso físico A ↔ notebook ↔ B ainda não tem aceite. O clipboard pode transmitir conteúdo marcado como sensível: use `clipsync pause` ao copiar senhas. Detalhes em [limitações](docs/limitacoes.md).
 
 ## Instalar
 
-Baixe a [v0.5.0](https://github.com/devkappiushon/clipsync/releases/tag/v0.5.0). Cada release traz seis pacotes e o `SHA256SUMS` para conferir os arquivos.
+Baixe a [v0.5.1](https://github.com/devkappiushon/clipsync/releases/tag/v0.5.1). Cada release traz seis pacotes e o `SHA256SUMS` para conferir os arquivos.
 
-- Linux, app: `clipsync-app-v0.5.0-linux-x86_64.AppImage` ou `clipsync-app-v0.5.0-linux-amd64.deb`.
-- Windows, app: `clipsync-app-v0.5.0-windows-x86_64-setup.exe` ou `clipsync-app-v0.5.0-windows-x86_64.msi`.
-- Linha de comando: `clipsync-v0.5.0-linux-x86_64.tar.gz` ou `clipsync-v0.5.0-windows-x86_64.zip`. Os pacotes do app não instalam a CLI; baixe também se quiser `clipsync status`, `diagnose` ou os comandos de teste.
+- Linux, app: `clipsync-app-v0.5.1-linux-x86_64.AppImage` ou `clipsync-app-v0.5.1-linux-amd64.deb`.
+- Windows, app: `clipsync-app-v0.5.1-windows-x86_64-setup.exe` ou `clipsync-app-v0.5.1-windows-x86_64.msi`.
+- Linha de comando: `clipsync-v0.5.1-linux-x86_64.tar.gz` ou `clipsync-v0.5.1-windows-x86_64.zip`. Os pacotes do app não instalam a CLI; baixe também se quiser `clipsync status`, `diagnose` ou os comandos de teste.
 
 Confira antes de executar:
 
@@ -21,7 +21,7 @@ sha256sum -c SHA256SUMS --ignore-missing
 
 ```powershell
 # Windows (PowerShell): compare com a linha do pacote em SHA256SUMS
-Get-FileHash .\clipsync-app-v0.5.0-windows-x86_64-setup.exe -Algorithm SHA256
+Get-FileHash .\clipsync-app-v0.5.1-windows-x86_64-setup.exe -Algorithm SHA256
 ```
 
 O `--ignore-missing` confere só os arquivos presentes na pasta; baixe os pacotes que quiser verificar. O instalador do AppImage executa o arquivo para extrair o ícone, então confira o hash antes de rodá-lo.
@@ -67,7 +67,7 @@ A substituição do Input Leap ainda depende da validação física da entrada e
 - [Segurança](docs/seguranca.md) e [vereditos](docs/verdicts.md): revisões por rodada.
 - [AGENTS.md](AGENTS.md): regras de trabalho e invariantes do repositório.
 - [Interface](crates/clipsync-app/ui/README.md): telas, cenários do simulador e testes.
-- [Notas da v0.5.0](docs/releases/v0.5.0.md) e [changelog](CHANGELOG.md): o que mudou e o histórico de versões.
+- [Notas da v0.5.1](docs/releases/v0.5.1.md) e [changelog](CHANGELOG.md): o que mudou e o histórico de versões.
 
 ## Licença
 

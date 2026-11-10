@@ -4,8 +4,16 @@ Todas as versões publicadas do ClipSync, da mais nova para a mais antiga. Cada 
 
 ## Não publicado
 
-- Interface: atalhos Win+Alt aparecem só onde o sistema os registra (Windows com o módulo de entrada ativo); tabela de Dispositivos sem rolagem horizontal; sem vão acima do primeiro aviso; cabeçalho de coluna na fonte de texto; simulador declara a 0.5.0.
-- Documentação: README com capturas e guias de [instalação](docs/instalar.md), [uso](docs/uso.md), [limitações](docs/limitacoes.md) e [desenvolvimento](docs/desenvolvimento.md); notas e evidências da v0.5.0; [pendências](docs/pendencias-v0.5.0.md); dados pessoais anonimizados nos documentos.
+## [v0.5.1](https://github.com/devkappiushon/clipsync/releases/tag/v0.5.1) · 10/11/2026
+
+Log verificável da travessia e correção do mouse preso depois de suspender o notebook. [Notas completas](docs/releases/v0.5.1.md).
+
+- Destino Linux: quando o GNOME encerra a sessão de controle remoto (suspensão ou bloqueio da tela), a próxima entrada abre uma sessão nova. Antes, o cursor ficava num limbo até reiniciar o app.
+- Log em arquivo no perfil (`clipsync log caminho`) com tentativa, barreira, entrada, emulação e retorno, nas duas máquinas.
+- `clipsync verificar-travessia` lê os logs da origem e do destino e diz onde a travessia parou. Guia em [verificar por log](docs/verificar-por-log.md).
+- Pacote de suporte inclui a cauda do log, sem texto livre, conteúdo, tecla ou keycode.
+- Interface: atalhos Win+Alt aparecem só onde o sistema os registra (Windows com o módulo de entrada ativo); tabela de Dispositivos sem rolagem horizontal; sem vão acima do primeiro aviso; cabeçalho de coluna na fonte de texto.
+- Documentação: README com capturas e guias de [instalação](docs/instalar.md), [uso](docs/uso.md), [limitações](docs/limitacoes.md) e [desenvolvimento](docs/desenvolvimento.md); dados pessoais anonimizados nos documentos.
 
 ## [v0.5.0](https://github.com/devkappiushon/clipsync/releases/tag/v0.5.0) · 31/10/2026
 
