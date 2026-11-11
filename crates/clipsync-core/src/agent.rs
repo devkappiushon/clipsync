@@ -170,6 +170,25 @@ pub async fn run_reserved(
             }
         })
     });
+    // A peer whose address changed (DHCP) is found by its device name; the address that answered
+    // goes to peers.toml so the next start dials it first.
+    mesh.resolve_names_with(crate::transport::system_resolver());
+    let readdressing = mesh.address_updates().map(|mut rx| {
+        let profile = p.clone();
+        tokio::spawn(async move {
+            while let Some((peer, addr)) = rx.recv().await {
+                let saved = profile.update_peers(|peers| {
+                    if let Some(entry) = peers.peer.iter_mut().find(|e| e.id == peer) {
+                        entry.addr = Some(addr);
+                    }
+                    Ok::<_, CoreError>(())
+                });
+                if let Err(e) = saved {
+                    tracing::warn!(error = %e, "peers.toml not written; the new address lasts until restart");
+                }
+            }
+        })
+    });
     // Marca a execução antes de qualquer produtor de inventário, rotas ou captura.
     tracing::info!(evento = "agent.up", descartados = crate::logging::preopen_dropped(), id = %mesh.local_id(), addr = ?mesh.local_addr().ok(), "agent up");
     let mut tasks = JoinSet::new();
@@ -282,6 +301,9 @@ pub async fn run_reserved(
     }
     if let Some(p) = pausing {
         p.abort();
+    }
+    if let Some(r) = readdressing {
+        r.abort();
     }
     let bound = mesh.local_addr().ok();
     mesh.shutdown().await;

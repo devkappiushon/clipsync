@@ -6,7 +6,9 @@
 //! and every inbound message passes `authorize_inbound*` here, before any module sees it.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::future::Future;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -37,6 +39,64 @@ const BACKOFF_MAX: Duration = Duration::from_secs(30);
 const DEFER: Duration = Duration::from_secs(2);
 /// Time the control tasks get to put Bye on the wire before the connections close.
 const BYE_GRACE: Duration = Duration::from_millis(100);
+/// One name lookup may not hold the dialer longer than this (mDNS answers in well under it).
+const RESOLVE_TIMEOUT: Duration = Duration::from_secs(3);
+/// Addresses tried per failed dial: each one that answers nothing costs a DIAL_TIMEOUT.
+const MAX_RESOLVED: usize = 3;
+
+/// Answers the addresses a peer's device name has now, with the port the stored address had.
+/// Asked only after the stored address failed a dial (the peer got another address from DHCP).
+pub type Resolver =
+    Arc<dyn Fn(String, u16) -> Pin<Box<dyn Future<Output = Vec<SocketAddr>> + Send>> + Send + Sync>;
+
+/// A device name the system resolver may be asked about: host-name characters only, so a name
+/// typed with spaces or accents never leaves this process as a query.
+fn host_name(name: &str) -> bool {
+    let label = |l: &str| {
+        !l.is_empty()
+            && l.len() <= 63
+            && !l.starts_with('-')
+            && !l.ends_with('-')
+            && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    };
+    name.len() <= 253 && name.split('.').all(label)
+}
+
+/// The resolver of the machine: the bare name (DNS, LLMNR or NetBIOS on Windows) and the mDNS
+/// `.local` name (Avahi on Linux, native on Windows), each within RESOLVE_TIMEOUT.
+pub fn system_resolver() -> Resolver {
+    Arc::new(|name, port| {
+        Box::pin(async move {
+            if !host_name(&name) {
+                return Vec::new();
+            }
+            let lookup = |host: String| async move {
+                match timeout(RESOLVE_TIMEOUT, tokio::net::lookup_host((host, port))).await {
+                    Ok(Ok(found)) => found.collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                }
+            };
+            let local = if name.to_ascii_lowercase().ends_with(".local") {
+                None
+            } else {
+                Some(format!("{name}.local"))
+            };
+            let (bare, mdns) = tokio::join!(lookup(name.clone()), async {
+                match local {
+                    Some(host) => lookup(host).await,
+                    None => Vec::new(),
+                }
+            });
+            let mut out: Vec<SocketAddr> = Vec::new();
+            for addr in mdns.into_iter().chain(bare) {
+                if !out.contains(&addr) {
+                    out.push(addr);
+                }
+            }
+            out
+        })
+    })
+}
 /// `Bye{Revoked}` only goes to a peer that decodes it (v1.16): a 0.1.0 would close with Protocol.
 const REVOKED_MIN_VERSION: u16 = 2;
 
@@ -102,6 +162,8 @@ pub struct Mesh {
     revoked: Mutex<Option<mpsc::UnboundedReceiver<PeerId>>>,
     /// Taken once by the agent (`pause_requests`).
     pausing: Mutex<Option<mpsc::UnboundedReceiver<bool>>>,
+    /// Taken once by the agent (`address_updates`).
+    readdressed: Mutex<Option<mpsc::UnboundedReceiver<(PeerId, SocketAddr)>>>,
 }
 
 struct Inner {
@@ -125,6 +187,10 @@ struct Inner {
     revoked: mpsc::UnboundedSender<PeerId>,
     /// To the agent: a module asked to pause (true) or resume (`ModuleHost::request_pause`).
     pausing: mpsc::UnboundedSender<bool>,
+    /// To the agent: this peer answered at a new address, write it to peers.toml.
+    readdressed: mpsc::UnboundedSender<(PeerId, SocketAddr)>,
+    /// Off until `resolve_names_with`: a mesh without it only dials the stored addresses.
+    resolver: Mutex<Option<Resolver>>,
     next_gen: AtomicU64,
     stop: watch::Sender<bool>,
 }
@@ -238,6 +304,7 @@ impl Mesh {
         let ids: Vec<PeerId> = slots.keys().copied().collect();
         let (revoked, revoked_rx) = mpsc::unbounded_channel();
         let (pausing, pausing_rx) = mpsc::unbounded_channel();
+        let (readdressed, readdressed_rx) = mpsc::unbounded_channel();
         let inner = Arc::new(Inner {
             id,
             identity: opts.identity,
@@ -258,6 +325,8 @@ impl Mesh {
             removals: Mutex::new(VecDeque::new()),
             revoked,
             pausing,
+            readdressed,
+            resolver: Mutex::new(None),
             next_gen: AtomicU64::new(1),
             stop: watch::Sender::new(false),
         });
@@ -269,7 +338,27 @@ impl Mesh {
             inner,
             revoked: Mutex::new(Some(revoked_rx)),
             pausing: Mutex::new(Some(pausing_rx)),
+            readdressed: Mutex::new(Some(readdressed_rx)),
         })
+    }
+
+    /// From now on a peer whose stored address fails a dial is looked up by its device name and
+    /// dialed at what `resolver` answers. The agent turns this on with `system_resolver`.
+    pub fn resolve_names_with(&self, resolver: Resolver) {
+        *self
+            .inner
+            .resolver
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(resolver);
+    }
+
+    /// Peers that answered at an address other than the stored one, already in use by this mesh.
+    /// The agent takes this once and writes each to peers.toml, so a restart dials it first.
+    pub fn address_updates(&self) -> Option<mpsc::UnboundedReceiver<(PeerId, SocketAddr)>> {
+        self.readdressed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 
     /// What modules asked through `ModuleHost::request_pause`, in order. The agent takes this
@@ -741,6 +830,11 @@ impl Inner {
                 }
                 Err(DialFail::Other(e)) => {
                     tracing::debug!(peer = %peer, error = %e, "dial failed");
+                    if self.dial_by_name(peer, addr).await {
+                        backoff = BACKOFF_MIN;
+                        deferred = false;
+                        continue;
+                    }
                     self.set_state(peer, PeerState::Disconnected);
                 }
             }
@@ -750,6 +844,71 @@ impl Inner {
                 _ = self.until_stop() => return,
             }
             backoff = (backoff * 2).min(BACKOFF_MAX);
+        }
+    }
+
+    /// The stored address answered nothing: the peer may have another one now (DHCP). Asks the
+    /// resolver for the peer's device name and dials what it answers. The pin decides who the
+    /// peer is, as in any dial; another device at a resolved address is skipped and never blocks
+    /// the peer, since a name answer proves nothing about who holds the address.
+    async fn dial_by_name(self: &Arc<Self>, peer: PeerId, stale: SocketAddr) -> bool {
+        let resolver = self
+            .resolver
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let Some(resolver) = resolver else {
+            return false;
+        };
+        let Some(name) = self.lock().get(&peer).map(|s| s.entry.name.clone()) else {
+            return false;
+        };
+        let found = tokio::select! {
+            f = resolver(name, stale.port()) => f,
+            _ = self.until_stop() => return false,
+        };
+        let candidates = found
+            .into_iter()
+            .filter(|a| *a != stale && a.is_ipv4() == stale.is_ipv4())
+            .take(MAX_RESOLVED);
+        for addr in candidates {
+            // Gone, blocked, readdressed by a reload or connected from the other side meanwhile.
+            match self.dial_target(peer) {
+                Some((Some(current), _, false)) if current == stale => {}
+                _ => return false,
+            }
+            if self.stopped() {
+                return false;
+            }
+            match self.clone().dial_once(peer, addr).await {
+                Ok(()) => {
+                    self.readdress(peer, addr);
+                    return true;
+                }
+                Err(DialFail::KeyChanged(_)) => {
+                    tracing::debug!(peer = %peer, "another device answers at a resolved address");
+                }
+                Err(DialFail::Other(e)) => {
+                    tracing::debug!(peer = %peer, error = %e, "dial by name failed");
+                }
+            }
+        }
+        false
+    }
+
+    /// The peer proved its key at `addr`: it replaces the stored address here and, through the
+    /// agent, in peers.toml.
+    fn readdress(&self, peer: PeerId, addr: SocketAddr) {
+        let changed = match self.lock().get_mut(&peer) {
+            Some(slot) if slot.entry.addr != Some(addr) => {
+                slot.entry.addr = Some(addr);
+                true
+            }
+            _ => false,
+        };
+        if changed {
+            tracing::info!(evento = "peer.readdressed", peer = %peer, origem = "name", "peer found at a new address");
+            let _ = self.readdressed.send((peer, addr));
         }
     }
 

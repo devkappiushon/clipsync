@@ -452,6 +452,59 @@ async fn mesh_restart_reconnects() {
 /// `agent::run` returns only with its UDP port free (CI Windows, 601cd7f: the test below bound
 /// B's port right after stopping B and found it taken). Here the old code left it taken in 3
 /// stops out of 30.
+/// B's address changed since the pairing (DHCP): what A stored answers nothing, and B cannot
+/// dial A (it has no address for it, like a peer behind a firewall). A's agent finds B by its
+/// device name, connects and writes the address that answered to peers.toml.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_finds_a_readdressed_peer_by_name_and_saves_the_address() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (node(&dir, "a"), node(&dir, "b"));
+    // Same port on another loopback address: nothing listens there.
+    let stale: SocketAddr = format!("127.0.0.2:{}", b.addr.port()).parse().unwrap();
+    let mut peers = Peers::default();
+    peers.upsert(PeerEntry {
+        id: b.id,
+        name: "localhost".into(),
+        addr: Some(stale),
+        paired_at: "2026-11-11T12:00:00Z".into(),
+        perms: ALL,
+    });
+    a.profile.save_peers(&peers).unwrap();
+    let mut peers = Peers::default();
+    peers.upsert(PeerEntry {
+        id: a.id,
+        name: "a".into(),
+        addr: None,
+        paired_at: "2026-11-11T12:00:00Z".into(),
+        perms: ALL,
+    });
+    b.profile.save_peers(&peers).unwrap();
+
+    let (ra, rb) = (start(&a, false), start(&b, false));
+    let saved = || {
+        a.profile
+            .load_peers()
+            .ok()
+            .and_then(|p| p.peer.first().and_then(|e| e.addr))
+    };
+    // Past the dial timeout of the stale address (10 s) and the deferral of the larger id.
+    let begun = Instant::now();
+    while saved() != Some(b.addr) {
+        assert!(
+            begun.elapsed() < Duration::from_secs(45),
+            "peers.toml still has {:?}",
+            saved()
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    wait_until("a sees b connected", || async {
+        peer_state(&a.profile, b.id).await == Some(PeerState::Connected)
+    })
+    .await;
+    stop(ra).await;
+    stop(rb).await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_agent_has_released_its_port() {
     for _ in 0..10 {
