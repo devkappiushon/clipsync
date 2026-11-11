@@ -4,6 +4,14 @@ Todas as versões publicadas do ClipSync, da mais nova para a mais antiga. Cada 
 
 ## Não publicado
 
+## [v0.5.2](https://github.com/devkappiushon/clipsync/releases/tag/v0.5.2) · 11/11/2026
+
+Reencontro automático do par quando o IP muda. [Notas completas](docs/releases/v0.5.2.md).
+
+- Quando o endereço guardado do par para de responder (o DHCP deu outro IP), o ClipSync procura o par pelo nome da máquina na rede, conecta e grava o endereço novo. Antes, era preciso parear de novo.
+- A identidade continua valendo: um endereço achado pelo nome só é aceito depois que o par prova a chave do pareamento. Outro aparelho no mesmo endereço é ignorado e não bloqueia o par.
+- [Instalar](docs/instalar.md) explica a porta UDP 47800 e a regra do UFW no Linux.
+
 ## [v0.5.1](https://github.com/devkappiushon/clipsync/releases/tag/v0.5.1) · 10/11/2026
 
 Log verificável da travessia e correção do mouse preso depois de suspender o notebook. [Notas completas](docs/releases/v0.5.1.md).

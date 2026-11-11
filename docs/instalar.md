@@ -52,6 +52,18 @@ sudo apt install ./clipsync-app-v0.5.0-linux-amd64.deb
 
 Rode o `setup.exe` (ou o `.msi`). O workflow e o manifesto não configuram assinatura, então o SmartScreen pode exibir um aviso; esse comportamento não foi observado em hardware nesta revisão. Se o aviso aparecer, clique em "Mais informações" e depois em "Executar assim mesmo". O app usa o WebView2, que já vem no Windows 10 e 11 atualizados; se faltar, o instalador tenta baixar, o que exige internet e uma política que permita a instalação.
 
+## Rede e firewall
+
+As máquinas conversam por UDP na porta `47800` (ou na que estiver em `listen` no `config.toml`). Basta um dos lados conseguir chamar o outro, mas com a porta fechada nos dois sentidos a ligação depende só de quem chama.
+
+No Ubuntu com UFW ativo, a entrada vem bloqueada. Libere a porta para a sua rede:
+
+```sh
+sudo ufw allow 47800/udp
+```
+
+Sem essa regra, o Linux só se conecta quando ele mesmo chama o outro computador. Se o IP do outro mudar (DHCP), a partir da v0.5.2 o ClipSync procura o par pelo nome da máquina (`NOME` e `NOME.local`) e grava o endereço novo; em versões anteriores era preciso parear de novo. A busca pelo nome só funciona quando o nome do dispositivo no ClipSync é o nome da máquina na rede, que é o padrão.
+
 ## Linha de comando
 
 Requisitos: no Linux, glibc 2.39 ou mais nova (o binário é compilado no Ubuntu 24.04). No Windows, nenhum pacote extra: o `.exe` leva a biblioteca de execução embutida.

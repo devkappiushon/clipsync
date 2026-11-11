@@ -93,7 +93,7 @@ Toda linha tem `v` (versão do esquema, hoje 1), `ts` (UTC com milissegundos), `
 | Sessão | `session.open`, `session.sent`, `session.active`, `session.refused`, `session.closed` | `attempt`, `session`, `peer`, `mensagem`, `rota`, `motivo`, `erro`, `totais` |
 | Destino | `enter.received`, `enter.refused`, `emulate.start`, `emulate.positioned`, `emulate.error` | `session`, `peer`, `mensagem`, `motivo`, `adaptador`, `pos`, `erro` |
 | Datagramas e retorno | `datagram.first`, `return.received`, `return.sent` | `session`, `peer`, `pos`, `totais` |
-| Infraestrutura | `agent.up`, `peer.connected`, `peer.disconnected`, `module.input.start`, `module.input.stop`, `portal.session.created`, `portal.connect_eis`, `log.truncated` | `peer`, `nome`, `barreiras`, `portal`, `motivo` |
+| Infraestrutura | `agent.up`, `peer.connected`, `peer.disconnected`, `peer.readdressed`, `module.input.start`, `module.input.stop`, `portal.session.created`, `portal.connect_eis`, `log.truncated` | `peer`, `nome`, `barreiras`, `portal`, `motivo`, `origem` |
 
 Motivos de `routes.empty`: `suspended`, `no_local_inventory`, `local_without_return`, `no_organization`, `unresolved_legacy`, `no_remote_inventory`, `remote_not_ready`, `local_monitor_missing`, `remote_monitor_missing`, `zone_not_found`, `no_links`, `unsupported_topology`.
 
