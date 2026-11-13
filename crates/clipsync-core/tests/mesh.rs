@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 
 use clipsync_core::tls::{self, PinSet, PinVerifier, VerifyMode};
 use clipsync_core::transport::read_control;
-use clipsync_core::{CoreError, InitOptions, PeerEntry, Peers, Profile, agent, control};
+use clipsync_core::{
+    CoreError, InitOptions, LearnedAddr, PeerEntry, Peers, Profile, agent, control,
+};
 use clipsync_proto::*;
 use quinn::VarInt;
 use tokio::sync::{mpsc, oneshot};
@@ -454,9 +456,10 @@ async fn mesh_restart_reconnects() {
 /// stops out of 30.
 /// B's address changed since the pairing (DHCP): what A stored answers nothing, and B cannot
 /// dial A (it has no address for it, like a peer behind a firewall). A's agent finds B by its
-/// device name, connects and writes the address that answered to peers.toml.
+/// device name and connects. The address that answered goes to the cache beside peers.toml,
+/// never into it, and a restarted agent dials the cached address first.
 #[tokio::test(flavor = "multi_thread")]
-async fn the_agent_finds_a_readdressed_peer_by_name_and_saves_the_address() {
+async fn the_agent_finds_a_readdressed_peer_by_name_and_caches_the_address() {
     let dir = tempfile::tempdir().unwrap();
     let (a, b) = (node(&dir, "a"), node(&dir, "b"));
     // Same port on another loopback address: nothing listens there.
@@ -470,6 +473,7 @@ async fn the_agent_finds_a_readdressed_peer_by_name_and_saves_the_address() {
         perms: ALL,
     });
     a.profile.save_peers(&peers).unwrap();
+    let before = std::fs::read(a.profile.peers_path()).unwrap();
     let mut peers = Peers::default();
     peers.upsert(PeerEntry {
         id: a.id,
@@ -481,19 +485,18 @@ async fn the_agent_finds_a_readdressed_peer_by_name_and_saves_the_address() {
     b.profile.save_peers(&peers).unwrap();
 
     let (ra, rb) = (start(&a, false), start(&b, false));
-    let saved = || {
-        a.profile
-            .load_peers()
-            .ok()
-            .and_then(|p| p.peer.first().and_then(|e| e.addr))
+    let cached = LearnedAddr {
+        peer: b.id,
+        paired: stale,
+        learned: b.addr,
     };
     // Past the dial timeout of the stale address (10 s) and the deferral of the larger id.
     let begun = Instant::now();
-    while saved() != Some(b.addr) {
+    while a.profile.load_learned() != vec![cached] {
         assert!(
             begun.elapsed() < Duration::from_secs(45),
-            "peers.toml still has {:?}",
-            saved()
+            "the cache still has {:?}",
+            a.profile.load_learned()
         );
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
@@ -501,6 +504,26 @@ async fn the_agent_finds_a_readdressed_peer_by_name_and_saves_the_address() {
         peer_state(&a.profile, b.id).await == Some(PeerState::Connected)
     })
     .await;
+    assert_eq!(
+        std::fs::read(a.profile.peers_path()).unwrap(),
+        before,
+        "the pairing file is not rewritten by what the network answered"
+    );
+
+    // A restart dials the cached address first: connected well before the stale address
+    // would have timed out (10 s).
+    stop(ra).await;
+    let ra = start(&a, false);
+    let restarted = Instant::now();
+    wait_until("a sees b connected again", || async {
+        peer_state(&a.profile, b.id).await == Some(PeerState::Connected)
+    })
+    .await;
+    assert!(
+        restarted.elapsed() < Duration::from_secs(8),
+        "reconnected in {:?}",
+        restarted.elapsed()
+    );
     stop(ra).await;
     stop(rb).await;
 }

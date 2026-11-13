@@ -27,7 +27,7 @@ use tokio::sync::{Notify, mpsc, watch};
 use tokio::time::timeout;
 
 use crate::tls::{self, PinSet, PinVerifier, VerifyMode};
-use crate::{CoreError, Identity, PeerEntry, Peers, msg};
+use crate::{CoreError, Identity, LearnedAddr, PeerEntry, Peers, msg};
 
 const RELIABLE_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_READERS: usize = 32;
@@ -41,25 +41,38 @@ const DEFER: Duration = Duration::from_secs(2);
 const BYE_GRACE: Duration = Duration::from_millis(100);
 /// One name lookup may not hold the dialer longer than this (mDNS answers in well under it).
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(3);
-/// Addresses tried per failed dial: each one that answers nothing costs a DIAL_TIMEOUT.
+/// A dial to an address found by name, now or on an earlier run. Such an address is on the
+/// local network or it is wrong: it does not get the wait a pairing address gets.
+const NAME_DIAL_TIMEOUT: Duration = Duration::from_secs(3);
+/// Addresses found by name tried per round. The next round goes on from where this one stopped,
+/// so an answer beyond the first few is reached too.
 const MAX_RESOLVED: usize = 3;
 
-/// Answers the addresses a peer's device name has now, with the port the stored address had.
-/// Asked only after the stored address failed a dial (the peer got another address from DHCP).
+/// Answers the addresses a peer's device name has now, with the port the pairing address had.
+/// Asked only after the pairing address failed a dial (the peer got another address from DHCP).
 pub type Resolver =
     Arc<dyn Fn(String, u16) -> Pin<Box<dyn Future<Output = Vec<SocketAddr>> + Send>> + Send + Sync>;
 
-/// A device name the system resolver may be asked about: host-name characters only, so a name
-/// typed with spaces or accents never leaves this process as a query.
+/// What the mesh tells the agent about the cache of addresses found by name. The cache lives
+/// beside peers.toml and never in it: an address a name answered is not a trust anchor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressUpdate {
+    /// The peer proved its key at `learned` while its pairing address `paired` answered nothing.
+    Learned(LearnedAddr),
+    /// What was cached for the peer is no longer true (another device answers there, or the
+    /// pairing address changed).
+    Forgotten(PeerId),
+}
+
+/// A device name the system resolver may be asked about: one host-name label, so a name typed
+/// with spaces or accents never leaves this process as a query, and a dotted name never turns
+/// into a query for somebody else's domain.
 fn host_name(name: &str) -> bool {
-    let label = |l: &str| {
-        !l.is_empty()
-            && l.len() <= 63
-            && !l.starts_with('-')
-            && !l.ends_with('-')
-            && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
-    };
-    name.len() <= 253 && name.split('.').all(label)
+    !name.is_empty()
+        && name.len() <= 63
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
 /// The resolver of the machine: the bare name (DNS, LLMNR or NetBIOS on Windows) and the mDNS
@@ -76,17 +89,7 @@ pub fn system_resolver() -> Resolver {
                     _ => Vec::new(),
                 }
             };
-            let local = if name.to_ascii_lowercase().ends_with(".local") {
-                None
-            } else {
-                Some(format!("{name}.local"))
-            };
-            let (bare, mdns) = tokio::join!(lookup(name.clone()), async {
-                match local {
-                    Some(host) => lookup(host).await,
-                    None => Vec::new(),
-                }
-            });
+            let (bare, mdns) = tokio::join!(lookup(name.clone()), lookup(format!("{name}.local")));
             let mut out: Vec<SocketAddr> = Vec::new();
             for addr in mdns.into_iter().chain(bare) {
                 if !out.contains(&addr) {
@@ -163,7 +166,7 @@ pub struct Mesh {
     /// Taken once by the agent (`pause_requests`).
     pausing: Mutex<Option<mpsc::UnboundedReceiver<bool>>>,
     /// Taken once by the agent (`address_updates`).
-    readdressed: Mutex<Option<mpsc::UnboundedReceiver<(PeerId, SocketAddr)>>>,
+    readdressed: Mutex<Option<mpsc::UnboundedReceiver<AddressUpdate>>>,
 }
 
 struct Inner {
@@ -187,9 +190,9 @@ struct Inner {
     revoked: mpsc::UnboundedSender<PeerId>,
     /// To the agent: a module asked to pause (true) or resume (`ModuleHost::request_pause`).
     pausing: mpsc::UnboundedSender<bool>,
-    /// To the agent: this peer answered at a new address, write it to peers.toml.
-    readdressed: mpsc::UnboundedSender<(PeerId, SocketAddr)>,
-    /// Off until `resolve_names_with`: a mesh without it only dials the stored addresses.
+    /// To the agent: what to write to, or drop from, the cache of addresses found by name.
+    readdressed: mpsc::UnboundedSender<AddressUpdate>,
+    /// Off until `resolve_names_with`: a mesh without it only dials the addresses it was given.
     resolver: Mutex<Option<Resolver>>,
     next_gen: AtomicU64,
     stop: watch::Sender<bool>,
@@ -198,6 +201,10 @@ struct Inner {
 struct Slot {
     input_epoch: u64,
     entry: PeerEntry,
+    /// Where the peer last proved its key while `entry.addr` answered nothing. A cache: dialed
+    /// first, dropped when another device answers there or when `entry.addr` changes, and never
+    /// a reason to block the peer.
+    learned: Option<SocketAddr>,
     state: PeerState,
     active: Option<Active>,
     /// Wakes the dialer: connection lost, peers reloaded.
@@ -223,6 +230,7 @@ impl Slot {
         Self {
             input_epoch: 0,
             entry,
+            learned: None,
             state: PeerState::Disconnected,
             active: None,
             wake: Arc::new(Notify::new()),
@@ -245,6 +253,15 @@ impl Slot {
 enum DialFail {
     KeyChanged(PeerId),
     Other(String),
+}
+
+/// What the dialer of one peer works from, read under the lock at each step.
+struct DialTarget {
+    /// The address in peers.toml, from the pairing or typed by the user.
+    paired: Option<SocketAddr>,
+    learned: Option<SocketAddr>,
+    wake: Arc<Notify>,
+    connected: bool,
 }
 
 enum HelloFail {
@@ -274,6 +291,17 @@ enum Installed {
 
 impl Mesh {
     pub fn start(opts: MeshOptions) -> Result<Self, CoreError> {
+        Self::start_with_cache(opts, Vec::new())
+    }
+
+    /// `start`, taking back the cache of addresses found by name that a previous run wrote. An
+    /// entry only counts for a peer that is still trusted and whose pairing address is still
+    /// the one the entry was found for. The dialers start with it: the cached address is the
+    /// first one dialed.
+    pub fn start_with_cache(
+        opts: MeshOptions,
+        cached: Vec<LearnedAddr>,
+    ) -> Result<Self, CoreError> {
         let id = opts.identity.id();
         let local = ModuleSet {
             clipboard: opts.modules.contains_key(&ModuleKind::Clipboard),
@@ -295,12 +323,19 @@ impl Mesh {
             modules: local,
             listen_port,
         };
-        let slots: HashMap<PeerId, Slot> = opts
+        let mut slots: HashMap<PeerId, Slot> = opts
             .peers
             .peer
             .into_iter()
             .map(|e| (e.id, Slot::new(e)))
             .collect();
+        for entry in cached {
+            if let Some(slot) = slots.get_mut(&entry.peer)
+                && slot.entry.addr == Some(entry.paired)
+            {
+                slot.learned = Some(entry.learned);
+            }
+        }
         let ids: Vec<PeerId> = slots.keys().copied().collect();
         let (revoked, revoked_rx) = mpsc::unbounded_channel();
         let (pausing, pausing_rx) = mpsc::unbounded_channel();
@@ -342,7 +377,7 @@ impl Mesh {
         })
     }
 
-    /// From now on a peer whose stored address fails a dial is looked up by its device name and
+    /// From now on a peer whose pairing address fails a dial is looked up by its device name and
     /// dialed at what `resolver` answers. The agent turns this on with `system_resolver`.
     pub fn resolve_names_with(&self, resolver: Resolver) {
         *self
@@ -352,9 +387,9 @@ impl Mesh {
             .unwrap_or_else(PoisonError::into_inner) = Some(resolver);
     }
 
-    /// Peers that answered at an address other than the stored one, already in use by this mesh.
-    /// The agent takes this once and writes each to peers.toml, so a restart dials it first.
-    pub fn address_updates(&self) -> Option<mpsc::UnboundedReceiver<(PeerId, SocketAddr)>> {
+    /// Changes to the cache of addresses found by name, already applied in this mesh. The agent
+    /// takes this once and mirrors each to the cache file, so a restart dials the address first.
+    pub fn address_updates(&self) -> Option<mpsc::UnboundedReceiver<AddressUpdate>> {
         self.readdressed
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -444,7 +479,7 @@ impl Mesh {
             .map(|s| PeerStatus {
                 name: s.entry.name.clone(),
                 id: s.entry.id,
-                addr: s.entry.addr,
+                addr: s.learned.or(s.entry.addr),
                 state: s.state.clone(),
                 perms: s.entry.perms,
                 remote_modules: s.active.as_ref().map(|a| a.remote).unwrap_or_default(),
@@ -490,6 +525,9 @@ impl Mesh {
                     closing.push((a.conn.clone(), a.revoke.clone(), a.version));
                     down.push(*id);
                 }
+                // Whatever is cached for a peer that left goes with it (S1b-PRIV-01). Told under
+                // the lock, in the order the cache changes (R3-N02).
+                let _ = inner.readdressed.send(AddressUpdate::Forgotten(*id));
                 slot.wake.notify_one();
                 false
             });
@@ -507,6 +545,12 @@ impl Mesh {
                             up.push(slot.info());
                         }
                         if readdressed {
+                            // What was learned stood in for the old pairing address only.
+                            if slot.learned.take().is_some() {
+                                let _ = inner
+                                    .readdressed
+                                    .send(AddressUpdate::Forgotten(slot.entry.id));
+                            }
                             slot.wake.notify_one();
                         }
                     }
@@ -772,13 +816,18 @@ impl Inner {
     }
 
     /// Returns `None` when the peer is gone or blocked (the dialer stops).
-    fn dial_target(&self, peer: PeerId) -> Option<(Option<SocketAddr>, Arc<Notify>, bool)> {
+    fn dial_target(&self, peer: PeerId) -> Option<DialTarget> {
         let slots = self.lock();
         let slot = slots.get(&peer)?;
         if matches!(slot.state, PeerState::Blocked { .. }) {
             return None;
         }
-        Some((slot.entry.addr, slot.wake.clone(), slot.active.is_some()))
+        Some(DialTarget {
+            paired: slot.entry.addr,
+            learned: slot.learned,
+            wake: slot.wake.clone(),
+            connected: slot.active.is_some(),
+        })
     }
 
     async fn dial_loop(self: Arc<Self>, peer: PeerId) {
@@ -787,14 +836,22 @@ impl Inner {
         // side our dial would only make a duplicate (and lose frames sent on it). We give the
         // other side DEFER to dial first, once per disconnected spell.
         let mut deferred = false;
+        // Where the next round of addresses found by name starts (see MAX_RESOLVED).
+        let mut name_cursor = 0usize;
         loop {
             if self.stopped() {
                 return;
             }
-            let Some((addr, wake, connected)) = self.dial_target(peer) else {
+            let Some(DialTarget {
+                paired,
+                learned,
+                wake,
+                connected,
+            }) = self.dial_target(peer)
+            else {
                 return;
             };
-            let Some(addr) = addr.filter(|_| !connected) else {
+            let Some(addr) = paired.filter(|_| !connected) else {
                 tokio::select! {
                     _ = wake.notified() => {}
                     _ = self.until_stop() => return,
@@ -812,25 +869,67 @@ impl Inner {
                 continue;
             }
             self.set_state(peer, PeerState::Connecting);
-            match self.clone().dial_once(peer, addr).await {
+            // The cached address first: it is where the peer was last time. It is only a cache,
+            // so another device answering there gets it dropped and nothing else (S1-SEG-01).
+            if let Some(cached) = learned.filter(|cached| *cached != addr) {
+                match self
+                    .clone()
+                    .dial_once(peer, cached, NAME_DIAL_TIMEOUT)
+                    .await
+                {
+                    Ok(()) => {
+                        backoff = BACKOFF_MIN;
+                        deferred = false;
+                        continue;
+                    }
+                    Err(DialFail::KeyChanged(_)) => {
+                        tracing::debug!(peer = %peer, "another device answers at the cached address");
+                        self.forget(peer, Some(cached));
+                    }
+                    Err(DialFail::Other(e)) => {
+                        tracing::debug!(peer = %peer, error = %e, "dial to the cached address failed");
+                    }
+                }
+                // That dial took time: a reload may have given the peer another pairing
+                // address, or the peer may have connected from its side. What follows is only
+                // about the pairing address this round started with (R3-N01).
+                match self.dial_target(peer) {
+                    Some(target) if target.paired == Some(addr) && !target.connected => {}
+                    _ => continue,
+                }
+            }
+            match self.clone().dial_once(peer, addr, DIAL_TIMEOUT).await {
                 Ok(()) => {
+                    // The pairing address works: whatever was cached in its place is stale
+                    // (R3-N03).
+                    self.forget(peer, None);
                     backoff = BACKOFF_MIN;
                     deferred = false;
                     continue;
                 }
                 Err(DialFail::KeyChanged(got)) => {
-                    tracing::warn!(peer = %peer, got = %got, addr = %addr, "{}", msg::KEY_CHANGED_LOG);
-                    if let Some(slot) = self.lock().get_mut(&peer) {
-                        slot.state = PeerState::Blocked {
-                            reason: msg::KEY_CHANGED.to_string(),
-                        };
+                    // Another key at the pairing address blocks the peer, as before. Only if
+                    // this still is its pairing address: an answer about an address a reload
+                    // has replaced meanwhile says nothing about the new one (R3-N01).
+                    let blocked = match self.lock().get_mut(&peer) {
+                        Some(slot) if slot.entry.addr == Some(addr) => {
+                            slot.state = PeerState::Blocked {
+                                reason: msg::KEY_CHANGED.to_string(),
+                            };
+                            true
+                        }
+                        _ => false,
+                    };
+                    if !blocked {
+                        continue;
                     }
+                    tracing::warn!(peer = %peer, got = %got, addr = %addr, "{}", msg::KEY_CHANGED_LOG);
                     self.push_block(Some(peer), None, msg::KEY_CHANGED.to_string());
                     return;
                 }
                 Err(DialFail::Other(e)) => {
                     tracing::debug!(peer = %peer, error = %e, "dial failed");
-                    if self.dial_by_name(peer, addr).await {
+                    if self.dial_by_name(peer, addr, &mut name_cursor).await {
                         backoff = BACKOFF_MIN;
                         deferred = false;
                         continue;
@@ -847,11 +946,17 @@ impl Inner {
         }
     }
 
-    /// The stored address answered nothing: the peer may have another one now (DHCP). Asks the
-    /// resolver for the peer's device name and dials what it answers. The pin decides who the
-    /// peer is, as in any dial; another device at a resolved address is skipped and never blocks
-    /// the peer, since a name answer proves nothing about who holds the address.
-    async fn dial_by_name(self: &Arc<Self>, peer: PeerId, stale: SocketAddr) -> bool {
+    /// The pairing address answered nothing: the peer may have another one now (DHCP). Asks the
+    /// resolver for the peer's device name and dials what it answers, a few addresses per round
+    /// starting at `cursor`. The pin decides who the peer is, as in any dial; another device at
+    /// a resolved address is skipped and never blocks the peer, since a name answer proves
+    /// nothing about who holds the address.
+    async fn dial_by_name(
+        self: &Arc<Self>,
+        peer: PeerId,
+        paired: SocketAddr,
+        cursor: &mut usize,
+    ) -> bool {
         let resolver = self
             .resolver
             .lock()
@@ -864,25 +969,35 @@ impl Inner {
             return false;
         };
         let found = tokio::select! {
-            f = resolver(name, stale.port()) => f,
+            f = resolver(name, paired.port()) => f,
             _ = self.until_stop() => return false,
         };
-        let candidates = found
-            .into_iter()
-            .filter(|a| *a != stale && a.is_ipv4() == stale.is_ipv4())
-            .take(MAX_RESOLVED);
-        for addr in candidates {
-            // Gone, blocked, readdressed by a reload or connected from the other side meanwhile.
+        let mut candidates: Vec<SocketAddr> = Vec::new();
+        for addr in found {
+            if addr != paired && addr.is_ipv4() == paired.is_ipv4() && !candidates.contains(&addr) {
+                candidates.push(addr);
+            }
+        }
+        for _ in 0..candidates.len().min(MAX_RESOLVED) {
+            let addr = candidates[*cursor % candidates.len()];
+            *cursor = cursor.wrapping_add(1);
+            // Gone, blocked, given another pairing address by a reload, or connected from the
+            // other side meanwhile.
             match self.dial_target(peer) {
-                Some((Some(current), _, false)) if current == stale => {}
+                Some(target) if target.paired == Some(paired) && !target.connected => {
+                    // Just tried, as the cached address, in this same round.
+                    if target.learned == Some(addr) {
+                        continue;
+                    }
+                }
                 _ => return false,
             }
             if self.stopped() {
                 return false;
             }
-            match self.clone().dial_once(peer, addr).await {
+            match self.clone().dial_once(peer, addr, NAME_DIAL_TIMEOUT).await {
                 Ok(()) => {
-                    self.readdress(peer, addr);
+                    self.learn(peer, paired, addr);
                     return true;
                 }
                 Err(DialFail::KeyChanged(_)) => {
@@ -896,23 +1011,49 @@ impl Inner {
         false
     }
 
-    /// The peer proved its key at `addr`: it replaces the stored address here and, through the
-    /// agent, in peers.toml.
-    fn readdress(&self, peer: PeerId, addr: SocketAddr) {
-        let changed = match self.lock().get_mut(&peer) {
-            Some(slot) if slot.entry.addr != Some(addr) => {
-                slot.entry.addr = Some(addr);
-                true
-            }
-            _ => false,
+    /// The peer proved its key at `learned` while `paired` answered nothing. Cached only if
+    /// `paired` is still the peer's pairing address: a result that started before a reload gave
+    /// the peer another one is dropped (R1-D01), though the connection it made stands. The
+    /// agent is told under the lock, so it sees the cache change in the order it happened.
+    fn learn(&self, peer: PeerId, paired: SocketAddr, learned: SocketAddr) {
+        let mut slots = self.lock();
+        let Some(slot) = slots.get_mut(&peer) else {
+            return;
         };
-        if changed {
-            tracing::info!(evento = "peer.readdressed", peer = %peer, origem = "name", "peer found at a new address");
-            let _ = self.readdressed.send((peer, addr));
+        if slot.entry.addr != Some(paired) || slot.learned == Some(learned) {
+            return;
         }
+        slot.learned = Some(learned);
+        let _ = self.readdressed.send(AddressUpdate::Learned(LearnedAddr {
+            peer,
+            paired,
+            learned,
+        }));
+        drop(slots);
+        tracing::info!(evento = "peer.readdressed", peer = %peer, origem = "name", "peer found at a new address");
     }
 
-    async fn dial_once(self: Arc<Self>, peer: PeerId, addr: SocketAddr) -> Result<(), DialFail> {
+    /// Drops the cache entry of the peer: `only` names the address that must still be the
+    /// cached one (another device answers there), `None` drops whatever is cached (the pairing
+    /// address works again).
+    fn forget(&self, peer: PeerId, only: Option<SocketAddr>) {
+        let mut slots = self.lock();
+        let Some(slot) = slots.get_mut(&peer) else {
+            return;
+        };
+        if slot.learned.is_none() || only.is_some_and(|addr| slot.learned != Some(addr)) {
+            return;
+        }
+        slot.learned = None;
+        let _ = self.readdressed.send(AddressUpdate::Forgotten(peer));
+    }
+
+    async fn dial_once(
+        self: Arc<Self>,
+        peer: PeerId,
+        addr: SocketAddr,
+        wait: Duration,
+    ) -> Result<(), DialFail> {
         let other = |e: &dyn std::fmt::Display| DialFail::Other(e.to_string());
         let verifier = PinVerifier::new(VerifyMode::Expect(peer));
         let cfg = tls::client_config(&self.identity, verifier.clone(), ALPN_MESH)
@@ -921,7 +1062,7 @@ impl Inner {
             .endpoint
             .connect_with(cfg, addr, crate::SERVER_NAME)
             .map_err(|e| other(&e))?;
-        let conn = match timeout(DIAL_TIMEOUT, connecting).await {
+        let conn = match timeout(wait, connecting).await {
             Ok(Ok(c)) => c,
             Ok(Err(e)) => {
                 return Err(match verifier.last_rejected() {

@@ -353,3 +353,62 @@ fn update_peers_loses_no_concurrent_change() {
         .collect();
     assert!(leftovers.is_empty(), "{leftovers:?}");
 }
+
+/// The cache of addresses found by name lives beside peers.toml, private like the rest of the
+/// profile, one entry per peer; a broken or newer file is an empty cache, never an error.
+#[test]
+fn learned_addresses_are_a_private_cache_that_never_touches_the_pairing_file() {
+    use clipsync_core::LearnedAddr;
+    let tmp = tempfile::tempdir().unwrap();
+    let p = Profile::resolve(Some(tmp.path().join("a"))).unwrap();
+    p.init(opts(false, false)).unwrap();
+    let file = p.dir.join("known-addrs.toml");
+    let peers_before = std::fs::read(p.peers_path()).ok();
+    assert!(p.load_learned().is_empty(), "no file is an empty cache");
+
+    let (peer, other) = (PeerId([7; 32]), PeerId([8; 32]));
+    let entry = |peer, learned: &str| LearnedAddr {
+        peer,
+        paired: "192.168.0.10:47800".parse().unwrap(),
+        learned: learned.parse().unwrap(),
+    };
+    p.save_learned(entry(peer, "192.168.0.20:47800")).unwrap();
+    p.save_learned(entry(other, "192.168.0.30:47800")).unwrap();
+    p.save_learned(entry(peer, "192.168.0.21:47800")).unwrap();
+    assert_eq!(
+        p.load_learned(),
+        vec![
+            entry(other, "192.168.0.30:47800"),
+            entry(peer, "192.168.0.21:47800")
+        ],
+        "one entry per peer, the newest"
+    );
+    #[cfg(unix)]
+    assert_eq!(mode(&file), 0o600);
+    assert_eq!(std::fs::read(p.peers_path()).ok(), peers_before);
+
+    p.forget_learned(other).unwrap();
+    p.forget_learned(other).unwrap();
+    assert_eq!(p.load_learned(), vec![entry(peer, "192.168.0.21:47800")]);
+
+    // Pruning keeps what the caller still vouches for and rewrites the file only on a change.
+    p.save_learned(entry(other, "192.168.0.30:47800")).unwrap();
+    assert_eq!(
+        p.prune_learned(|e| e.peer == peer).unwrap(),
+        vec![entry(peer, "192.168.0.21:47800")]
+    );
+    assert_eq!(p.load_learned(), vec![entry(peer, "192.168.0.21:47800")]);
+
+    std::fs::write(&file, "version = 2\n").unwrap();
+    assert!(
+        p.load_learned().is_empty(),
+        "a newer file is not guessed at"
+    );
+    std::fs::write(&file, "not toml [").unwrap();
+    assert!(
+        p.load_learned().is_empty(),
+        "a broken file is an empty cache"
+    );
+    p.save_learned(entry(peer, "192.168.0.22:47800")).unwrap();
+    assert_eq!(p.load_learned(), vec![entry(peer, "192.168.0.22:47800")]);
+}

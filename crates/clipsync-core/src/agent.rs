@@ -18,7 +18,7 @@ use tokio::task::JoinSet;
 use tokio::time::timeout;
 
 use crate::control::{self, ControlHandler};
-use crate::transport::{Mesh, MeshOptions};
+use crate::transport::{AddressUpdate, Mesh, MeshOptions};
 use crate::{Config, CoreError, Profile, ProfileOperationGuard, msg};
 
 const MODULE_QUEUE: usize = 1024;
@@ -153,14 +153,31 @@ pub async fn run_reserved(
         runners.push((m, rx));
     }
 
-    let mesh = Arc::new(Mesh::start(MeshOptions {
-        identity,
-        device_name: cfg.device_name.clone(),
-        listen: cfg.listen,
-        modules: channels.clone(),
-        peers,
-        paused: state.paused,
-    })?);
+    // The cache of addresses found by name starts with the mesh: a peer whose pairing address
+    // went stale is dialed where it was last time before anything else. Entries for a peer
+    // that left peers.toml, or that got another pairing address, are dropped from the file.
+    let cached = p
+        .prune_learned(|e| {
+            peers
+                .peer
+                .iter()
+                .any(|peer| peer.id == e.peer && peer.addr == Some(e.paired))
+        })
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "address cache not pruned");
+            Vec::new()
+        });
+    let mesh = Arc::new(Mesh::start_with_cache(
+        MeshOptions {
+            identity,
+            device_name: cfg.device_name.clone(),
+            listen: cfg.listen,
+            modules: channels.clone(),
+            peers,
+            paused: state.paused,
+        },
+        cached,
+    )?);
     // v1.16: a peer that removed us (Bye{Revoked}) leaves peers.toml the way a local revoke does.
     let revocations = mesh.revocations().map(|mut rx| {
         let (profile, mesh) = (p.clone(), mesh.clone());
@@ -170,21 +187,20 @@ pub async fn run_reserved(
             }
         })
     });
-    // A peer whose address changed (DHCP) is found by its device name; the address that answered
-    // goes to peers.toml so the next start dials it first.
+    // A peer whose address changed (DHCP) is found by its device name. The address that answered
+    // goes to the cache beside peers.toml; peers.toml itself is never written from what the
+    // network answered.
     mesh.resolve_names_with(crate::transport::system_resolver());
     let readdressing = mesh.address_updates().map(|mut rx| {
         let profile = p.clone();
         tokio::spawn(async move {
-            while let Some((peer, addr)) = rx.recv().await {
-                let saved = profile.update_peers(|peers| {
-                    if let Some(entry) = peers.peer.iter_mut().find(|e| e.id == peer) {
-                        entry.addr = Some(addr);
-                    }
-                    Ok::<_, CoreError>(())
-                });
+            while let Some(update) = rx.recv().await {
+                let saved = match update {
+                    AddressUpdate::Learned(entry) => profile.save_learned(entry),
+                    AddressUpdate::Forgotten(peer) => profile.forget_learned(peer),
+                };
                 if let Err(e) = saved {
-                    tracing::warn!(error = %e, "peers.toml not written; the new address lasts until restart");
+                    tracing::warn!(error = %e, "address cache not written; it lasts until restart");
                 }
             }
         })

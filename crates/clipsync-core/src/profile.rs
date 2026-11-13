@@ -22,6 +22,8 @@ const PEERS_FILE: &str = "peers.toml";
 /// Held (`File::lock`) while peers.toml is read, changed and written; never removed.
 const PEERS_LOCK_FILE: &str = "peers.toml.lock";
 const STATE_FILE: &str = "state.toml";
+/// Addresses found by a peer's device name. A cache beside peers.toml, never part of it.
+const LEARNED_FILE: &str = "known-addrs.toml";
 /// Control rendezvous: the Unix socket itself; on Windows, the file that publishes the random pipe name.
 #[cfg(unix)]
 const SOCKET_FILE: &str = "agent.sock";
@@ -176,6 +178,25 @@ impl Peers {
     pub fn pins(&self) -> Vec<PeerId> {
         self.peer.iter().map(|p| p.id).collect()
     }
+}
+
+/// Where a peer answered when its pairing address did not, found by its device name. A cache
+/// entry, never a trust anchor: the pin decides who the peer is, and the entry only stands in
+/// for `paired`, the pairing address it was found for. Once peers.toml has another address for
+/// the peer, the entry is worthless.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LearnedAddr {
+    #[serde(with = "peer_id_hex")]
+    pub peer: PeerId,
+    pub paired: SocketAddr,
+    pub learned: SocketAddr,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LearnedFile {
+    version: u32,
+    #[serde(default)]
+    peer: Vec<LearnedAddr>,
 }
 
 // `flatten` and `deny_unknown_fields` do not mix: unknown keys inside a [[peer]] are ignored on read.
@@ -736,6 +757,60 @@ impl Profile {
             }
         }
         Ok(peers)
+    }
+
+    /// The cached addresses. A missing, unreadable or newer file is an empty cache: losing it
+    /// only costs a lookup by name.
+    pub fn load_learned(&self) -> Vec<LearnedAddr> {
+        let Ok(text) = fs::read_to_string(self.dir.join(LEARNED_FILE)) else {
+            return Vec::new();
+        };
+        match toml::from_str::<LearnedFile>(&text) {
+            Ok(file) if file.version == 1 => file.peer,
+            _ => Vec::new(),
+        }
+    }
+
+    /// Caches `entry`, in place of whatever was cached for the same peer. Only the agent writes
+    /// this file, from one task.
+    pub fn save_learned(&self, entry: LearnedAddr) -> Result<(), CoreError> {
+        let mut peer = self.load_learned();
+        peer.retain(|e| e.peer != entry.peer);
+        peer.push(entry);
+        self.write_learned(peer)
+    }
+
+    /// Drops what is cached for `peer`.
+    pub fn forget_learned(&self, peer: PeerId) -> Result<(), CoreError> {
+        let mut entries = self.load_learned();
+        let before = entries.len();
+        entries.retain(|e| e.peer != peer);
+        if entries.len() == before {
+            return Ok(());
+        }
+        self.write_learned(entries)
+    }
+
+    /// Keeps only the cached entries `keep` vouches for (the peer is still trusted and still
+    /// has the pairing address the entry was found for) and returns them. Nothing about a peer
+    /// that left peers.toml stays on disk.
+    pub fn prune_learned(
+        &self,
+        keep: impl Fn(&LearnedAddr) -> bool,
+    ) -> Result<Vec<LearnedAddr>, CoreError> {
+        let mut entries = self.load_learned();
+        let before = entries.len();
+        entries.retain(keep);
+        if entries.len() != before {
+            self.write_learned(entries.clone())?;
+        }
+        Ok(entries)
+    }
+
+    fn write_learned(&self, peer: Vec<LearnedAddr>) -> Result<(), CoreError> {
+        let text = toml::to_string(&LearnedFile { version: 1, peer })
+            .map_err(|e| CoreError::Profile(e.to_string()))?;
+        write_private(&self.dir.join(LEARNED_FILE), text.as_bytes())
     }
 
     /// Replaces the whole peers.toml, under the same lock as `update_peers`. To change it, use
