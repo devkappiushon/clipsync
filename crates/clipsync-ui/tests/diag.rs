@@ -415,3 +415,260 @@ async fn diagnostics_show_the_keyboard_layout_and_on_windows_the_shortcuts() {
     }
     ui.shutdown().await;
 }
+
+/// Exercita a API e a exportação com JSONL sintético, sem iniciar agente ou adaptador real.
+async fn l1_support_rows(rows: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let dir = tempfile::Builder::new().prefix("csl1-").tempdir().unwrap();
+    let profile = dir.path().join("p");
+    let ui = clipsync_ui::Ui::start(clipsync_ui::UiOptions {
+        profile: Some(profile.clone()),
+        poll: std::time::Duration::from_secs(600),
+        fake_adapters: true,
+        downloads_dir: Some(dir.path().join("downloads")),
+        autostart_dir: Some(dir.path().join("autostart")),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let path = clipsync_core::logging::log_path(&profile);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let raw = rows
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(path, raw + "\n").unwrap();
+    let preview = ok(&ui, json!({"cmd":"support_bundle_preview"})).await;
+    let exported = ok(&ui, json!({"cmd":"support_bundle_export"})).await;
+    let file = std::fs::read_to_string(exported["path"].as_str().unwrap()).unwrap();
+    assert_eq!(file, preview["text"].as_str().unwrap());
+    assert_eq!(exported["bytes"], file.len());
+    ui.shutdown().await;
+    let result: Vec<_> = file
+        .split_once("\n[log]\n")
+        .unwrap()
+        .1
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(result.len(), rows.len(), "a cauda perdeu linhas da fixture");
+    result
+}
+
+#[tokio::test]
+async fn l1_cauda_preserva_eis_device_e_contadores() {
+    let rows = [json!({
+        "evento":"eis.device", "acao":"removed", "origem":"loop",
+        "dispositivo":2, "capacidades":"pointer,pointer_absolute,button,scroll,keyboard",
+        "contagem":5, "descartados":3
+    })];
+    let output = l1_support_rows(&rows).await;
+    assert_eq!(output[0]["evento"], "eis.device", "evento EIS omitido");
+    assert_eq!(
+        output, rows,
+        "campos estruturados EIS perdidos na exportação"
+    );
+}
+
+#[tokio::test]
+async fn l1_cauda_preserva_fechamento_por_peer_unresponsive() {
+    let rows = [json!({"evento":"session.closed", "session":7, "motivo":"peer_unresponsive"})];
+    let output = l1_support_rows(&rows).await;
+    assert_eq!(
+        output[0]["motivo"], "peer_unresponsive",
+        "motivo da vigia omitido"
+    );
+    assert_eq!(output, rows);
+}
+
+#[tokio::test]
+async fn l1_cauda_preserva_vocabulario_dos_emissores() {
+    let mut rows = vec![json!({"evento":"peer.readdressed", "origem":"name"})];
+    for (acao, origem) in [
+        ("added", "added"),
+        ("resumed", "resumed"),
+        ("paused", "paused"),
+        ("removed", "removed"),
+        ("removed", "loop"),
+        ("missing", "start"),
+        ("discarding", "emit"),
+        ("reconciled", "emit"),
+        ("reconciled", "resumed"),
+        ("reconciled", "release_all"),
+    ] {
+        rows.push(json!({"evento":"eis.device", "acao":acao, "origem":origem}));
+    }
+    rows.push(json!({"evento":"eis.device", "acao":"missing", "motivo":"not_ready"}));
+    for motivo in [
+        "context",
+        "handshake",
+        "converter",
+        "eof",
+        "disconnected",
+        "closed",
+        "runtime",
+        "io",
+    ] {
+        rows.push(json!({"evento":"eis.loop", "motivo":motivo}));
+    }
+    for evento in ["session.refused", "enter.refused"] {
+        rows.push(json!({"evento":evento, "motivo":"apply_failed"}));
+    }
+    assert_eq!(l1_support_rows(&rows).await, rows);
+}
+
+#[tokio::test]
+async fn l1_cauda_preserva_combinacoes_canonicas_de_capacidades() {
+    // Casos independentes do validador: vazio, cada nome e combinações com lacunas.
+    let rows: Vec<_> = [
+        "",
+        "pointer",
+        "pointer_absolute",
+        "button",
+        "scroll",
+        "keyboard",
+        "touch",
+        "text",
+        "pointer,button,scroll",
+        "pointer_absolute,keyboard,text",
+        "keyboard,touch",
+        "pointer,pointer_absolute,button,scroll,keyboard,touch,text",
+    ]
+    .into_iter()
+    .map(|capacidades| json!({"evento":"eis.device", "capacidades":capacidades}))
+    .collect();
+    assert_eq!(l1_support_rows(&rows).await, rows);
+}
+
+#[tokio::test]
+async fn l1_cauda_rejeita_capacidades_nao_canonicas_e_tipos_indevidos() {
+    let mut rows: Vec<_> = [
+        "keyboard,keyboard",
+        "keyboard,pointer",
+        "text,touch",
+        "pointer_absolute,pointer",
+        ",keyboard",
+        "keyboard,",
+        "pointer,,keyboard",
+        "keyboard,texto-privado",
+        "keyboard-sufixo",
+        "keyboard texto-privado",
+        " keyboard",
+        "keyboard ",
+        "Keyboard",
+        "keyboard\n",
+        "nome-do-dispositivo",
+        "keycode",
+        "tecla",
+    ]
+    .into_iter()
+    .map(|capacidades| json!({"evento":"eis.device", "capacidades":capacidades}))
+    .collect();
+    for capacidades in [
+        json!(1),
+        json!(true),
+        json!(null),
+        json!(["keyboard"]),
+        json!({"nome":"privado"}),
+    ] {
+        rows.push(json!({"evento":"eis.device", "capacidades":capacidades}));
+    }
+    for row in l1_support_rows(&rows).await {
+        assert!(row.get("capacidades").is_none() || row["capacidades"] == "<texto omitido>");
+    }
+}
+
+#[tokio::test]
+async fn l1_cauda_aceita_dispositivos_apenas_como_inteiros_nao_negativos() {
+    let mut rows = Vec::new();
+    for n in [0, 1, u64::MAX] {
+        rows.push(json!({"evento":"eis.device", "dispositivo":n}));
+        rows.push(json!({"evento":"eis.loop", "dispositivos":n}));
+    }
+    assert_eq!(l1_support_rows(&rows).await, rows);
+    let invalid = [
+        json!(-1),
+        json!(1.5),
+        json!(1.0),
+        json!("1"),
+        json!(true),
+        json!(null),
+        json!([1]),
+        json!({"id":1}),
+    ];
+    let rows: Vec<_> = invalid
+        .into_iter()
+        .map(|value| json!({"evento":"eis.device", "dispositivo":value, "dispositivos":value}))
+        .collect();
+    for row in l1_support_rows(&rows).await {
+        assert!(row.get("dispositivo").is_none());
+        assert!(row.get("dispositivos").is_none());
+    }
+}
+
+#[tokio::test]
+async fn l1_cauda_preserva_categorias_de_erro_somente_em_eis_loop() {
+    let categories = [
+        "event",
+        "parse",
+        "request",
+        "handshake",
+        "interface_version",
+        "io",
+    ];
+    let rows: Vec<_> = categories
+        .iter()
+        .map(|erro| json!({"evento":"eis.loop", "erro":erro}))
+        .collect();
+    assert_eq!(l1_support_rows(&rows).await, rows);
+    let mut rows = Vec::new();
+    for evento in [
+        json!("eis.device"),
+        json!("emulate.error"),
+        json!("session.closed"),
+        json!("eis.loop.sufixo"),
+        json!(["eis.loop"]),
+        json!(null),
+    ] {
+        for erro in categories {
+            rows.push(json!({"evento":evento, "erro":erro}));
+        }
+    }
+    rows.push(json!({"erro":"io"}));
+    rows.push(
+        json!({"evento":"eis.loop", "totais":{"evento":"eis.loop", "erro":"io", "enviados":1}}),
+    );
+    let output = l1_support_rows(&rows).await;
+    for row in &output[..output.len() - 1] {
+        assert_eq!(row["erro"], "<texto omitido>");
+    }
+    assert_eq!(output.last().unwrap()["totais"], json!({"enviados":1}));
+}
+
+#[tokio::test]
+async fn l1_cauda_mantem_texto_livre_e_campos_privados_omitidos() {
+    let rows = [
+        json!({"evento":"eis.loop", "erro":"io /home/segredo", "message":"texto-privado", "peer":"par-privado", "host":"host-privado", "tecla":"proibida", "keycode":123, "clipboard_text":"segredo", "pending_releases":[123], "nome":"nome-privado"}),
+        json!({"evento":"hooks.reinstalled", "origem":"origem-inventada", "acao":"acao-inventada", "motivo":"motivo-inventado", "erro":"event"}),
+        json!({"evento":"eis.loop", "erro":"request-sufixo", "acao":42}),
+        json!({"evento":"eis.loop", "erro":["io"]}),
+        json!({"evento":"eis.loop", "erro":{"categoria":"io", "tecla":"privada"}}),
+        json!({"evento":"eis.loop", "erro":123}),
+        json!({"evento":"eis.loop", "erro":true}),
+    ];
+    let output = l1_support_rows(&rows).await;
+    for row in &output {
+        for key in ["tecla", "keycode", "clipboard_text", "pending_releases"] {
+            assert!(row.get(key).is_none());
+        }
+        assert!(row.get("erro").is_none() || row["erro"] == "<texto omitido>");
+    }
+    for key in ["evento", "origem", "acao", "motivo"] {
+        assert_eq!(output[1][key], "<texto omitido>");
+    }
+    assert!(output[2].get("acao").is_none());
+    assert_eq!(output[0]["peer"], "<id>");
+    assert_eq!(output[0]["host"], "<dispositivo>");
+    assert_eq!(output[0]["nome"], "<nome>");
+    assert_eq!(output[0]["message"], "<texto omitido>");
+}

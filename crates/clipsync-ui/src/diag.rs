@@ -757,6 +757,9 @@ fn known_log_text(key: &str, text: &str) -> bool {
                 | "agent.up"
                 | "peer.connected"
                 | "peer.disconnected"
+                | "peer.readdressed"
+                | "eis.device"
+                | "eis.loop"
                 | "module.input.start"
                 | "module.input.stop"
                 | "portal.session.created"
@@ -841,9 +844,38 @@ fn known_log_text(key: &str, text: &str) -> bool {
                 | "entry_positioning_failed"
                 | "route_invalid"
                 | "inventory_unconfirmed"
+                | "peer_unresponsive"
+                | "not_ready"
+                | "context"
+                | "handshake"
+                | "converter"
+                | "eof"
+                | "disconnected"
+                | "closed"
+                | "runtime"
+                | "io"
         ),
         "mensagem" => matches!(text, "enter_routes" | "enter_span" | "enter_at" | "enter"),
-        "origem" => matches!(text, "barrier" | "switch" | "test"),
+        "origem" => matches!(
+            text,
+            "barrier"
+                | "switch"
+                | "test"
+                | "name"
+                | "start"
+                | "emit"
+                | "resumed"
+                | "release_all"
+                | "added"
+                | "paused"
+                | "removed"
+                | "loop"
+        ),
+        "acao" => matches!(
+            text,
+            "added" | "resumed" | "paused" | "removed" | "missing" | "discarding" | "reconciled"
+        ),
+        "capacidades" => known_log_capabilities(text),
         "adaptador" => matches!(
             text,
             "fake" | "portal-inputcapture" | "portal-remotedesktop" | "win-hooks" | "win-sendinput"
@@ -853,6 +885,25 @@ fn known_log_text(key: &str, text: &str) -> bool {
         "monitor" | "uids" => text.len() == 32 && text.bytes().all(|byte| byte.is_ascii_hexdigit()),
         _ => false,
     }
+}
+
+/// Subsequência estritamente ordenada do vocabulário emitido por capabilities_of.
+/// Consumir cada nome impede repetições, reordenação e texto externo.
+fn known_log_capabilities(text: &str) -> bool {
+    let mut remaining = [
+        "pointer",
+        "pointer_absolute",
+        "button",
+        "scroll",
+        "keyboard",
+        "touch",
+        "text",
+    ]
+    .into_iter();
+    text.is_empty()
+        || text
+            .split(',')
+            .all(|cap| remaining.any(|known| known == cap))
 }
 
 fn redact_log_text(key: &str, text: &str, counts: &mut RedactionCounts) -> String {
@@ -912,6 +963,10 @@ const LOG_FIELDS: &[&str] = &[
     "enviada",
     "reutilizado",
     "descartados",
+    "acao",
+    "dispositivo",
+    "dispositivos",
+    "capacidades",
     "bytes",
 ];
 
@@ -920,11 +975,31 @@ fn redact_log_fields(
     allowed: &[&str],
     counts: &mut RedactionCounts,
 ) -> serde_json::Map<String, serde_json::Value> {
+    let eis_loop = fields.get("evento").and_then(serde_json::Value::as_str) == Some("eis.loop");
     fields
         .into_iter()
         .filter_map(|(key, value)| {
             if !allowed.contains(&key.as_str()) {
                 return None;
+            }
+            if key == "erro" {
+                // Só o evento deste objeto autoriza categorias fixas, nunca texto livre.
+                let category = value.as_str().filter(|text| {
+                    eis_loop
+                        && matches!(
+                            *text,
+                            "event"
+                                | "parse"
+                                | "request"
+                                | "handshake"
+                                | "interface_version"
+                                | "io"
+                        )
+                });
+                return Some((
+                    key,
+                    serde_json::Value::String(category.unwrap_or(LOG_TEXT_OMITTED).into()),
+                ));
             }
             redact_log_value(&key, value, counts).map(|value| (key, value))
         })
@@ -937,6 +1012,12 @@ fn redact_log_value(
     counts: &mut RedactionCounts,
 ) -> Option<serde_json::Value> {
     use serde_json::Value;
+    if matches!(key, "dispositivo" | "dispositivos") {
+        return value.as_u64().map(Value::from);
+    }
+    if matches!(key, "acao" | "capacidades") && !value.is_string() {
+        return None;
+    }
     let identity = match key {
         "host" => Some(("<dispositivo>", RedactionKind::DeviceName)),
         "peer" | "id" => Some(("<id>", RedactionKind::PeerId)),
