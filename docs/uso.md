@@ -59,7 +59,7 @@ Para testar o módulo desligado, encerre o agente de `b` com Ctrl+C, defina `cli
 
 ## Solução de problemas
 
-Os comportamentos abaixo são os previstos para a v0.5.3, ainda em preparação. Não houve validação em GNOME, Windows ou rede reais.
+Os comportamentos abaixo valem a partir da v0.5.3. Não houve validação em GNOME, Windows ou rede reais.
 
 **O mouse não volta ao PC.** O PC espera resposta do notebook e, depois de cerca de 2 s sem resposta válida, encerra a sessão e devolve o controle a ele mesmo. Nessa hora o PC notifica `Controle devolvido a este computador`, com o motivo: daí em diante as teclas são digitadas no próprio PC, então confira a janela antes de continuar. O aviso chega depois da devolução e depende das notificações do sistema; o motivo também fica no app, em Último bloqueio registrado. No notebook, entrada que não pode ser aplicada também encerra a sessão, em vez de seguir sem aplicar. A exceção é a falta apenas de teclado, tratada no caso seguinte: nela o mouse continua. A devolução do controle é local: se o notebook estiver inacessível, a soltura do outro lado é uma tentativa e pode não chegar. Espere a sessão encerrar sozinha. Confira que os dois apps estão abertos e na mesma rede. Abra **Diagnóstico** e veja o log; o passo a passo está em [verificar por log](verificar-por-log.md).
 

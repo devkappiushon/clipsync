@@ -20,7 +20,7 @@ registrar({
     mesh: malha(),
     modules: { ...estado.modulos },
     input_supported: true,
-    version: "0.5.2",
+    version: "0.5.3",
     platform: plataforma,
     features: features(),
     traversal: travessiaAtual(),

@@ -2,7 +2,18 @@
 
 Todas as versões publicadas do ClipSync, da mais nova para a mais antiga. Cada release no GitHub traz o app de desktop (Linux: AppImage e `.deb`; Windows: `setup.exe` e `.msi`), a linha de comando (`.tar.gz` e `.zip`) e o `SHA256SUMS`. Nenhuma versão declara a travessia física do mouse entre máquinas reais como comprovada; veja [pendências da v0.5.0](docs/pendencias-v0.5.0.md).
 
-## Não publicado
+## [v0.5.3](https://github.com/devkappiushon/clipsync/releases/tag/v0.5.3) · 13/11/2026
+
+O PC devolve o controle sozinho quando o notebook para de responder, e avisa. [Notas completas](docs/releases/v0.5.3.md).
+
+- **O PC devolve o mouse e o teclado sozinho.** O PC pergunta ao notebook a cada 0,5 s. Sem resposta válida por cerca de 2 s, encerra a sessão e solta a captura, devolvendo o controle à própria máquina. A soltura no notebook é uma tentativa e pode não chegar se ele estiver inacessível. No notebook, entrada que não pode ser aplicada encerra a sessão em vez de continuar sem aplicar, com a exceção da falta de teclado descrita no item seguinte.
+- **Aviso quando o controle volta sozinho.** Ao devolver o controle, o PC notifica `Controle devolvido a este computador`, com o motivo, e lembra que as próximas teclas serão digitadas nele. O aviso sai depois da devolução, depende da consulta de estado de 1 s e das notificações do sistema, e não impede a digitação na janela errada.
+- **Teclado indisponível não derruba mais o mouse.** Teclas do episódio são descartadas e contadas, sem repetição depois. O mouse continua. A interface do notebook recebe o aviso `Teclado indisponível neste computador: as teclas não estão sendo aplicadas` após o primeiro descarte, e as solturas pendentes saem quando o teclado volta. A apresentação na janela ainda não foi conferida.
+- **Registro do ciclo dos dispositivos de entrada no notebook.** O log passa a ter `eis.device` e `eis.loop`, só com ações, capacidades e contagens, para separar PC de notebook quando o teclado não responde. Nenhuma tecla ou código de tecla é registrado.
+- **Reencontro pelo nome com cache separado.** O endereço achado fica em `known-addrs.toml`, ao lado do pareamento, e o `peers.toml` não muda. Outro aparelho no endereço em cache só descarta o cache. Os endereços respondidos são tentados em rodízio, com espera curta, e só o nome de um rótulo é consultado, como `NOME` e `NOME.local`.
+- **Regra do UFW restrita à rede local.** [Instalar](docs/instalar.md#rede-e-firewall) passa a recomendar a regra do UFW restrita à faixa da rede local, no lugar da regra ampla da v0.5.2.
+
+Ressalvas: a causa do teclado mudo na primeira travessia não foi provada; nada foi validado em GNOME, Windows ou rede reais; endereço que a v0.5.2 tenha gravado errado não é saneado, e o caso afetado exige parear de novo. O gancho do Windows que para de enviar (F3) não está corrigido nesta versão. A notificação de retorno não foi vista no Windows real nem com a janela minimizada.
 
 ## [v0.5.2](https://github.com/devkappiushon/clipsync/releases/tag/v0.5.2) · 11/11/2026
 

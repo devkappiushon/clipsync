@@ -1,18 +1,18 @@
 # Instalar
 
-Guia para instalar a v0.5.2 publicada no Linux e no Windows. Para o primeiro uso depois de instalar, veja [uso](uso.md). Limites de plataforma e avisos de segurança ficam em [limitações](limitacoes.md).
+Guia para instalar a v0.5.3 publicada no Linux e no Windows. Para o primeiro uso depois de instalar, veja [uso](uso.md). Limites de plataforma e avisos de segurança ficam em [limitações](limitacoes.md).
 
 ## Baixar
 
-Baixe a [v0.5.2](https://github.com/devkappiushon/clipsync/releases/tag/v0.5.2). Cada release traz seis pacotes e o `SHA256SUMS`:
+Baixe a [v0.5.3](https://github.com/devkappiushon/clipsync/releases/tag/v0.5.3). Cada release traz seis pacotes e o `SHA256SUMS`:
 
-- `clipsync-app-v0.5.2-linux-x86_64.AppImage` e `clipsync-app-v0.5.2-linux-amd64.deb`: app de desktop no Linux.
-- `clipsync-app-v0.5.2-windows-x86_64-setup.exe` e `clipsync-app-v0.5.2-windows-x86_64.msi`: app de desktop no Windows.
-- `clipsync-v0.5.2-linux-x86_64.tar.gz` e `clipsync-v0.5.2-windows-x86_64.zip`: só a linha de comando (`clipsync`), com o README.
+- `clipsync-app-v0.5.3-linux-x86_64.AppImage` e `clipsync-app-v0.5.3-linux-amd64.deb`: app de desktop no Linux.
+- `clipsync-app-v0.5.3-windows-x86_64-setup.exe` e `clipsync-app-v0.5.3-windows-x86_64.msi`: app de desktop no Windows.
+- `clipsync-v0.5.3-linux-x86_64.tar.gz` e `clipsync-v0.5.3-windows-x86_64.zip`: só a linha de comando (`clipsync`), com o README.
 
 Os pacotes do app e da CLI são separados. Para `clipsync status`, `diagnose` e os comandos de teste, baixe também o tar.gz no Linux ou o zip no Windows.
 
-Confira antes de executar (troque `v0.5.2` pela tag que você baixou):
+Confira antes de executar (troque `v0.5.3` pela tag que você baixou):
 
 ```sh
 # Linux
@@ -21,7 +21,7 @@ sha256sum -c SHA256SUMS --ignore-missing
 
 ```powershell
 # Windows (PowerShell): compare com a linha do pacote em SHA256SUMS
-Get-FileHash .\clipsync-app-v0.5.2-windows-x86_64-setup.exe -Algorithm SHA256
+Get-FileHash .\clipsync-app-v0.5.3-windows-x86_64-setup.exe -Algorithm SHA256
 ```
 
 O `--ignore-missing` confere somente os arquivos presentes na pasta; sucesso com três pacotes não valida os seis. O script do AppImage executa o arquivo para extrair o ícone, então confira o hash antes de rodá-lo.
@@ -35,7 +35,7 @@ O app traz as telas e o agente no mesmo processo, com ícone na bandeja. Fechar 
 Com o AppImage, sem sudo, a partir da raiz do repositório:
 
 ```sh
-scripts/instalar-app-linux.sh ~/Downloads/clipsync-app-v0.5.2-linux-x86_64.AppImage
+scripts/instalar-app-linux.sh ~/Downloads/clipsync-app-v0.5.3-linux-x86_64.AppImage
 ```
 
 O script fica no repositório, não no release: ele copia o AppImage para `~/.local/bin/clipsync-app.AppImage` e cria o atalho "ClipSync" no menu de aplicativos. Sem o clone, copie o AppImage para `~/.local/bin`, marque como executável e crie o atalho à mão, ou use o `.deb`. Rodar de novo com um AppImage mais novo atualiza.
@@ -45,7 +45,7 @@ O app precisa do WebKitGTK 4.1. Se o AppImage não abrir por falta de FUSE, inst
 Com o `.deb` (o pacote se chama `clip-sync` e depende de `libwebkit2gtk-4.1-0` e `libgtk-3-0`):
 
 ```sh
-sudo apt install ./clipsync-app-v0.5.2-linux-amd64.deb
+sudo apt install ./clipsync-app-v0.5.3-linux-amd64.deb
 ```
 
 ### Windows
