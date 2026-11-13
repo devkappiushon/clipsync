@@ -1,18 +1,18 @@
 # Instalar
 
-Guia para instalar a v0.5.0 publicada no Linux e no Windows. Para o primeiro uso depois de instalar, veja [uso](uso.md). Limites de plataforma e avisos de segurança ficam em [limitações](limitacoes.md).
+Guia para instalar a v0.5.2 publicada no Linux e no Windows. Para o primeiro uso depois de instalar, veja [uso](uso.md). Limites de plataforma e avisos de segurança ficam em [limitações](limitacoes.md).
 
 ## Baixar
 
-Baixe a [v0.5.0](https://github.com/devkappiushon/clipsync/releases/tag/v0.5.0). Cada release traz seis pacotes e o `SHA256SUMS`:
+Baixe a [v0.5.2](https://github.com/devkappiushon/clipsync/releases/tag/v0.5.2). Cada release traz seis pacotes e o `SHA256SUMS`:
 
-- `clipsync-app-v0.5.0-linux-x86_64.AppImage` e `clipsync-app-v0.5.0-linux-amd64.deb`: app de desktop no Linux.
-- `clipsync-app-v0.5.0-windows-x86_64-setup.exe` e `clipsync-app-v0.5.0-windows-x86_64.msi`: app de desktop no Windows.
-- `clipsync-v0.5.0-linux-x86_64.tar.gz` e `clipsync-v0.5.0-windows-x86_64.zip`: só a linha de comando (`clipsync`), com o README.
+- `clipsync-app-v0.5.2-linux-x86_64.AppImage` e `clipsync-app-v0.5.2-linux-amd64.deb`: app de desktop no Linux.
+- `clipsync-app-v0.5.2-windows-x86_64-setup.exe` e `clipsync-app-v0.5.2-windows-x86_64.msi`: app de desktop no Windows.
+- `clipsync-v0.5.2-linux-x86_64.tar.gz` e `clipsync-v0.5.2-windows-x86_64.zip`: só a linha de comando (`clipsync`), com o README.
 
 Os pacotes do app e da CLI são separados. Para `clipsync status`, `diagnose` e os comandos de teste, baixe também o tar.gz no Linux ou o zip no Windows.
 
-Confira antes de executar (troque `v0.5.0` pela tag que você baixou):
+Confira antes de executar (troque `v0.5.2` pela tag que você baixou):
 
 ```sh
 # Linux
@@ -21,7 +21,7 @@ sha256sum -c SHA256SUMS --ignore-missing
 
 ```powershell
 # Windows (PowerShell): compare com a linha do pacote em SHA256SUMS
-Get-FileHash .\clipsync-app-v0.5.0-windows-x86_64-setup.exe -Algorithm SHA256
+Get-FileHash .\clipsync-app-v0.5.2-windows-x86_64-setup.exe -Algorithm SHA256
 ```
 
 O `--ignore-missing` confere somente os arquivos presentes na pasta; sucesso com três pacotes não valida os seis. O script do AppImage executa o arquivo para extrair o ícone, então confira o hash antes de rodá-lo.
@@ -35,7 +35,7 @@ O app traz as telas e o agente no mesmo processo, com ícone na bandeja. Fechar 
 Com o AppImage, sem sudo, a partir da raiz do repositório:
 
 ```sh
-scripts/instalar-app-linux.sh ~/Downloads/clipsync-app-v0.5.0-linux-x86_64.AppImage
+scripts/instalar-app-linux.sh ~/Downloads/clipsync-app-v0.5.2-linux-x86_64.AppImage
 ```
 
 O script fica no repositório, não no release: ele copia o AppImage para `~/.local/bin/clipsync-app.AppImage` e cria o atalho "ClipSync" no menu de aplicativos. Sem o clone, copie o AppImage para `~/.local/bin`, marque como executável e crie o atalho à mão, ou use o `.deb`. Rodar de novo com um AppImage mais novo atualiza.
@@ -45,7 +45,7 @@ O app precisa do WebKitGTK 4.1. Se o AppImage não abrir por falta de FUSE, inst
 Com o `.deb` (o pacote se chama `clip-sync` e depende de `libwebkit2gtk-4.1-0` e `libgtk-3-0`):
 
 ```sh
-sudo apt install ./clipsync-app-v0.5.0-linux-amd64.deb
+sudo apt install ./clipsync-app-v0.5.2-linux-amd64.deb
 ```
 
 ### Windows
@@ -56,13 +56,28 @@ Rode o `setup.exe` (ou o `.msi`). O workflow e o manifesto não configuram assin
 
 As máquinas conversam por UDP na porta `47800` (ou na que estiver em `listen` no `config.toml`). Basta um dos lados conseguir chamar o outro, mas com a porta fechada nos dois sentidos a ligação depende só de quem chama.
 
-No Ubuntu com UFW ativo, a entrada vem bloqueada. Libere a porta para a sua rede:
+No Ubuntu com UFW ativo, a entrada vem bloqueada. Libere a porta só para a sua rede local, trocando a faixa pela sua. O comando `ip route | grep -v default` mostra a faixa na primeira coluna, por exemplo `192.168.1.0/24`:
 
 ```sh
-sudo ufw allow 47800/udp
+sudo ufw allow from 192.168.1.0/24 to any port 47800 proto udp
 ```
 
-Sem essa regra, o Linux só se conecta quando ele mesmo chama o outro computador. Se o IP do outro mudar (DHCP), a partir da v0.5.2 o ClipSync procura o par pelo nome da máquina (`NOME` e `NOME.local`) e grava o endereço novo; em versões anteriores era preciso parear de novo. A busca pelo nome só funciona quando o nome do dispositivo no ClipSync é o nome da máquina na rede, que é o padrão.
+A regra sem faixa (`sudo ufw allow 47800/udp`) aceita qualquer origem que chegue até a máquina, não só a rede de casa. Se você já a aplicou (era a orientação da v0.5.2), remova e confira o que ficou, inclusive as linhas `(v6)`:
+
+```sh
+sudo ufw delete allow 47800/udp
+sudo ufw status numbered
+```
+ Com a porta aberta, quem alcança a máquina consegue iniciar o aperto de mão e ver o certificado público do ClipSync, mas não usa teclado, mouse nem clipboard sem estar pareado.
+
+Sem regra nenhuma, o Linux só se conecta quando ele mesmo chama o outro computador.
+
+Se o IP do outro mudar (DHCP), a partir da v0.5.2 o ClipSync procura o par pelo nome da máquina. A partir da v0.5.3:
+
+- O endereço achado fica num cache ao lado do pareamento (`known-addrs.toml`). O `peers.toml` não é alterado pelo que a rede respondeu.
+- O par só é aceito no endereço novo depois de provar a chave do pareamento. Se outro aparelho responder no endereço em cache, o cache é descartado e o par não fica bloqueado.
+- A busca usa o resolvedor do sistema com `NOME` e `NOME.local`. O nome do dispositivo sai como consulta na rede e pode chegar ao servidor DNS configurado. Nome com ponto, espaço ou acento não é consultado.
+- A busca só funciona quando o nome do dispositivo no ClipSync é o nome da máquina na rede, que é o padrão.
 
 ## Linha de comando
 

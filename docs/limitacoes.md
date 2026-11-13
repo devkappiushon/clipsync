@@ -1,6 +1,6 @@
 # Limitações
 
-A v0.5.0 está publicada no GitHub. Publicar não comprova o funcionamento físico. Este guia reúne o que ainda falta validar e os avisos por plataforma. Os detalhes de instalação ficam em [instalar](instalar.md) e os passos de uso em [uso](uso.md).
+A v0.5.2 está publicada no GitHub. Publicar não comprova o funcionamento físico. Este guia reúne o que ainda falta validar e os avisos por plataforma. Os detalhes de instalação ficam em [instalar](instalar.md) e os passos de uso em [uso](uso.md).
 
 O clipboard transporta apenas texto. Não há suporte a imagens, arquivos ou rich text.
 
@@ -42,8 +42,8 @@ A conexão aceita protocolo 1 ou posterior; a organização por monitor exige pr
 
 ## O que falta validar
 
-A v0.5.0 não declara a travessia física A ↔ notebook ↔ B, a posição real do cursor nem a soltura de teclas e botões. Também faltam validação da interação Tauri nas duas máquinas, de escalas e coordenadas negativas, de pausa e revogação, de UAC e tela bloqueada, de desconexão e de permissões reais. Leitor de tela e zoom do app exigem verificação própria. O incidente anterior de teclado permanece adiado.
+A publicação da v0.5.2 não comprova a travessia física A ↔ notebook ↔ B, a posição real do cursor nem a soltura de teclas e botões. Também faltam validação da interação Tauri nas duas máquinas, de escalas e coordenadas negativas, de pausa e revogação, de UAC e tela bloqueada, de desconexão e de permissões reais. Leitor de tela e zoom do app exigem verificação própria. O teclado na primeira travessia ainda exige validação física.
 
-Testes automáticos, adaptadores falsos, CI e simulador não substituem Windows e GNOME físicos. As pendências da v0.5.0 estão em [pendências da v0.5.0](pendencias-v0.5.0.md); as da v0.4.0 continuam em [pendências da v0.4.0](pendencias-v0.4.0.md), e as notas da versão anterior estão em [v0.4.0](releases/v0.4.0.md).
+Testes automáticos, adaptadores falsos, CI e simulador não substituem Windows e GNOME físicos. As pendências da v0.5.0 estão em [pendências da v0.5.0](pendencias-v0.5.0.md); as da v0.4.0 continuam em [pendências da v0.4.0](pendencias-v0.4.0.md), e as notas históricas estão em [v0.4.0](releases/v0.4.0.md).
 
 O achado menor T4-SEG-01 continua diferido: há uma corrida local entre verificar e abrir o caminho de backup, sem vetor remoto demonstrado nem bypass da recuperação. Esta publicação não encerra todas as pendências de segurança; o histórico está em [segurança](seguranca.md).
