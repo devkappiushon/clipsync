@@ -289,6 +289,9 @@ struct State {
     authority: capture::HostCursor,
     last_event: Option<String>,
     last_block: Option<String>,
+    control_returned: Option<(PeerId, &'static str)>,
+    // Contador local à vida do módulo; recuperação não reinicia a identidade.
+    control_returned_id: u64,
     layout: Option<Layout>,
     organization: OrganizationRuntime,
     layout_path: Option<PathBuf>,
@@ -360,6 +363,8 @@ impl Module for InputModule {
             paused,
             last_event: None,
             last_block: None,
+            control_returned: None,
+            control_returned_id: 0,
             layout: me.layout,
             organization: me.organization,
             layout_path: me.layout_path,
@@ -553,8 +558,35 @@ impl State {
     async fn on_note(&mut self, n: Note) {
         match n {
             Note::Event(t) => self.last_event = Some(t),
-            Note::Block(t) => self.last_block = Some(t),
-            Note::Active(p) => self.active_peer = p,
+            Note::Block(t) => {
+                // O retorno tem estado próprio: não sobrescreve um motivo independente.
+                if self.control_returned.is_none() || !msg::is_control_returned(&t) {
+                    self.last_block = Some(t);
+                }
+            }
+            Note::ControlReturned(peer, text) => {
+                self.control_returned_id = self.control_returned_id.wrapping_add(1).max(1);
+                self.control_returned = Some((peer, text));
+            }
+            Note::Active(p) => {
+                self.active_peer = p;
+                if let Some((peer, text)) = self.control_returned
+                    && p == Some(peer)
+                {
+                    self.control_returned = None;
+                    // A recusa legada escreve também o motivo curto da mesma falha.
+                    // A recuperação remove essa causa, preservando motivos independentes.
+                    if self
+                        .last_block
+                        .as_deref()
+                        .is_some_and(msg::is_control_returned)
+                        || (text == msg::CONTROL_RETURNED_APPLY_FAILED
+                            && self.last_block.as_deref() == Some(RejectReason::ApplyFailed.pt()))
+                    {
+                        self.last_block = None;
+                    }
+                }
+            }
             Note::PrepareInventory => {
                 if !self.organization.inventory_blocked {
                     self.begin_preparation(None).await;
@@ -1372,6 +1404,12 @@ impl State {
                 None => reason.to_owned(),
             });
         }
+        if let Some((_, text)) = self.control_returned {
+            block = Some(match block {
+                Some(other) => format!("{text} · {other}"),
+                None => text.to_owned(),
+            });
+        }
         ModuleStatus {
             kind: ModuleKind::Input,
             enabled: true,
@@ -1379,6 +1417,7 @@ impl State {
             authorized_peers: authorized,
             last_event: self.last_event.clone(),
             last_block: block,
+            control_returned_id: self.control_returned_id,
         }
     }
 
@@ -2592,4 +2631,130 @@ fn log_routes(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod backpressure {
     include!("../tests/support/module_backpressure.rs");
+
+    struct KeyboardUnavailable;
+    #[async_trait::async_trait]
+    impl EmulateAdapter for KeyboardUnavailable {
+        fn name(&self) -> &'static str {
+            "keyboard-unavailable"
+        }
+        fn block_reason(&self) -> Option<&'static str> {
+            Some(msg::KEYBOARD_UNAVAILABLE)
+        }
+        async fn start(&mut self) -> Result<(), InputError> {
+            Ok(())
+        }
+        async fn emit(&mut self, _: &[InputEvent]) -> Result<(), InputError> {
+            Ok(())
+        }
+        async fn release_all(&mut self) -> Result<(), InputError> {
+            Ok(())
+        }
+        async fn stop(&mut self) -> Result<(), InputError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a1_return_identity_changes_for_every_note_and_survives_recovery() {
+        let hub = MemHub::new();
+        let node = hub.add_node(
+            "a1",
+            ModuleSet {
+                input: true,
+                clipboard: false,
+            },
+        );
+        let mut state = state(node.host);
+        let initial = serde_json::to_value(state.status()).unwrap();
+        assert_eq!(initial["control_returned_id"], 0);
+        let peer = PeerId([1; 32]);
+        for (index, (from, text)) in [
+            (peer, msg::CONTROL_RETURNED_APPLY_FAILED),
+            (peer, msg::CONTROL_RETURNED_APPLY_FAILED),
+            (PeerId([2; 32]), msg::CONTROL_RETURNED_APPLY_FAILED),
+            (peer, msg::CONTROL_RETURNED_UNRESPONSIVE),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            state.on_note(Note::ControlReturned(from, text)).await;
+            let failed = serde_json::to_value(state.status()).unwrap();
+            assert_eq!(failed["control_returned_id"], index + 1);
+            assert_eq!(failed["last_block"], text);
+            assert_eq!(serde_json::to_value(state.status()).unwrap(), failed);
+            state.on_note(Note::Active(Some(from))).await;
+            let recovered = serde_json::to_value(state.status()).unwrap();
+            assert_eq!(recovered["control_returned_id"], index + 1);
+            assert!(recovered["last_block"].is_null());
+        }
+    }
+
+    #[test]
+    fn a1_legacy_json_status_defaults_return_identity_to_zero() {
+        let old = serde_json::json!({
+            "kind": ModuleKind::Input, "enabled": true, "adapter": null,
+            "authorized_peers": [], "last_event": null, "last_block": null
+        });
+        let status: ModuleStatus = serde_json::from_value(old).unwrap();
+        assert_eq!(
+            serde_json::to_value(status).unwrap()["control_returned_id"],
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn a1_return_preserves_other_blocks_and_keyboard_until_same_peer_recovers() {
+        let hub = MemHub::new();
+        let node = hub.add_node(
+            "a1",
+            ModuleSet {
+                input: true,
+                clipboard: false,
+            },
+        );
+        let mut state = state(node.host);
+        let peer = PeerId([1; 32]);
+        state.emu = Box::new(KeyboardUnavailable);
+        for text in [
+            msg::CONTROL_RETURNED_UNRESPONSIVE,
+            msg::CONTROL_RETURNED_APPLY_FAILED,
+        ] {
+            state.on_note(Note::Block("motivo anterior".into())).await;
+            state.on_note(Note::ControlReturned(peer, text)).await;
+            state.on_note(Note::Block(text.into())).await;
+            assert_eq!(
+                state.status().last_block,
+                Some(format!(
+                    "{text} · motivo anterior · {}",
+                    msg::KEYBOARD_UNAVAILABLE
+                )),
+                "não sobrescrever motivo anterior nem ocultar teclado"
+            );
+            state.last_block = None;
+            assert_eq!(
+                state.status().last_block,
+                Some(format!("{text} · {}", msg::KEYBOARD_UNAVAILABLE)),
+                "não duplicar retorno nem ocultar teclado"
+            );
+            state.on_note(Note::Block("outro motivo".into())).await;
+            let expected = Some(format!(
+                "{text} · outro motivo · {}",
+                msg::KEYBOARD_UNAVAILABLE
+            ));
+            assert_eq!(state.status().last_block, expected);
+            state.on_note(Note::Active(Some(PeerId([2; 32])))).await;
+            assert_eq!(
+                state.status().last_block,
+                expected,
+                "outro par não limpa aviso"
+            );
+            state.on_note(Note::Active(Some(peer))).await;
+            assert_eq!(
+                state.status().last_block,
+                Some(format!("outro motivo · {}", msg::KEYBOARD_UNAVAILABLE)),
+                "recuperação tira só retorno"
+            );
+        }
+    }
 }

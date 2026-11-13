@@ -455,6 +455,7 @@ impl Agent {
                 authorized_peers: Vec::new(),
                 last_event: None,
                 last_block: None,
+                control_returned_id: 0,
             };
         }
         match self.ask_module(kind, ModuleCommand::Status).await {
@@ -469,6 +470,7 @@ impl Agent {
                 authorized_peers: self.authorized(kind),
                 last_event: None,
                 last_block: Some(msg::MODULE_TIMEOUT.to_string()),
+                control_returned_id: 0,
             },
         }
     }

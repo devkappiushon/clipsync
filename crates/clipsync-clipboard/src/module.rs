@@ -655,6 +655,7 @@ impl State {
                         .collect(),
                     last_event: s.last_event.clone(),
                     last_block: s.last_block.clone(),
+                    control_returned_id: 0,
                 }));
             }
             ModuleCommand::ClipInbox => {

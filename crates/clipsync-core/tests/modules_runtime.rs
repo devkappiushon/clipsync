@@ -264,6 +264,7 @@ impl clipsync_proto::Module for SlowShutdown {
                             authorized_peers: vec![],
                             last_event: None,
                             last_block: None,
+                            control_returned_id: 0,
                         },
                     ));
                 }
@@ -351,6 +352,7 @@ impl clipsync_proto::Module for LateBootstrap {
                             authorized_peers: vec![],
                             last_event: None,
                             last_block: None,
+                            control_returned_id: 0,
                         },
                     ));
                 }

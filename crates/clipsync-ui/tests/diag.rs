@@ -95,6 +95,7 @@ async fn support_preview_and_export_redact_every_observation_of_the_same_peer() 
             authorized_peers: vec![],
             last_event: Some("endereço observado 2001:db8::99".into()),
             last_block: None,
+            control_returned_id: 0,
         }],
         recent_blocks: vec![
             block(

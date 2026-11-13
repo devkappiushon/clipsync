@@ -31,7 +31,7 @@ impl NotifyPrefs {
         match kind {
             "item_received" => self.item_received,
             "device_connected" => self.device_connected,
-            "block" | "device_removed" => self.block,
+            "block" | "device_removed" | "control_returned" => self.block,
             _ => false,
         }
     }

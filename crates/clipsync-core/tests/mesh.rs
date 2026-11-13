@@ -118,6 +118,7 @@ impl Module for Probe {
                         authorized_peers: vec![],
                         last_event: None,
                         last_block: None,
+                        control_returned_id: 0,
                     }));
                 }
                 ModuleInput::Reliable {
@@ -192,6 +193,7 @@ impl Module for AskOnStart {
                         authorized_peers: vec![],
                         last_event: None,
                         last_block: None,
+                        control_returned_id: 0,
                     }));
                 }
                 _ => {}
@@ -1284,6 +1286,7 @@ impl Module for Blocking {
                         authorized_peers: vec![],
                         last_event: None,
                         last_block,
+                        control_returned_id: 0,
                     }));
                 }
                 _ => {}

@@ -38,6 +38,7 @@ impl Module for InputControlavel {
                         authorized_peers: vec![],
                         last_event: None,
                         last_block: None,
+                        control_returned_id: 0,
                     }));
                 }
                 ModuleInput::Command { cmd, reply } => {

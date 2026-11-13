@@ -141,6 +141,7 @@ fn attempt_notification<E>(
     if !state.notify_prefs().allows(kind) {
         return None;
     }
+    // `control_returned` é imediato; só o resumo genérico participa desta janela.
     if kind == "block" && !state.allow_block_notice(now) {
         return None;
     }
@@ -151,6 +152,29 @@ fn attempt_notification<E>(
 mod tests {
     use super::*;
 
+    #[test]
+    fn a1_return_notice_bypasses_throttle_but_obeys_preference() {
+        let state = AppState::new(false);
+        let now = std::time::Instant::now();
+        let calls = std::cell::Cell::new(0);
+        let send = || {
+            calls.set(calls.get() + 1);
+            Ok::<(), ()>(())
+        };
+        assert!(attempt_notification(&state, "control_returned", now, send).is_none());
+        state.set_notify_prefs(NotifyPrefs {
+            block: true,
+            ..NotifyPrefs::default()
+        });
+        assert!(attempt_notification(&state, "block", now, send).is_some());
+        for _ in 0..2 {
+            assert!(attempt_notification(&state, "control_returned", now, send).is_some());
+        }
+        assert!(attempt_notification(&state, "block", now, send).is_none());
+        state.set_notify_prefs(NotifyPrefs::default());
+        assert!(attempt_notification(&state, "control_returned", now, send).is_none());
+        assert_eq!(calls.get(), 3);
+    }
     #[test]
     fn b01_duplicate_candidates_and_failed_show_share_one_window() {
         let state = AppState::new(false);

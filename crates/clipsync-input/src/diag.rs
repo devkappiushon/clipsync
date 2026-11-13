@@ -307,6 +307,7 @@ mod context_tests {
                 authorized_peers: vec![],
                 last_event: None,
                 last_block: None,
+                control_returned_id: 0,
             }],
             recent_blocks: vec![],
             recent_removals: vec![],

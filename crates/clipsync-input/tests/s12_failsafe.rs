@@ -17,6 +17,31 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+const SILENCIO: &str = "Controle devolvido a este computador: o outro parou de responder. As próximas teclas serão digitadas aqui.";
+const FALHA: &str = "Controle devolvido a este computador: o outro não aceitou o mouse e o teclado. As próximas teclas serão digitadas aqui.";
+
+async fn aviso(node: &Node, expected: Option<&str>) {
+    let start = Instant::now();
+    loop {
+        let ModuleReply::Status(status) = command(node, ModuleCommand::Status).await else {
+            panic!("status ausente")
+        };
+        let observed = status
+            .last_block
+            .as_deref()
+            .map(|text| text.split(" · ").next().unwrap_or(text));
+        if observed == expected {
+            return;
+        }
+        assert!(
+            start.elapsed() < Duration::from_millis(500),
+            "aviso esperado {expected:?}, obtido {:?}",
+            status.last_block
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
 const INPUT: ModuleSet = ModuleSet {
     clipboard: false,
     input: true,
@@ -221,6 +246,12 @@ async fn silencio_de_stats_libera_captura_em_dois_segundos() {
     })
     .await;
     assert_eq!(log.todos("session.closed").len(), 1);
+    aviso(&a, Some(SILENCIO)).await;
+    // Reconexão/resposta sozinha não apaga a mudança de destino da digitação.
+    b.respond.store(true, Ordering::SeqCst);
+    aviso(&a, Some(SILENCIO)).await;
+    open(&a).await;
+    aviso(&a, None).await;
 }
 
 #[tokio::test]
@@ -269,6 +300,15 @@ impl EmulateAdapter for FalhaEmit {
 
 #[tokio::test]
 async fn falha_emit_legada_recusa_e_solta_tecla_e_botao() {
+    falha_emit_recusa_e_recupera(1).await;
+}
+
+#[tokio::test]
+async fn falha_emit_v3_avisa_e_recupera() {
+    falha_emit_recusa_e_recupera(3).await;
+}
+
+async fn falha_emit_recusa_e_recupera(version: u16) {
     let log = logs::capturar();
     let hub = MemHub::new();
     let (emu_a, _) = FakeEmulate::new();
@@ -283,9 +323,9 @@ async fn falha_emit_legada_recusa_e_solta_tecla_e_botao() {
             fail: fail.clone(),
         }),
     );
-    // v1 força Rejected, sem Refused v3 ou inventário/rota v4.
-    hub.set_remote_version(id("a"), 1);
-    hub.set_remote_version(id("b"), 1);
+    // Cobre tanto Rejected v1 quanto Refused correlacionado v3.
+    hub.set_remote_version(id("a"), version);
+    hub.set_remote_version(id("b"), version);
     hub.link(id("a"), id("b"), CONTROL, CONTROL);
     open(&a).await;
     a.cap.push(InputEvent::Key {
@@ -315,6 +355,10 @@ async fn falha_emit_legada_recusa_e_solta_tecla_e_botao() {
     assert!(a.cap.released() > released);
     assert_eq!(handle.pressed_now(), 0);
     assert!(handle.release_calls() > releases_remote);
+    aviso(&a, Some(FALHA)).await;
+    fail.store(false, Ordering::SeqCst);
+    open(&a).await;
+    aviso(&a, None).await;
     let refused = log.primeiro("session.refused").unwrap();
     assert_eq!(refused.campo("motivo"), Some("apply_failed"));
     assert!(
@@ -634,6 +678,7 @@ async fn abertura_por_barreira_tem_prazo_mesmo_com_limpeza_e_envio_bloqueados() 
         "captura física em opening precisa voltar em cerca de 2 s, sem esperar limpeza + envio"
     );
     assert!(closed(&log, "peer_unresponsive"));
+    aviso(&a, Some(SILENCIO)).await;
     assert_eq!(
         network.blocked_enters.load(Ordering::SeqCst),
         1,

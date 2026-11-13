@@ -1,5 +1,27 @@
 //! User-facing text (pt-BR). Code, identifiers and comments stay in English.
 use clipsync_proto::RejectReason;
+pub const CONTROL_RETURNED_UNRESPONSIVE: &str = "Controle devolvido a este computador: o outro parou de responder. As próximas teclas serão digitadas aqui.";
+pub const CONTROL_RETURNED_APPLY_FAILED: &str = "Controle devolvido a este computador: o outro não aceitou o mouse e o teclado. As próximas teclas serão digitadas aqui.";
+
+/// Lista fechada: só estes avisos podem virar notificação imediata de retorno.
+pub fn is_control_returned(text: &str) -> bool {
+    matches!(
+        text,
+        CONTROL_RETURNED_UNRESPONSIVE | CONTROL_RETURNED_APPLY_FAILED
+    )
+}
+
+/// Extrai somente a frase fixa inicial do estado composto (` · ` separa os motivos).
+/// O restante nunca é encaminhado na notificação de retorno.
+pub fn control_returned_notice(text: &str) -> Option<&'static str> {
+    [CONTROL_RETURNED_UNRESPONSIVE, CONTROL_RETURNED_APPLY_FAILED]
+        .into_iter()
+        .find(|phrase| {
+            text.strip_prefix(phrase)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(" · "))
+        })
+}
+
 pub const LOOPBACK_BUSY: &str = "já existe um teste de entrada em andamento";
 pub const UNSUPPORTED_COMMAND: &str = "comando não suportado pelo módulo de entrada";
 pub const PEER_UNKNOWN: &str = "par desconhecido ou sem permissão";

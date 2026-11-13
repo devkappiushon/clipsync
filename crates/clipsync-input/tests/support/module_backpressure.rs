@@ -289,6 +289,8 @@ fn state(host: Arc<dyn ModuleHost>) -> State {
         paused: false,
         last_event: None,
         last_block: None,
+        control_returned: None,
+        control_returned_id: 0,
         layout: None,
         layout_path: None,
         locked: false,

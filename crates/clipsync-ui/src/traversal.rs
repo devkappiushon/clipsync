@@ -216,16 +216,25 @@ fn evaluate(
     });
     let last_block = status
         .and_then(|s| {
+            let current = s
+                .modules
+                .iter()
+                .find(|m| m.kind == ModuleKind::Input)
+                .and_then(|m| m.last_block.as_deref());
+            if current
+                .and_then(clipsync_input::msg::control_returned_notice)
+                .is_some()
+            {
+                return current;
+            }
             s.recent_blocks
                 .iter()
-                .find(|b| b.module == Some(ModuleKind::Input))
-                .map(|b| b.reason.as_str())
-                .or_else(|| {
-                    s.modules
-                        .iter()
-                        .find(|m| m.kind == ModuleKind::Input)
-                        .and_then(|m| m.last_block.as_deref())
+                .find(|b| {
+                    b.module == Some(ModuleKind::Input)
+                        && clipsync_input::msg::control_returned_notice(&b.reason).is_none()
                 })
+                .map(|b| b.reason.as_str())
+                .or(current)
         })
         .map(clean);
     Traversal {
@@ -270,6 +279,7 @@ mod tests {
                 authorized_peers: vec![],
                 last_event: None,
                 last_block: None,
+                control_returned_id: 0,
             }],
             recent_blocks: vec![],
             recent_removals: vec![],
@@ -316,6 +326,40 @@ mod tests {
             Ok(Some(l)),
             &[PeerId([2; 32]), PeerId([3; 32])],
         )
+    }
+    #[test]
+    fn a1_return_warning_uses_current_status_and_never_history() {
+        let mut s = state();
+        let phrase = "Controle devolvido a este computador: o outro parou de responder. As próximas teclas serão digitadas aqui.";
+        let l = layout(s.id, s.peers[0].id);
+        s.recent_blocks.push(BlockRecord {
+            peer: None,
+            peer_name: None,
+            module: Some(ModuleKind::Input),
+            reason: phrase.into(),
+            at_unix_ms: 1,
+            last_unix_ms: 1,
+            occurrences: 1,
+        });
+        s.modules[0].last_block = Some(phrase.into());
+        assert_eq!(
+            run(&s, Some(&input()), &l).last_block.as_deref(),
+            Some(phrase)
+        );
+        let composed = format!("{phrase} · outro motivo · teclado indisponível");
+        s.modules[0].last_block = Some(composed.clone());
+        assert_eq!(
+            run(&s, Some(&input()), &l).last_block.as_deref(),
+            Some(composed.as_str())
+        );
+        s.recent_blocks[0].reason = composed;
+        s.modules[0].last_block = None;
+        assert_eq!(run(&s, Some(&input()), &l).last_block, None);
+        s.modules[0].last_block = Some("outro bloqueio atual".into());
+        assert_eq!(
+            run(&s, Some(&input()), &l).last_block.as_deref(),
+            Some("outro bloqueio atual")
+        );
     }
     #[test]
     fn unrelated_and_revoked_links_do_not_count_as_local_output() {

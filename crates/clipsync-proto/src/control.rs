@@ -132,6 +132,9 @@ pub struct ModuleStatus {
     pub authorized_peers: Vec<String>,
     pub last_event: Option<String>,
     pub last_block: Option<String>,
+    /// Só identidade de ocorrência do retorno (0 = nenhum), nunca conteúdo.
+    #[serde(default)]
+    pub control_returned_id: u64,
 }
 
 /// `Debug` is manual: ClipSend text is redacted.

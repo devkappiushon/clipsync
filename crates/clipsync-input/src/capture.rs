@@ -203,6 +203,8 @@ pub(crate) enum Note {
     Inventory(ObservedMonitors),
     Event(String),
     Block(String),
+    /// Preserva o aviso até uma abertura bem-sucedida para este par.
+    ControlReturned(PeerId, &'static str),
     Active(Option<PeerId>),
     /// The live zones once the capture session exists, or after they changed.
     Zones(Vec<Zone>),
@@ -861,8 +863,10 @@ impl Loop {
         };
         let now = Instant::now();
         if now >= w.last_response + SESSION_RESPONSE_TIMEOUT {
+            let peer = s.peer;
             self.close_reason = Some("peer_unresponsive");
             self.end_session(true).await;
+            self.control_returned(peer, msg::CONTROL_RETURNED_UNRESPONSIVE);
             return;
         }
         if !opening && w.sending.is_none() && now >= w.next_probe {
@@ -1022,6 +1026,11 @@ impl Loop {
         if let Some(error) = snapshot.terminal_error {
             self.notes(Note::Block(msg::adapter_failed(error)));
         }
+    }
+
+    fn control_returned(&self, peer: PeerId, text: &'static str) {
+        self.notes(Note::ControlReturned(peer, text));
+        self.notes(Note::Block(text.to_owned()));
     }
 
     fn notes(&self, n: Note) {
@@ -1626,8 +1635,14 @@ impl Loop {
                     tracing::info!(evento = "session.refused", session, peer = %from, motivo = reject_code(reason), "entry refused by the peer");
                     self.close_reason = Some("refused");
                     self.end_session(false).await;
-                    let text = msg::refused_by(&self.peer_name(from), reason);
-                    self.notes(Note::Block(text.clone()));
+                    let text = if reason == RejectReason::ApplyFailed {
+                        self.control_returned(from, msg::CONTROL_RETURNED_APPLY_FAILED);
+                        msg::CONTROL_RETURNED_APPLY_FAILED.to_owned()
+                    } else {
+                        let text = msg::refused_by(&self.peer_name(from), reason);
+                        self.notes(Note::Block(text.clone()));
+                        text
+                    };
                     if self.pending.as_ref().is_some_and(|p| p.peer == from)
                         && let Some(p) = self.pending.take()
                     {
@@ -1702,7 +1717,11 @@ impl Loop {
                     tracing::info!(evento = "session.refused", session, peer = %from, motivo = reject_code(reason), "entry rejected by the peer");
                     self.close_reason = Some("refused");
                     self.end_session(false).await;
-                    self.notes(Note::Block(reason.pt().to_owned()));
+                    if reason == RejectReason::ApplyFailed {
+                        self.control_returned(from, msg::CONTROL_RETURNED_APPLY_FAILED);
+                    } else {
+                        self.notes(Note::Block(reason.pt().to_owned()));
+                    }
                 }
                 if self.pending.as_ref().is_some_and(|p| p.peer == from)
                     && let Some(p) = self.pending.take()

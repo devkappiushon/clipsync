@@ -138,7 +138,11 @@ impl BlockNotifications {
             return;
         }
         for (block, count) in deltas {
-            if count == 0 {
+            // O retorno local tem evento próprio, baseado no estado atual, sem resumo duplicado.
+            if count == 0
+                || (block.module == Some(ModuleKind::Input)
+                    && clipsync_input::msg::control_returned_notice(&block.reason).is_some())
+            {
                 continue;
             }
             self.pending_occurrences = self.pending_occurrences.saturating_add(count);
@@ -260,6 +264,8 @@ pub enum NotificationKind {
     Block,
     /// v1.16: a peer removed this device (follows `notifications.block`).
     DeviceRemoved,
+    /// Retorno local de segurança: imediato, seguindo a preferência `block`.
+    ControlReturned,
 }
 
 /// Already filtered by the preferences; never clipboard content (§12.2 rule 7).
@@ -313,6 +319,8 @@ pub(crate) struct Snapshot {
     connected: BTreeMap<PeerId, PeerConnected>,
     /// The agent's `recent_blocks`, newest first.
     blocks: Vec<BlockRecord>,
+    input_block: Option<String>,
+    control_returned_id: u64,
     /// The agent's `recent_removals` (peers that removed this device), newest first.
     removals: Vec<RemovalRecord>,
     /// The clipboard box by id (32 hex), without previews; `None` when the module is off.
@@ -388,6 +396,16 @@ impl Snapshot {
             live: o.status.is_some(),
             connected,
             blocks,
+            input_block: o
+                .status
+                .as_ref()
+                .and_then(|s| s.modules.iter().find(|m| m.kind == ModuleKind::Input))
+                .and_then(|m| m.last_block.clone()),
+            control_returned_id: o
+                .status
+                .as_ref()
+                .and_then(|s| s.modules.iter().find(|m| m.kind == ModuleKind::Input))
+                .map_or(0, |m| m.control_returned_id),
             removals,
             inbox,
             input: o.input,
@@ -413,6 +431,8 @@ impl Snapshot {
     fn retain_unobserved(&mut self, previous: &Snapshot) {
         if !self.live {
             self.blocks = previous.blocks.clone();
+            self.input_block = previous.input_block.clone();
+            self.control_returned_id = previous.control_returned_id;
             self.removals = previous.removals.clone();
         }
         if self.inbox.is_none() {
@@ -450,6 +470,25 @@ impl Snapshot {
 
     fn diff(&self, now: &Snapshot, notify: Notifications) -> Vec<UiEvent> {
         let mut out = Vec::new();
+        let previous_return = self
+            .input_block
+            .as_deref()
+            .and_then(clipsync_input::msg::control_returned_notice);
+        let current_return = now
+            .input_block
+            .as_deref()
+            .and_then(clipsync_input::msg::control_returned_notice);
+        if notify.block
+            && (self.control_returned_id != now.control_returned_id
+                || previous_return != current_return)
+            && let Some(text) = current_return
+        {
+            out.push(UiEvent::Notification(Notification {
+                kind: NotificationKind::ControlReturned,
+                title: "ClipSync".into(),
+                body: text.into(),
+            }));
+        }
         if now.traversal != self.traversal {
             out.push(UiEvent::TraversalChanged(TraversalChanged {
                 traversal: now.traversal.clone(),
@@ -601,11 +640,186 @@ mod block_notice_tests {
             live: true,
             connected: BTreeMap::new(),
             blocks,
+            input_block: None,
+            control_returned_id: 0,
             removals: vec![],
             inbox: None,
             input: None,
             traversal: crate::traversal::Traversal::default(),
         }
+    }
+    const RETURNED: &str = "Controle devolvido a este computador: o outro parou de responder. As próximas teclas serão digitadas aqui.";
+    const FAILED: &str = "Controle devolvido a este computador: o outro não aceitou o mouse e o teclado. As próximas teclas serão digitadas aqui.";
+    fn return_notices(was: &Snapshot, now: &Snapshot, enabled: bool) -> Vec<Notification> {
+        let prefs = Notifications {
+            block: enabled,
+            ..Notifications::default()
+        };
+        was.diff(now, prefs)
+            .into_iter()
+            .filter_map(|e| match e {
+                UiEvent::Notification(n)
+                    if serde_json::to_value(n.kind).unwrap() == "control_returned" =>
+                {
+                    Some(n)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+    // Respostas JSON controladas; coleta e comparação usam o caminho real da UI.
+    struct ReturnStatus(std::sync::Mutex<serde_json::Value>);
+
+    impl clipsync_core::control::ControlHandler for ReturnStatus {
+        fn handle<'life0, 'async_trait>(
+            &'life0 self,
+            req: clipsync_proto::ControlRequest,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = clipsync_proto::ControlResponse>
+                    + Send
+                    + 'async_trait,
+            >,
+        >
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async move {
+                match req {
+                    clipsync_proto::ControlRequest::Status => {
+                        serde_json::from_value(lock(&self.0).clone()).unwrap()
+                    }
+                    _ => {
+                        clipsync_proto::ControlResponse::Module(clipsync_proto::ModuleReply::Error(
+                            "sem estado de entrada neste ensaio".into(),
+                        ))
+                    }
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a1_same_return_after_unobserved_recovery_notifies_again() {
+        let dir = tempfile::Builder::new().prefix("a1-").tempdir().unwrap();
+        let ui = crate::Ui::start(crate::UiOptions {
+            profile: Some(dir.path().to_owned()),
+            ..crate::UiOptions::default()
+        })
+        .await
+        .unwrap();
+        if let Some(poller) = lock(&ui.ctx.poller).take() {
+            poller.abort();
+        }
+        let source = Arc::new(ReturnStatus(std::sync::Mutex::new(serde_json::json!({
+            "Status": {
+                "device_name": "ensaio", "id": PeerId([1; 32]),
+                "listen": "127.0.0.1:0", "paused": false, "peers": [],
+                "modules": [{
+                    "kind": ModuleKind::Input, "enabled": true,
+                    "adapter": null, "authorized_peers": [], "last_event": null,
+                    "last_block": FAILED, "control_returned_id": 1
+                }]
+            }
+        }))));
+        let listener = clipsync_core::control::bind(&ui.ctx.profile.socket_path())
+            .await
+            .unwrap();
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let handler = source.clone();
+        let server = tokio::spawn(async move {
+            listener
+                .serve(handler, async {
+                    let _ = stopped.await;
+                })
+                .await
+                .unwrap();
+        });
+        let previous = Snapshot::take(&ui.ctx).await;
+        assert_eq!(previous.input_block.as_deref(), Some(FAILED));
+        // O mesmo par recupera e falha de novo antes da próxima consulta.
+        {
+            let mut json = lock(&source.0);
+            json["Status"]["modules"][0]["last_block"] = serde_json::Value::Null;
+            json["Status"]["modules"][0]["last_block"] = FAILED.into();
+            json["Status"]["modules"][0]["control_returned_id"] = 2.into();
+        }
+        let current = Snapshot::take(&ui.ctx).await;
+        let notices = return_notices(&previous, &current, true);
+        // Outro retorno recuperado antes de consultar não pode gerar aviso atrasado.
+        {
+            let mut json = lock(&source.0);
+            json["Status"]["modules"][0]["control_returned_id"] = 3.into();
+            json["Status"]["modules"][0]["last_block"] = serde_json::Value::Null;
+        }
+        let recovered = Snapshot::take(&ui.ctx).await;
+        let _ = stop.send(());
+        server.await.unwrap();
+        ui.shutdown().await;
+        assert_eq!(
+            notices.len(),
+            1,
+            "nova devolução com frase igual precisa de novo aviso"
+        );
+        assert_eq!(notices[0].body, FAILED);
+        assert!(return_notices(&current, &current, true).is_empty());
+        assert!(return_notices(&previous, &current, false).is_empty());
+        assert!(return_notices(&current, &recovered, true).is_empty());
+    }
+
+    #[test]
+    fn a1_current_return_is_immediate_and_repeats_after_recovery() {
+        let good = snapshot(vec![block(RETURNED, 1)]);
+        for phrase in [RETURNED, FAILED] {
+            let mut failed = snapshot(vec![]);
+            failed.input_block = Some(phrase.into());
+            let notices = return_notices(&good, &failed, true);
+            assert_eq!(notices.len(), 1);
+            assert_eq!(notices[0].body, phrase);
+            assert!(return_notices(&failed, &failed, true).is_empty());
+            assert!(return_notices(&failed, &good, true).is_empty());
+            assert_eq!(return_notices(&good, &failed, true).len(), 1);
+            assert!(return_notices(&good, &failed, false).is_empty());
+        }
+        let mut other = snapshot(vec![]);
+        for text in ["texto livre", &format!("{RETURNED} extra")] {
+            other.input_block = Some(text.into());
+            assert!(return_notices(&good, &other, true).is_empty());
+        }
+    }
+    #[test]
+    fn a1_composed_block_notifies_only_the_literal_return_once() {
+        let good = snapshot(vec![]);
+        let mut failed = snapshot(vec![]);
+        failed.input_block = Some(format!("{RETURNED} · outro motivo · teclado indisponível"));
+        let notifications = return_notices(&good, &failed, true);
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].body, RETURNED);
+        let mut changed = snapshot(vec![]);
+        changed.input_block = Some(format!("{RETURNED} · outro motivo atualizado"));
+        assert!(return_notices(&failed, &changed, true).is_empty());
+        let mut notices = BlockNotifications::default();
+        let record = block(failed.input_block.as_deref().unwrap(), 1);
+        notices.observe(std::iter::once((&record, 1)), true);
+        assert!(notices.flush(tokio::time::Instant::now(), true).is_none());
+    }
+    #[test]
+    fn a1_return_notice_does_not_also_enter_generic_aggregation() {
+        let mut notices = BlockNotifications::default();
+        let record = block(RETURNED, 1);
+        notices.observe(std::iter::once((&record, 1)), true);
+        assert!(notices.flush(tokio::time::Instant::now(), true).is_none());
+    }
+    #[test]
+    fn a1_missing_observation_does_not_replay_return() {
+        let mut failed = snapshot(vec![]);
+        failed.input_block = Some(RETURNED.into());
+        failed.control_returned_id = 42;
+        let mut missing = snapshot(vec![]);
+        missing.live = false;
+        missing.retain_unobserved(&failed);
+        assert!(return_notices(&missing, &failed, true).is_empty());
     }
     #[test]
     fn unchanged_name_and_order_do_not_make_new_groups() {
