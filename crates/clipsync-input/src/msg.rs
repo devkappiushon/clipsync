@@ -192,3 +192,6 @@ pub(crate) const OPEN_BUFFER_FULL: &str = "Captura interrompida: fila de abertur
 
 pub const SCREEN_STATE_UNAVAILABLE: &str =
     "estado da tela não confirmado ou desktop protegido: o controle permanece bloqueado";
+
+pub const KEYBOARD_UNAVAILABLE: &str =
+    "Teclado indisponível neste computador: as teclas não estão sendo aplicadas";

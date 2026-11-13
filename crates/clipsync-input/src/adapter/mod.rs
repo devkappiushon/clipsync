@@ -199,6 +199,10 @@ pub trait EmulateAdapter: Send + 'static {
     fn cursor(&self) -> Option<(i32, i32)> {
         None
     }
+    /// Aviso atual do emulador, sem alterar seu estado. Adaptadores sem aviso retornam None.
+    fn block_reason(&self) -> Option<&'static str> {
+        None
+    }
     /// The keyboard layout this machine types with, for the diagnostics only: the `xkb_symbols`
     /// name the EIS announces (Linux) or the KLID (Windows). `None` until known.
     fn keyboard_layout(&self) -> Option<String> {

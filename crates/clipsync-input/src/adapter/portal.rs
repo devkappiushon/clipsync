@@ -28,7 +28,7 @@ use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 const INWARD_PX: f32 = 50.0;
 const DEVICE_WAIT: Duration = Duration::from_secs(5);
@@ -559,10 +559,70 @@ enum Cmd {
 }
 
 struct Dev {
+    /// Local number of this device in the EIS loop, only for the log.
+    id: u64,
+    /// reis remove as interfaces antes de DeviceRemoved: o log conserva o anúncio original.
+    capabilities: String,
     dev: reis::event::Device,
     resumed: bool,
     emulating: bool,
     touched: bool,
+    /// Key events sent to this device since it was added: a count, never a key.
+    keys: u64,
+    /// Eventos de tecla descartados enquanto este dispositivo estava indisponível.
+    dropped_keys: u64,
+}
+
+/// The device capabilities, in a fixed order, for the `eis.device` log line. Names only.
+fn capabilities_of(dev: &reis::event::Device) -> String {
+    let mut caps = Vec::new();
+    for (cap, name) in [
+        (DeviceCapability::Pointer, "pointer"),
+        (DeviceCapability::PointerAbsolute, "pointer_absolute"),
+        (DeviceCapability::Button, "button"),
+        (DeviceCapability::Scroll, "scroll"),
+        (DeviceCapability::Keyboard, "keyboard"),
+        (DeviceCapability::Touch, "touch"),
+        (DeviceCapability::Text, "text"),
+    ] {
+        if dev.has_capability(cap) {
+            caps.push(name);
+        }
+    }
+    caps.join(",")
+}
+
+/// `eis.device`: the life of one EIS device (§17.8). Only capabilities and counts, never a key.
+fn log_device(acao: &str, dev: &Dev, origem: &str) {
+    tracing::info!(
+        evento = "eis.device",
+        acao,
+        origem,
+        dispositivo = dev.id,
+        capacidades = %dev.capabilities,
+        "EIS device"
+    );
+}
+
+/// Fecho de cada dispositivo, com contagem de pedidos de tecla, nunca tecla ou keycode.
+fn log_device_count(dev: &Dev, origem: &str) {
+    tracing::info!(
+        evento = "eis.device",
+        acao = "removed",
+        origem,
+        dispositivo = dev.id,
+        capacidades = %dev.capabilities,
+        contagem = dev.keys,
+        descartados = dev.dropped_keys,
+        "EIS device"
+    );
+}
+
+#[derive(Clone, Copy, Default)]
+struct DevicesReady {
+    pointer: bool,
+    keyboard: bool,
+    keyboard_dropping: bool,
 }
 
 struct Emulator {
@@ -570,14 +630,26 @@ struct Emulator {
     conn: reis::event::Connection,
     devs: Vec<Dev>,
     seq: u32,
+    /// Number of devices announced in this loop, for the log.
+    announced: u64,
+    /// Pedidos de tecla enviados por toda a vida do laço, inclusive dispositivos removidos.
+    keys_sent: u64,
+    /// Descartes sem teclado pertencem ao laço, mesmo antes de existir um dispositivo.
+    keys_dropped: u64,
+    keyboard_dropping: bool,
     pressed: HashSet<(bool, u32)>,
+    /// Solturas de presses já enviados, adiadas por indisponibilidade ou pelo fim da sessão.
+    /// Só códigos internos: nunca serializar este conjunto nem reproduzir presses descartados.
+    pending_releases: HashSet<u32>,
 }
 
 impl Emulator {
-    fn pick(&mut self, cap: DeviceCapability) -> Option<&mut Dev> {
-        self.devs
-            .iter_mut()
-            .find(|d| d.resumed && d.dev.has_capability(cap))
+    fn devices_ready(&self) -> DevicesReady {
+        DevicesReady {
+            pointer: self.index_of(DeviceCapability::Pointer).is_some(),
+            keyboard: self.index_of(DeviceCapability::Keyboard).is_some(),
+            keyboard_dropping: self.keyboard_dropping,
+        }
     }
 
     fn begin(&mut self, idx: usize) {
@@ -599,7 +671,65 @@ impl Emulator {
             .position(|d| d.resumed && d.dev.has_capability(cap))
     }
 
+    fn drop_key(&mut self) {
+        self.keys_dropped = self.keys_dropped.saturating_add(1);
+        if let Some(d) = self
+            .devs
+            .iter_mut()
+            .find(|d| d.dev.has_capability(DeviceCapability::Keyboard))
+        {
+            d.dropped_keys = d.dropped_keys.saturating_add(1);
+        }
+        if !self.keyboard_dropping {
+            self.keyboard_dropping = true;
+            tracing::info!(
+                evento = "eis.device",
+                acao = "discarding",
+                origem = "emit",
+                capacidades = "keyboard",
+                motivo = "not_ready",
+                descartados = self.keys_dropped,
+                "EIS keyboard unavailable; key events discarded"
+            );
+        }
+    }
+
+    fn reconcile_keys(&mut self, origem: &'static str) -> Result<(), InputError> {
+        if self.pending_releases.is_empty() {
+            return Ok(());
+        }
+        let Some(idx) = self.index_of(DeviceCapability::Keyboard) else {
+            return Ok(());
+        };
+        let mut pending: Vec<u32> = self.pending_releases.iter().copied().collect();
+        pending.sort_unstable();
+        self.begin(idx);
+        let Some(keyboard) = self.devs[idx].dev.interface::<ei::Keyboard>() else {
+            return Err(InputError::Eis("no device for Keyboard".into()));
+        };
+        for code in &pending {
+            keyboard.key(*code, key_state(false));
+            self.devs[idx].keys = self.devs[idx].keys.saturating_add(1);
+            self.keys_sent = self.keys_sent.saturating_add(1);
+        }
+        // O frame das solturas precede qualquer nova tecla; só aposenta pendentes após flush.
+        self.frame()?;
+        self.pending_releases.clear();
+        tracing::info!(
+            evento = "eis.device",
+            acao = "reconciled",
+            origem,
+            dispositivo = self.devs[idx].id,
+            capacidades = "keyboard",
+            contagem = pending.len() as u64,
+            "EIS pending releases sent"
+        );
+        Ok(())
+    }
+
     fn emit(&mut self, events: &[InputEvent]) -> Result<(), InputError> {
+        self.reconcile_keys("emit")?;
+        let mut missing = None;
         for ev in events {
             let cap = match ev {
                 InputEvent::Motion { .. } => DeviceCapability::Pointer,
@@ -609,10 +739,28 @@ impl Emulator {
                 }
                 InputEvent::Key { .. } => DeviceCapability::Keyboard,
             };
-            let idx = self
-                .index_of(cap)
-                .ok_or_else(|| InputError::Eis(format!("no device for {cap:?}")))?;
+            let Some(idx) = self.index_of(cap) else {
+                if cap == DeviceCapability::Keyboard {
+                    // Não guarda presses descartados. Uma soltura de press já enviado
+                    // precisa neutralizar o estado anterior assim que houver teclado pronto.
+                    if let InputEvent::Key {
+                        code,
+                        pressed: false,
+                    } = ev
+                        && self.pressed.remove(&(false, *code))
+                    {
+                        self.pending_releases.insert(*code);
+                    }
+                    self.drop_key();
+                    continue;
+                }
+                // One missing device does not throw away the events already queued for the
+                // others: the frame below commits them and the caller still sees the error.
+                missing.get_or_insert_with(|| InputError::Eis(format!("no device for {cap:?}")));
+                continue;
+            };
             self.begin(idx);
+            let mut key_sent = false;
             let dev = &self.devs[idx].dev;
             match *ev {
                 InputEvent::Motion { dx, dy } => {
@@ -639,12 +787,21 @@ impl Emulator {
                 InputEvent::Key { code, pressed } => {
                     if let Some(k) = dev.interface::<ei::Keyboard>() {
                         k.key(code, key_state(pressed));
+                        key_sent = true;
                     }
                     set_pressed(&mut self.pressed, false, code, pressed);
                 }
             }
+            if key_sent {
+                self.devs[idx].keys = self.devs[idx].keys.saturating_add(1);
+                self.keys_sent = self.keys_sent.saturating_add(1);
+            }
         }
-        self.frame()
+        self.frame()?;
+        match missing {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     fn frame(&mut self) -> Result<(), InputError> {
@@ -660,26 +817,24 @@ impl Emulator {
     }
 
     fn release_all(&mut self) -> Result<(), InputError> {
-        let pressed: Vec<(bool, u32)> = self.pressed.drain().collect();
+        let pressed = std::mem::take(&mut self.pressed);
         for (is_button, code) in pressed {
-            let cap = if is_button {
-                DeviceCapability::Button
-            } else {
-                DeviceCapability::Keyboard
-            };
-            let Some(idx) = self.index_of(cap) else {
+            if !is_button {
+                // Leave/pausa encerram a sessão de controle, não necessariamente o laço EI.
+                // Só aposenta solturas de teclado depois de enviá-las com flush bem-sucedido.
+                self.pending_releases.insert(code);
+                continue;
+            }
+            // Botões conservam a política anterior: tenta soltar no dispositivo disponível.
+            let Some(idx) = self.index_of(DeviceCapability::Button) else {
                 continue;
             };
             self.begin(idx);
-            let dev = &self.devs[idx].dev;
-            if is_button {
-                if let Some(b) = dev.interface::<ei::Button>() {
-                    b.button(code, button_state(false));
-                }
-            } else if let Some(k) = dev.interface::<ei::Keyboard>() {
-                k.key(code, key_state(false));
+            if let Some(button) = self.devs[idx].dev.interface::<ei::Button>() {
+                button.button(code, button_state(false));
             }
         }
+        self.reconcile_keys("release_all")?;
         self.frame()
     }
 
@@ -722,17 +877,26 @@ fn set_pressed(set: &mut HashSet<(bool, u32)>, is_button: bool, code: u32, press
 async fn emulate_loop(
     stream: UnixStream,
     mut cmd_rx: mpsc::Receiver<Cmd>,
-    ready_tx: oneshot::Sender<()>,
+    ready_tx: watch::Sender<DevicesReady>,
     layout: Arc<Mutex<Option<String>>>,
 ) {
-    let mut ready_tx = Some(ready_tx);
     let Ok(ctx) = ei::Context::new(stream) else {
+        tracing::info!(
+            evento = "eis.loop",
+            motivo = "context",
+            "EIS loop ended before the handshake"
+        );
         return;
     };
     let Ok((conn, mut events)) = ctx
         .handshake_tokio("clipsync-input-emit", ei::handshake::ContextType::Sender)
         .await
     else {
+        tracing::info!(
+            evento = "eis.loop",
+            motivo = "handshake",
+            "EIS loop ended before the handshake"
+        );
         return;
     };
     let mut em = Emulator {
@@ -740,12 +904,28 @@ async fn emulate_loop(
         conn,
         devs: Vec::new(),
         seq: 0,
+        announced: 0,
+        keys_sent: 0,
+        keys_dropped: 0,
+        keyboard_dropping: false,
         pressed: HashSet::new(),
+        pending_releases: HashSet::new(),
     };
-    loop {
+    let (motivo, erro) = loop {
         tokio::select! {
             ev = events.next() => {
-                let Some(Ok(ev)) = ev else { break };
+                let Some(ev) = ev else { break ("eof", None) };
+                let ev = match ev {
+                    Ok(ev) => ev,
+                    Err(reis::Error::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                        break ("eof", None);
+                    }
+                    Err(e) => {
+                        // Só a categoria fixa: texto de erro pode carregar dados do protocolo.
+                        let (motivo, erro) = loop_error(&e);
+                        break (motivo, Some(erro));
+                    }
+                };
                 match ev {
                     EiEvent::SeatAdded(s) => {
                         s.seat.bind_capabilities(
@@ -757,44 +937,185 @@ async fn emulate_loop(
                         if let Some(name) = d.device.keymap().and_then(keymap_symbols) {
                             *lock(&layout) = Some(name);
                         }
-                        em.devs.push(Dev {
-                            dev: d.device, resumed: false, emulating: false, touched: false });
+                        em.announced += 1;
+                        let dev = Dev {
+                            id: em.announced,
+                            capabilities: capabilities_of(&d.device),
+                            dev: d.device,
+                            resumed: false,
+                            emulating: false,
+                            touched: false,
+                            keys: 0,
+                            dropped_keys: 0,
+                        };
+                        log_device("added", &dev, "added");
+                        em.devs.push(dev);
                     }
                     EiEvent::DeviceResumed(d) => {
                         if let Some(x) = em.devs.iter_mut().find(|x| x.dev == d.device) {
                             x.resumed = true;
-                        }
-                        if em.pick(DeviceCapability::Pointer).is_some()
-                            && let Some(r) = ready_tx.take()
-                        {
-                            let _ = r.send(());
+                            log_device("resumed", x, "resumed");
                         }
                     }
                     EiEvent::DevicePaused(d) => {
                         if let Some(x) = em.devs.iter_mut().find(|x| x.dev == d.device) {
                             x.resumed = false;
                             x.emulating = false;
+                            x.touched = false;
+                            log_device("paused", x, "paused");
                         }
                     }
-                    EiEvent::DeviceRemoved(d) => em.devs.retain(|x| x.dev != d.device),
-                    EiEvent::Disconnected(_) => break,
+                    // stop_emulating vindo do servidor é exclusivo de receiver no protocolo
+                    // EI e na API libeis 1.5.0. Nosso contexto é sender; não usar esse evento
+                    // para inventar uma transição ou atribuir a causa do incidente.
+                    EiEvent::DeviceRemoved(d) => {
+                        if let Some(x) = em.devs.iter().find(|x| x.dev == d.device) {
+                            log_device_count(x, "removed");
+                        }
+                        em.devs.retain(|x| x.dev != d.device);
+                    }
+                    EiEvent::Disconnected(_) => break ("disconnected", None),
                     _ => {}
                 }
+                // Retomada/recriação reconcilia solturas antes de anunciar disponibilidade
+                // ou aceitar outra tecla. Presses descartados nunca são reproduzidos.
+                if em.index_of(DeviceCapability::Keyboard).is_some() {
+                    if em.reconcile_keys("resumed").is_err() { break ("io", Some("io")); }
+                    em.keyboard_dropping = false;
+                }
+                // Snapshot atual, não um sinal histórico: pausa/remoção também o invalidam.
+                let _ = ready_tx.send(em.devices_ready());
             }
             cmd = cmd_rx.recv() => {
                 match cmd {
-                    Some(Cmd::Emit(evs, reply)) => { let _ = reply.send(em.emit(&evs)); }
-                    Some(Cmd::ReleaseAll(reply)) => { let _ = reply.send(em.release_all()); }
-                    None => break,
+                    Some(Cmd::Emit(evs, reply)) => {
+                        let result = em.emit(&evs);
+                        // Publica antes de responder ao módulo: o aviso não depende de outra tecla.
+                        let _ = ready_tx.send(em.devices_ready());
+                        let _ = reply.send(result);
+                    }
+                    Some(Cmd::ReleaseAll(reply)) => {
+                        let result = em.release_all();
+                        let _ = ready_tx.send(em.devices_ready());
+                        let _ = reply.send(result);
+                    }
+                    None => break ("closed", None),
                 }
             }
         }
-    }
+    };
     em.stop_emulating();
+    // The loop ending closes the EIS connection, so every device left is gone with it.
+    for dev in &em.devs {
+        log_device_count(dev, "loop");
+    }
+    let contagem = em.keys_sent;
+    match erro {
+        Some(e) => tracing::info!(
+            evento = "eis.loop",
+            motivo,
+            erro = %e,
+            dispositivos = em.announced,
+            contagem,
+            descartados = em.keys_dropped,
+            "EIS loop ended"
+        ),
+        None => tracing::info!(
+            evento = "eis.loop",
+            motivo,
+            dispositivos = em.announced,
+            contagem,
+            descartados = em.keys_dropped,
+            "EIS loop ended"
+        ),
+    }
+}
+
+/// A spawned EIS sender loop: the command channel, the readiness signal and the thread.
+struct EmulateTask {
+    cmd: mpsc::Sender<Cmd>,
+    ready: watch::Receiver<DevicesReady>,
+    thread: std::thread::JoinHandle<()>,
+}
+
+/// Starts `emulate_loop` on its own thread with a current-thread runtime. Both
+/// `PortalEmulate::start` and the test harness (`PortalEmulate::attach`) come through here, so the test
+/// drives the same code the app does.
+fn spawn_emulate_loop(
+    stream: UnixStream,
+    layout: Arc<Mutex<Option<String>>>,
+) -> std::io::Result<EmulateTask> {
+    let (cmd, cmd_rx) = mpsc::channel::<Cmd>(64);
+    let (ready_tx, ready) = watch::channel(DevicesReady::default());
+    // reis streams are !Send: the EIS loop owns a current-thread runtime.
+    let dispatch = tracing::dispatcher::get_default(Clone::clone);
+    let thread = std::thread::Builder::new()
+        .name("clipsync-input-emulate".into())
+        .spawn(move || {
+            let _trace = tracing::dispatcher::set_default(&dispatch);
+            let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                tracing::info!(
+                    evento = "eis.loop",
+                    motivo = "runtime",
+                    "EIS loop did not start"
+                );
+                return;
+            };
+            rt.block_on(emulate_loop(stream, cmd_rx, ready_tx, layout));
+        })?;
+    Ok(EmulateTask { cmd, ready, thread })
+}
+
+/// Categorias estáticas do erro; nunca serializa evento, tecla, keycode ou payload remoto.
+fn loop_error(error: &reis::Error) -> (&'static str, &'static str) {
+    match error {
+        reis::Error::Io(_) => ("io", "io"),
+        reis::Error::Event(_) => ("converter", "event"),
+        reis::Error::Parse(_) => ("converter", "parse"),
+        reis::Error::Request(_) => ("converter", "request"),
+        reis::Error::Handshake(_) | reis::Error::UnexpectedHandshakeEvent => {
+            ("converter", "handshake")
+        }
+        reis::Error::InvalidInterfaceVersion(_, _) => ("converter", "interface_version"),
+    }
+}
+
+/// Retorna no tempo do ponteiro. Teclado não bloqueia Enter nem o atendimento de Stats.
+async fn wait_emulate_ready(ready: &mut watch::Receiver<DevicesReady>) -> Result<(), InputError> {
+    let ended = || InputError::Eis("emulation task ended".into());
+    tokio::time::timeout(DEVICE_WAIT, async {
+        loop {
+            if ready.has_changed().is_err() {
+                return Err(ended());
+            }
+            let state = *ready.borrow_and_update();
+            if state.pointer {
+                if !state.keyboard {
+                    tracing::info!(
+                        evento = "eis.device",
+                        acao = "missing",
+                        origem = "start",
+                        capacidades = "keyboard",
+                        motivo = "not_ready",
+                        "EIS keyboard unavailable; pointer ready"
+                    );
+                }
+                return Ok(());
+            }
+            ready.changed().await.map_err(|_| ended())?;
+        }
+    })
+    .await
+    .map_err(|_| InputError::Eis("no pointer device became ready".into()))?
 }
 
 pub struct PortalEmulate {
     store: TokenStore,
+    /// Snapshot somente de disponibilidade/descarte, sem conteúdo de entrada.
+    state: Option<watch::Receiver<DevicesReady>>,
     session: Option<Session<RemoteDesktop>>,
     cmd: Option<mpsc::Sender<Cmd>>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -808,6 +1129,7 @@ impl PortalEmulate {
     pub fn new(store: TokenStore) -> Self {
         Self {
             store,
+            state: None,
             session: None,
             cmd: None,
             thread: None,
@@ -824,13 +1146,35 @@ impl PortalEmulate {
             .cmd
             .as_ref()
             .ok_or_else(|| InputError::Other("emulator not started".into()))?;
-        let (r_tx, r_rx) = oneshot::channel();
-        tx.send(make(r_tx))
-            .await
-            .map_err(|_| InputError::Eis("emulation task ended".into()))?;
-        r_rx.await
-            .map_err(|_| InputError::Eis("emulation task ended".into()))?
+        call_cmd(tx, make).await
     }
+
+    /// Test-only entry (`tests/eis_*.rs`): attaches the emulation loop to an EIS sender stream
+    /// the caller already owns, skipping the portal. It spawns the same loop as `start()` and
+    /// waits on the same readiness rule; the store is never read. Not part of the contract.
+    #[doc(hidden)]
+    pub async fn attach(store: TokenStore, stream: UnixStream) -> Result<Self, InputError> {
+        let mut this = Self::new(store);
+        let mut task = spawn_emulate_loop(stream, this.layout.clone())
+            .map_err(|e| InputError::Other(e.to_string()))?;
+        this.thread = Some(task.thread);
+        wait_emulate_ready(&mut task.ready).await?;
+        this.state = Some(task.ready);
+        this.cmd = Some(task.cmd);
+        Ok(this)
+    }
+}
+
+async fn call_cmd(
+    cmd: &mpsc::Sender<Cmd>,
+    make: impl FnOnce(oneshot::Sender<Result<(), InputError>>) -> Cmd,
+) -> Result<(), InputError> {
+    let (r_tx, r_rx) = oneshot::channel();
+    cmd.send(make(r_tx))
+        .await
+        .map_err(|_| InputError::Eis("emulation task ended".into()))?;
+    r_rx.await
+        .map_err(|_| InputError::Eis("emulation task ended".into()))?
 }
 
 #[async_trait]
@@ -901,31 +1245,14 @@ impl EmulateAdapter for PortalEmulate {
             "EIS connected"
         );
         let stream = UnixStream::from(fd);
-        let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>(64);
-        let (ready_tx, ready_rx) = oneshot::channel::<()>();
         let layout = self.layout.clone();
-        // reis streams are !Send: the EIS loop owns a current-thread runtime.
-        let spawned = std::thread::Builder::new()
-            .name("clipsync-input-emulate".into())
-            .spawn(move || {
-                let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                else {
-                    return;
-                };
-                rt.block_on(emulate_loop(stream, cmd_rx, ready_tx, layout));
-            });
-        match spawned {
-            Ok(h) => self.thread = Some(h),
-            Err(e) => return Err(InputError::Other(e.to_string())),
-        }
-        match tokio::time::timeout(DEVICE_WAIT, ready_rx).await {
-            Ok(Ok(())) => {}
-            _ => return Err(InputError::Eis("no pointer device became ready".into())),
-        }
+        let mut task =
+            spawn_emulate_loop(stream, layout).map_err(|e| InputError::Other(e.to_string()))?;
+        self.thread = Some(task.thread);
+        wait_emulate_ready(&mut task.ready).await?;
+        self.state = Some(task.ready);
         self.session = Some(session);
-        self.cmd = Some(cmd_tx);
+        self.cmd = Some(task.cmd);
         self.lock_watch = Some(LockWatch::start(None).await);
         Ok(())
     }
@@ -940,6 +1267,12 @@ impl EmulateAdapter for PortalEmulate {
         }
         let evs = events.to_vec();
         self.call(|r| Cmd::Emit(evs, r)).await
+    }
+
+    fn block_reason(&self) -> Option<&'static str> {
+        let state = self.state.as_ref()?;
+        let dropping = state.borrow().keyboard_dropping;
+        dropping.then_some(crate::msg::KEYBOARD_UNAVAILABLE)
     }
 
     fn keyboard_layout(&self) -> Option<String> {
@@ -958,6 +1291,7 @@ impl EmulateAdapter for PortalEmulate {
             let _ = self.call(Cmd::ReleaseAll).await;
         }
         self.cmd = None;
+        self.state = None;
         self.lock_watch = None;
         if let Some(t) = self.thread.take() {
             let _ = tokio::task::spawn_blocking(move || t.join()).await;

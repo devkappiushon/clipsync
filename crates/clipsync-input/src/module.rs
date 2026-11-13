@@ -1366,6 +1366,12 @@ impl State {
                 self.rate_dropped
             ));
         }
+        if let Some(reason) = self.emu.block_reason() {
+            block = Some(match block {
+                Some(module_reason) => format!("{module_reason} · {reason}"),
+                None => reason.to_owned(),
+            });
+        }
         ModuleStatus {
             kind: ModuleKind::Input,
             enabled: true,
@@ -1599,16 +1605,26 @@ impl State {
                     None => self.ignored += 1,
                 }
             }
-            InputMsg::Stats(s) => match &self.ctl {
-                Some(c)
-                    if c.to == from
-                        && s.session != 0
-                        && s.session == c.session.load(Ordering::SeqCst) =>
-                {
-                    let _ = c.tx.send(LoopSignal::Stats(s));
+            InputMsg::Stats(s) => {
+                // on_msg validou o par e a conexão atuais. A captura confere também a sessão.
+                self.send_ctl(Ctl::Stats {
+                    from,
+                    connection: context.connection,
+                    session: s.session,
+                    received_at: Instant::now(),
+                });
+                match &self.ctl {
+                    Some(c)
+                        if c.to == from
+                            && s.session != 0
+                            && s.session == c.session.load(Ordering::SeqCst) =>
+                    {
+                        let _ = c.tx.send(LoopSignal::Stats(s));
+                    }
+                    _ if self.cont.is_none() => self.ignored += 1,
+                    _ => {}
                 }
-                _ => self.ignored += 1,
-            },
+            }
         }
     }
 
@@ -1997,7 +2013,11 @@ impl State {
                 self.refuse_on(from, session, context.connection, RejectReason::Locked);
                 return;
             }
-            tracing::warn!("emit failed: {e}");
+            // Uma falha genérica no legado também encerra a captura na origem.
+            self.incoming.remove(&from);
+            self.release_all().await;
+            self.refuse_on(from, session, context.connection, RejectReason::ApplyFailed);
+            return;
         }
         if !self.authorized(from, context) {
             self.reconcile_incoming(from).await;

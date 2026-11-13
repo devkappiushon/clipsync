@@ -77,6 +77,12 @@ pub(crate) const RETURN_SLACK_PX: f32 = 8.0;
 const MAX_DEPTH_PX: f32 = 1.0e7;
 /// A refusal of the Enter arrives after the send: a switch waits this long for it.
 const SWITCH_GRACE: Duration = Duration::from_millis(400);
+/// Intervalo entre sondagens da sessão ativa, mesmo sem entrada local.
+const SESSION_PROBE_INTERVAL: Duration = Duration::from_millis(500);
+/// Prazo desde a abertura ou a última resposta válida do destino.
+const SESSION_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2);
+/// `StatsRequest` e `Stats` existem desde o protocolo 1 (Hello).
+const STATS_PROTOCOL: u16 = 1;
 /// Protocol version that understands `Zones`, `LayoutOffer` and `EnterAt` (§12.10 decision 7).
 pub(crate) const LAYOUT_PROTOCOL: u16 = 2;
 /// Protocol version that understands `EnterSpan`, `Returned` and `Refused` (§13.4).
@@ -157,6 +163,13 @@ pub(crate) enum Ctl {
         reason: RejectReason,
     },
     PeerDown(PeerId),
+    /// Resposta de aplicação, já validada pelo módulo e fixada à conexão recebida.
+    Stats {
+        from: PeerId,
+        connection: u64,
+        session: u32,
+        received_at: Instant,
+    },
     /// UI or hotkey: open a session on `to` through the first barrier that leads there.
     Switch {
         to: PeerId,
@@ -262,7 +275,14 @@ impl VirtualCursor {
     }
 }
 
+struct SessionWatchdog {
+    last_response: Instant,
+    next_probe: Instant,
+    sending: Option<Sending>,
+}
+
 struct Session {
+    watchdog: Option<SessionWatchdog>,
     routes: Option<RouteSession>,
     connection: u64,
     peer: PeerId,
@@ -521,6 +541,8 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
         pending: None,
         queue: VecDeque::new(),
     };
+    // Controles retirados ao procurar Stats preservam a ordem entre si.
+    let mut deferred_controls = VecDeque::new();
     'capture: loop {
         // Stop wins even if a full data queue left the main module blocked in emulation.
         if !st.reconcile_host(&mut authority).await {
@@ -556,7 +578,11 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
             // Observe those changes before installing another producer. This adapter is stopped:
             // retarget only updates the next start, and Switch fails via `available = false`.
             loop {
-                match ctl.try_recv() {
+                match deferred_controls
+                    .pop_front()
+                    .map(Ok)
+                    .unwrap_or_else(|| ctl.try_recv())
+                {
                     Ok(Ctl::Stop) | Err(mpsc::error::TryRecvError::Disconnected) => break 'capture,
                     Ok(c) => st.control(c).await,
                     Err(mpsc::error::TryRecvError::Empty) => {
@@ -653,7 +679,7 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
                 loop {
                     tokio::select! {
                         biased;
-                        c = ctl.recv() => break Prepared::Control(c),
+                        c = async { match deferred_controls.pop_front() { Some(c) => Some(c), None => ctl.recv().await } } => break Prepared::Control(c),
                         () = reply.closed() => break Prepared::Cancel,
                         () = authority.changed() => break Prepared::Cancel,
                         () = lifecycle.changed() => break Prepared::Cancel,
@@ -685,15 +711,43 @@ pub(crate) async fn run(engine: Engine) -> Box<dyn CaptureAdapter> {
             continue;
         }
         let switch_until = st.pending.as_ref().and_then(|p| p.until);
+        let watchdog_until = st.watchdog_until();
+        let probing = st
+            .session
+            .as_ref()
+            .and_then(|s| s.watchdog.as_ref())
+            .is_some_and(|w| w.sending.is_some());
         tokio::select! {
             biased;
-            c = ctl.recv() => {
+            // O prazo vence antes de filas locais, inclusive sob entrada contínua.
+            () = async { if let Some(until) = watchdog_until { tokio::time::sleep_until(until).await; } }, if watchdog_until.is_some() => {
+                // Uma resposta pontual pode estar atrás de controles cujo handler aguarda
+                // o adaptador. Antes de expirar, considere o lote já recebido, sem esperar
+                // esses handlers. O tamanho fixo impede que novas entradas adiem o prazo.
+                for _ in 0..ctl.len() {
+                    match ctl.try_recv() {
+                        Ok(Ctl::Stats { from, connection, session, received_at }) => {
+                            st.record_stats(from, connection, session, received_at);
+                        }
+                        Ok(c) => deferred_controls.push_back(c),
+                        Err(_) => break,
+                    }
+                }
+                st.watchdog_tick().await;
+            },
+            c = async { match deferred_controls.pop_front() { Some(c) => Some(c), None => ctl.recv().await } } => {
                 match c { Some(Ctl::Stop) | None => break, Some(c) => st.control(c).await }
             }
             () = async { if let Some(p) = st.pending.as_mut() { p.reply.closed().await; } }, if st.pending.is_some() => { st.close_reason = Some("switch"); st.end_session(true).await; }
             () = authority.changed() => continue,
             () = lifecycle.changed() => continue,
             _ = async { if let Some(f) = &mut st.closing { let _ = f.await; } }, if st.closing.is_some() => { st.closing = None; }
+            _ = async {
+                if let Some(w) = st.session.as_mut().and_then(|s| s.watchdog.as_mut())
+                    && let Some(f) = w.sending.as_mut() { let _ = f.await; }
+            }, if probing => {
+                if let Some(w) = st.session.as_mut().and_then(|s| s.watchdog.as_mut()) { w.sending = None; }
+            }
             ev = async { match rx.as_mut() { Some(r) => r.recv().await, None => None } }, if rx.is_some() => {
                 match ev {
                     Some(ev) => {
@@ -780,6 +834,74 @@ struct Loop {
 }
 
 impl Loop {
+    fn watchdog_until(&self) -> Option<Instant> {
+        self.current()?.watchdog.as_ref().map(|w| {
+            let deadline = w.last_response + SESSION_RESPONSE_TIMEOUT;
+            // A captura por barreira já é física em opening, inclusive atrás de Leave.
+            // A abertura tem prazo, mas StatsRequest só pode seguir o Enter concluído.
+            if self.opening.is_some() || w.sending.is_some() {
+                deadline
+            } else {
+                deadline.min(w.next_probe)
+            }
+        })
+    }
+
+    async fn watchdog_tick(&mut self) {
+        let opening = self.opening.is_some();
+        let Some(s) = self
+            .session
+            .as_mut()
+            .or_else(|| self.opening.as_mut().map(|o| &mut o.session))
+        else {
+            return;
+        };
+        let Some(w) = s.watchdog.as_mut() else {
+            return;
+        };
+        let now = Instant::now();
+        if now >= w.last_response + SESSION_RESPONSE_TIMEOUT {
+            self.close_reason = Some("peer_unresponsive");
+            self.end_session(true).await;
+            return;
+        }
+        if !opening && w.sending.is_none() && now >= w.next_probe {
+            let host = self.host.clone();
+            let (peer, connection, session) = (s.peer, s.connection, s.id);
+            w.next_probe = now + SESSION_PROBE_INTERVAL;
+            w.sending = Some(Box::pin(async move {
+                tokio::time::timeout(
+                    crate::network::SEND_WAIT,
+                    host.send_reliable_on(
+                        peer,
+                        connection,
+                        ModuleMsg::Input(InputMsg::StatsRequest { session }),
+                    ),
+                )
+                .await
+                .unwrap_or_else(|_| {
+                    Err(SendError::Transport("input probe deadline exceeded".into()))
+                })
+            }));
+        }
+    }
+
+    fn record_stats(&mut self, from: PeerId, connection: u64, session: u32, received_at: Instant) {
+        if let Some(s) = self.session.as_mut().or_else(|| self.opening.as_mut().map(|o| &mut o.session))
+            && s.peer == from
+            && s.connection == connection
+            && s.id == session
+            && let Some(w) = s.watchdog.as_mut()
+            // Consumo atrasado não compra tempo. Resposta posterior ao prazo não ressuscita
+            // a sessão, nem resposta fora de ordem recua o relógio já confirmado.
+            && received_at >= w.last_response
+            && received_at < w.last_response + SESSION_RESPONSE_TIMEOUT
+            && received_at <= Instant::now()
+        {
+            w.last_response = received_at;
+        }
+    }
+
     fn route_valid(&self, s: &RouteSession) -> bool {
         self.catalog.matches(&[
             InventoryStamp {
@@ -933,7 +1055,7 @@ impl Loop {
         let erro = self.close_detail.take().unwrap_or_default();
         let opening = self.opening.take();
         let had_opening = opening.is_some();
-        let s = self.session.take();
+        let mut s = self.session.take();
         if s.is_none() && !had_opening {
             return;
         }
@@ -943,6 +1065,10 @@ impl Loop {
                 let _ = self.cap.release_at(barrier, pos).await;
             }
             None => self.release().await,
+        }
+        // Cancelar sondagem só depois de devolver o dispositivo, sem esperar rede.
+        if let Some(s) = s.as_mut() {
+            s.watchdog = None;
         }
         let cancelled = opening.map(|o| (o.session, o.started)); // drops the send future now
         let attempt = s.map(|s| (s, send_leave)).or(cancelled);
@@ -958,7 +1084,7 @@ impl Loop {
         self.notes(Note::Active(None));
         if let Some((s, true)) = attempt {
             let host = self.host.clone();
-            let release_all = self.session_locked;
+            let release_all = self.session_locked || motivo == "peer_unresponsive";
             // At most one cleanup; a following Enter is never polled before it completes.
             self.closing = Some(Box::pin(async move {
                 tokio::time::timeout(crate::network::SEND_WAIT, async move {
@@ -1187,6 +1313,14 @@ impl Loop {
         tracing::info!(evento = "session.open", attempt, session = id, peer = %peer, mensagem, rota, "session opening");
         self.opening = Some(Opening {
             session: Session {
+                watchdog: (version >= STATS_PROTOCOL).then(|| {
+                    let now = Instant::now();
+                    SessionWatchdog {
+                        last_response: now,
+                        next_probe: now + SESSION_PROBE_INTERVAL,
+                        sending: None,
+                    }
+                }),
                 routes: plan.map(|p| RouteSession {
                     session: id,
                     ..p.session
@@ -1502,6 +1636,14 @@ impl Loop {
                 } else {
                     self.notes(Note::Ignored);
                 }
+            }
+            Ctl::Stats {
+                from,
+                connection,
+                session,
+                received_at,
+            } => {
+                self.record_stats(from, connection, session, received_at);
             }
             Ctl::PeerZones(peer, zones) => {
                 self.peer_zones.insert(peer, zones);
