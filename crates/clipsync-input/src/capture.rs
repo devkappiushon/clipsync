@@ -1404,7 +1404,12 @@ impl Loop {
                 };
                 let dest = map_pos(t.local, t.remote, pos);
                 if let Err(e) = self.open(&t, dest, attempt).await {
+                    // open já solta a captura quando marca a geração para descarte.
+                    if !self.reset_rx {
+                        self.release().await;
+                    }
                     log_filtered(attempt, e.code);
+                    self.notes(Note::Event(e.text));
                 }
             }
             CaptureEvent::Input { t_mono_us, ev } => {

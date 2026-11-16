@@ -1,4 +1,6 @@
 use super::*;
+#[path = "logs.rs"]
+mod logs;
 use clipsync_proto::{MemHub, ModuleInput, ModuleSet, PeerInfo, PeerInputContext, PeerPerms};
 use std::sync::{
     Mutex,
@@ -9,6 +11,7 @@ use tokio::sync::Notify;
 struct Cap {
     sender: Mutex<Option<mpsc::Sender<CaptureEvent>>>,
     released: AtomicUsize,
+    captured: AtomicBool,
     starts: AtomicUsize,
     begins: AtomicUsize,
     block_stop: AtomicBool,
@@ -61,14 +64,17 @@ impl CaptureAdapter for Capture {
         Ok(rx)
     }
     async fn begin(&mut self, _: usize, _: f32) -> Result<(), InputError> {
+        self.0.captured.store(true, Ordering::SeqCst);
         self.0.begins.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
     async fn release(&mut self) -> Result<(), InputError> {
+        self.0.captured.store(false, Ordering::SeqCst);
         self.0.released.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
     async fn stop(&mut self) -> Result<(), InputError> {
+        self.0.captured.store(false, Ordering::SeqCst);
         *self.0.sender.lock().unwrap() = None;
         if self.0.block_stop.swap(false, Ordering::SeqCst) {
             self.0.stopping.notify_one();
@@ -78,6 +84,9 @@ impl CaptureAdapter for Capture {
     }
 }
 struct Host {
+    disconnected: AtomicBool,
+    catalog: InventoryCatalog,
+    notes: Mutex<mpsc::UnboundedReceiver<Note>>,
     cleanup: DeferredCleanup,
     observe_lifecycle: bool,
     hub: MemHub,
@@ -123,7 +132,12 @@ impl ModuleHost for Host {
         self.inner.paused()
     }
     fn peer_input_context(&self, p: PeerId) -> Option<PeerInputContext> {
-        self.inner.peer_input_context(p)
+        self.inner.peer_input_context(p).map(|mut context| {
+            if self.disconnected.load(Ordering::SeqCst) {
+                context.connected = false;
+            }
+            context
+        })
     }
     fn request_pause(&self, p: bool) {
         self.inner.request_pause(p)
@@ -246,7 +260,12 @@ async fn setup_mode(
             ..Default::default()
         },
     );
+    let catalog = InventoryCatalog::default();
+    let (notes, received_notes) = mpsc::unbounded_channel();
     let host = Arc::new(Host {
+        disconnected: AtomicBool::new(false),
+        catalog: catalog.clone(),
+        notes: Mutex::new(received_notes),
         cleanup: Default::default(),
         observe_lifecycle: v4,
         hub,
@@ -263,7 +282,6 @@ async fn setup_mode(
     });
     let cap = Arc::new(Cap::default());
     let (ctl, rx) = mpsc::unbounded_channel();
-    let (notes, _) = mpsc::unbounded_channel();
     let target = Target {
         spec: BarrierSpec {
             zone: crate::adapter::ZoneRef::Index(0),
@@ -278,7 +296,6 @@ async fn setup_mode(
         remote: (0.0, 1.0),
     };
     let standard = adapter.is_none();
-    let catalog = InventoryCatalog::default();
     let mut route_plans = HashMap::new();
     if v4 {
         use clipsync_proto::*;
@@ -394,6 +411,8 @@ fn sender(cap: &Cap) -> mpsc::Sender<CaptureEvent> {
     cap.sender.lock().unwrap().as_ref().unwrap().clone()
 }
 async fn activate(cap: &Cap) {
+    // O hook já bloqueia o mouse quando publica Activated.
+    cap.captured.store(true, Ordering::SeqCst);
     sender(cap)
         .send(CaptureEvent::Activated {
             barrier: 0,
@@ -1438,4 +1457,85 @@ async fn s10_fix2_new_engine_releases_refused_activation_before_external_cleanup
     ));
     ctl.send(Ctl::Stop).unwrap();
     task.await.unwrap();
+}
+
+// A ausência de release no erro de open deixa o adaptador capturando sem sessão.
+async fn ativacao_recusada_solta_captura(v4: bool, motivo: &str, aviso: &str) {
+    let log = logs::capturar();
+    let (cap, host, ctl, task, _wire, peer) = setup_mode(None, v4).await;
+    assert!(!cap.captured.load(Ordering::SeqCst));
+    assert!(host.peers().iter().any(|p| p.id == peer));
+    if v4 {
+        // A rota instalada continua presente, mas sua revisão deixou de valer.
+        host.catalog.invalidate(peer);
+    } else {
+        // Preserva confiança e barreira legada; somente a conexão está indisponível.
+        host.disconnected.store(true, Ordering::SeqCst);
+        assert!(!host.peer_input_context(peer).unwrap().connected);
+    }
+    activate(&cap).await;
+    wait(|| log.tem("attempt.filtered")).await;
+    let filtered = log.primeiro("attempt.filtered").unwrap();
+    assert_eq!(filtered.campo("motivo"), Some(motivo));
+    assert_eq!(
+        filtered.campo("attempt"),
+        log.primeiro("attempt.begin").unwrap().campo("attempt")
+    );
+    assert!(log.todos("session.open").is_empty());
+    let capturado_apos_filtro = cap.captured.load(Ordering::SeqCst);
+
+    // Sem test-util no Tokio: observa além dos dois segundos, oferecendo movimento.
+    let until = Instant::now() + Duration::from_millis(2500);
+    while Instant::now() < until {
+        sender(&cap)
+            .send(CaptureEvent::Input {
+                t_mono_us: 0,
+                ev: InputEvent::Motion { dx: 1.0, dy: 0.0 },
+            })
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    ctl.send(Ctl::PeerDown(peer)).unwrap();
+    let (reply, rx) = oneshot::channel();
+    ctl.send(Ctl::Ready { reply }).unwrap();
+    let _ = tokio::time::timeout(Duration::from_millis(500), rx)
+        .await
+        .expect("motor deve continuar atendendo controles")
+        .unwrap();
+    let capturado_apos_peer_down = cap.captured.load(Ordering::SeqCst);
+    assert!(!log.tem("session.open"));
+    assert_eq!(host.datagrams.load(Ordering::SeqCst), 0);
+    let mut avisou = false;
+    while let Ok(note) = host.notes.lock().unwrap().try_recv() {
+        if matches!(note, Note::Event(text) if text == aviso) {
+            avisou = true;
+        }
+    }
+    // Limpeza também no RED; Stop continua capaz de soltar a captura órfã.
+    ctl.send(Ctl::Stop).unwrap();
+    tokio::time::timeout(Duration::from_millis(500), task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!cap.captured.load(Ordering::SeqCst));
+    assert!(
+        !capturado_apos_filtro,
+        "captura física continua ativa após attempt.filtered {motivo}, sem session.open; após 2,5 s e PeerDown: {capturado_apos_peer_down}"
+    );
+    assert!(!capturado_apos_peer_down);
+    assert!(
+        avisou,
+        "o motivo da passagem recusada deve chegar ao usuário"
+    );
+}
+
+#[tokio::test]
+async fn ativacao_com_par_offline_solta_captura_sem_sessao() {
+    ativacao_recusada_solta_captura(false, "peer_offline", "par não conectado").await;
+}
+
+#[tokio::test]
+async fn ativacao_com_inventario_alterado_solta_captura_sem_sessao() {
+    ativacao_recusada_solta_captura(true, "inventory_changed", "inventário de rota alterado").await;
 }
